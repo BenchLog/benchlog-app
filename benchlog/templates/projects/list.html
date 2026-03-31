@@ -3,7 +3,7 @@
 {% block title %}Projects — BenchLog{% endblock %}
 
 {% block content %}
-<div class="flex items-center justify-between mb-8">
+<div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl font-bold text-gray-900">Projects</h1>
     <a href="/projects/new"
         class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
@@ -11,8 +11,38 @@
     </a>
 </div>
 
+<div class="flex gap-2 mb-6 flex-wrap">
+    <a href="/"
+        class="rounded-full px-3 py-1 text-sm {{ 'bg-indigo-100 text-indigo-800 font-medium' if not current_status and not current_tag else 'bg-gray-100 text-gray-600 hover:bg-gray-200' }}">
+        All
+    </a>
+    {% for s in statuses %}
+    {% if s != 'archived' %}
+    <a href="/?status={{ s }}"
+        class="rounded-full px-3 py-1 text-sm {{ 'bg-indigo-100 text-indigo-800 font-medium' if current_status == s else 'bg-gray-100 text-gray-600 hover:bg-gray-200' }}">
+        {{ s | replace('_', ' ') | title }}
+    </a>
+    {% endif %}
+    {% endfor %}
+    <a href="/?status=archived"
+        class="rounded-full px-3 py-1 text-sm {{ 'bg-indigo-100 text-indigo-800 font-medium' if current_status == 'archived' else 'bg-gray-100 text-gray-600 hover:bg-gray-200' }}">
+        Archived
+    </a>
+
+    {% if all_tags %}
+    <span class="text-gray-300 mx-1">|</span>
+    {% for tag in all_tags %}
+    <a href="/?tag={{ tag.slug }}"
+        class="rounded-full px-3 py-1 text-sm {{ 'bg-indigo-100 text-indigo-800 font-medium' if current_tag == tag.slug else 'bg-gray-100 text-gray-600 hover:bg-gray-200' }}"
+        {% if tag.color %}style="{% if current_tag == tag.slug %}background-color: {{ tag.color }}20; color: {{ tag.color }};{% endif %}"{% endif %}>
+        {{ tag.name }}
+    </a>
+    {% endfor %}
+    {% endif %}
+</div>
+
 {% if projects %}
-<div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+<div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3" id="project-grid">
     {% for project in projects %}
     {% include "components/project_card.html" %}
     {% endfor %}

@@ -1,20 +1,19 @@
+import bcrypt
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from passlib.hash import bcrypt
 
 from benchlog.config import settings
 from benchlog.templating import templates
 
 router = APIRouter()
 
-# Hash the configured password on startup
-_password_hash: str | None = None
+_password_hash: bytes | None = None
 
 
-def _get_password_hash() -> str:
+def _get_password_hash() -> bytes:
     global _password_hash
     if _password_hash is None:
-        _password_hash = bcrypt.hash(settings.password)
+        _password_hash = bcrypt.hashpw(settings.password.encode(), bcrypt.gensalt())
     return _password_hash
 
 
@@ -31,7 +30,7 @@ async def login(request: Request):
     username = form.get("username", "")
     password = form.get("password", "")
 
-    if username == settings.username and bcrypt.verify(password, _get_password_hash()):
+    if username == settings.username and bcrypt.checkpw(password.encode(), _get_password_hash()):
         request.session["user"] = username
         return RedirectResponse("/", status_code=302)
 

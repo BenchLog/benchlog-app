@@ -12,6 +12,11 @@ BASE_DIR = Path(__file__).resolve().parent
 def create_app() -> FastAPI:
     application = FastAPI(title="BenchLog", version="0.1.0")
 
+    from benchlog.auth import AuthMiddleware
+
+    # AuthMiddleware must be added before SessionMiddleware
+    # (Starlette processes middleware in reverse order)
+    application.add_middleware(AuthMiddleware)
     application.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key,

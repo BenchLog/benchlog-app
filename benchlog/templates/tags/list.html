@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Tags — BenchLog{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-2xl font-bold text-gray-900 mb-6">Tags</h1>
+
+    <form method="post" action="/tags" hx-post="/tags" hx-target="#tag-list" hx-swap="innerHTML"
+        class="flex gap-2 mb-6">
+        <input type="text" name="name" placeholder="Tag name" required
+            class="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        <input type="color" name="color" value="#6366f1"
+            class="h-10 w-10 rounded-md border border-gray-300 cursor-pointer">
+        <button type="submit"
+            class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            Add Tag
+        </button>
+    </form>
+
+    <div id="tag-list">
+        {% include "tags/_tag_list.html" %}
+    </div>
+</div>
+{% endblock %}

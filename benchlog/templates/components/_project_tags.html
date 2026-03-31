@@ -1,0 +1,11 @@
+<div id="project-tags" class="flex flex-wrap gap-1 items-center">
+    {% for tag in project.tags %}
+    <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
+        {% if tag.color %}style="background-color: {{ tag.color }}20; color: {{ tag.color }};"{% endif %}>
+        {{ tag.name }}
+        <button hx-post="/projects/{{ project.slug }}/tags/{{ tag.id }}/remove"
+                hx-target="#project-tags" hx-swap="outerHTML"
+                class="ml-0.5 hover:text-red-500">&times;</button>
+    </span>
+    {% endfor %}
+</div>

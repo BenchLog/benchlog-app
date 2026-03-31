@@ -31,7 +31,7 @@ class Project(TimestampMixin, Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
 
     user: Mapped["User"] = relationship(back_populates="projects")  # noqa: F821
-    cover_image: Mapped["Image | None"] = relationship()  # noqa: F821
+    cover_image: Mapped["Image | None"] = relationship(foreign_keys=[cover_image_id])  # noqa: F821
     files: Mapped[list["ProjectFile"]] = relationship(back_populates="project")  # noqa: F821
     updates: Mapped[list["ProjectUpdate"]] = relationship(back_populates="project")  # noqa: F821
     bom_items: Mapped[list["BOMItem"]] = relationship(back_populates="project")  # noqa: F821

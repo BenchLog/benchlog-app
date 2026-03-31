@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="BenchLog", version="0.1.0")
+    application = FastAPI(title="BenchLog", description="Project Journal for Makers", version="0.1.0")
 
     from benchlog.auth import AuthMiddleware
 

@@ -3,10 +3,10 @@
 {% block title %}{{ file.filename }} — {{ project.title }} — BenchLog{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
+<div class="max-w-5xl mx-auto">
+    {% include "components/_project_header.html" %}
+
     <div class="flex items-center gap-2 text-sm text-gray-500 mb-4">
-        <a href="/projects/{{ project.slug }}" class="hover:text-gray-700">{{ project.title }}</a>
-        <span>/</span>
         <a href="/projects/{{ project.slug }}/files" class="hover:text-gray-700">Files</a>
         {% if file.path %}
         <span>/</span>

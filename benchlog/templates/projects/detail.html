@@ -3,54 +3,8 @@
 {% block title %}{{ project.title }} — BenchLog{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto">
-    <div class="flex items-start justify-between mb-6">
-        <div>
-            <div class="flex items-center gap-3 mb-1">
-                <h1 class="text-2xl font-bold text-gray-900">{{ project.title }}</h1>
-                <span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium
-                    {% if project.status.value == 'idea' %}bg-yellow-100 text-yellow-800
-                    {% elif project.status.value == 'in_progress' %}bg-blue-100 text-blue-800
-                    {% elif project.status.value == 'completed' %}bg-green-100 text-green-800
-                    {% else %}bg-gray-100 text-gray-800{% endif %}">
-                    {{ project.status.value | replace('_', ' ') | title }}
-                </span>
-            </div>
-            {% if project.tags %}
-            <div class="flex flex-wrap gap-1 mt-1">
-                {% for tag in project.tags %}
-                <a href="/?tag={{ tag.slug }}"
-                    class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-200"
-                    {% if tag.color %}style="background-color: {{ tag.color }}20; color: {{ tag.color }};"{% endif %}>
-                    {{ tag.name }}
-                </a>
-                {% endfor %}
-            </div>
-            {% endif %}
-        </div>
-        <a href="/projects/{{ project.slug }}/edit"
-            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
-            Edit
-        </a>
-    </div>
-
-    <nav class="flex gap-4 border-b border-gray-200 mb-6">
-        <a href="/projects/{{ project.slug }}" class="border-b-2 border-indigo-500 px-1 pb-2 text-sm font-medium text-indigo-600">
-            Overview
-        </a>
-        <a href="/projects/{{ project.slug }}/files" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">
-            Files
-        </a>
-        <a href="/projects/{{ project.slug }}/updates" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">
-            Updates
-        </a>
-        <a href="/projects/{{ project.slug }}/bom" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">
-            BOM
-        </a>
-        <a href="/projects/{{ project.slug }}/links" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">
-            Links
-        </a>
-    </nav>
+<div class="max-w-5xl mx-auto">
+    {% include "components/_project_header.html" %}
 
     {% if project.cover_image %}
     <div class="mb-6 rounded-lg overflow-hidden">

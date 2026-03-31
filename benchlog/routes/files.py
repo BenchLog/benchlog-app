@@ -16,7 +16,9 @@ router = APIRouter()
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
-    result = await db.execute(select(Project).where(Project.slug == slug))
+    result = await db.execute(
+        select(Project).options(selectinload(Project.tags)).where(Project.slug == slug)
+    )
     return result.scalar_one_or_none()
 
 
@@ -50,6 +52,7 @@ async def file_browser(request: Request, slug: str, db: AsyncSession = Depends(g
         "current_path": path,
         "breadcrumbs": breadcrumbs,
         "format_size": file_service.format_size,
+        "active_tab": "files",
     })
 
 
@@ -124,6 +127,7 @@ async def file_detail(request: Request, slug: str, file_id: str, db: AsyncSessio
         "file": pf,
         "current_version": current_version,
         "format_size": file_service.format_size,
+        "active_tab": "files",
     })
 
 

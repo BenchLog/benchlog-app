@@ -110,6 +110,7 @@ async def project_detail(request: Request, slug: str, db: AsyncSession = Depends
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,
         "description_html": description_html,
+        "active_tab": "overview",
     })
 
 

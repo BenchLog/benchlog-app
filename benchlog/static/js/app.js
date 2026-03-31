@@ -1,3 +1,10 @@
+// Reset forms after successful HTMX requests
+document.addEventListener('htmx:afterRequest', (event) => {
+    if (event.detail.successful && event.detail.elt.tagName === 'FORM') {
+        event.detail.elt.reset();
+    }
+});
+
 document.addEventListener('alpine:init', () => {
     Alpine.data('fileUpload', (slug, currentPath) => ({
         dragging: false,

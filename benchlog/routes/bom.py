@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.models import Project
@@ -15,7 +16,9 @@ router = APIRouter()
 
 
 async def _get_project(slug: str, db: AsyncSession) -> Project | None:
-    result = await db.execute(select(Project).where(Project.slug == slug))
+    result = await db.execute(
+        select(Project).options(selectinload(Project.tags)).where(Project.slug == slug)
+    )
     return result.scalar_one_or_none()
 
 
@@ -35,6 +38,7 @@ async def bom_list(request: Request, slug: str, db: AsyncSession = Depends(get_d
     return templates.TemplateResponse(request, "bom/list.html", {
         "project": project,
         "items": items,
+        "active_tab": "bom",
     })
 
 

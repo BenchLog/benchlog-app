@@ -1,4 +1,3 @@
-import markdown
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from slugify import slugify
@@ -105,7 +104,8 @@ async def project_detail(request: Request, slug: str, db: AsyncSession = Depends
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
-    description_html = markdown.markdown(project.description or "", extensions=["fenced_code", "tables"])
+    from benchlog.markdown import render_markdown
+    description_html = render_markdown(project.description or "")
 
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,

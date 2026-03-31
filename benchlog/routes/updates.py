@@ -1,6 +1,5 @@
 import uuid
 
-import markdown as md
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
@@ -8,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
+from benchlog.markdown import render_markdown
 from benchlog.models import Project
 from benchlog.models.update import ProjectUpdate
 from benchlog.templating import templates
@@ -40,7 +40,7 @@ async def update_feed(request: Request, slug: str, db: AsyncSession = Depends(ge
     for u in updates:
         rendered.append({
             "entry": u,
-            "content_html": md.markdown(u.content, extensions=["fenced_code", "tables"]),
+            "content_html": render_markdown(u.content),
         })
 
     return templates.TemplateResponse(request, "updates/feed.html", {
@@ -96,7 +96,7 @@ async def single_update(request: Request, slug: str, update_id: str, db: AsyncSe
     if not update:
         return HTMLResponse("Update not found", status_code=404)
 
-    content_html = md.markdown(update.content, extensions=["fenced_code", "tables"])
+    content_html = render_markdown(update.content)
 
     return templates.TemplateResponse(request, "updates/detail.html", {
         "project": project,

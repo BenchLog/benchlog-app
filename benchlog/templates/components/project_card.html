@@ -3,7 +3,7 @@
     {% if project.cover_image_id %}
     <a href="/projects/{{ project.slug }}">
         <div class="aspect-video bg-gray-100 overflow-hidden">
-            <img src="/images/{{ project.cover_image_id }}/view" alt="{{ project.title }}" class="h-full w-full object-cover">
+            <img src="/images/{{ project.cover_image_id }}/view" alt="{{ project.title }}" class="h-full w-full object-contain">
         </div>
     </a>
     {% else %}

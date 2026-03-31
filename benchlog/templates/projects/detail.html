@@ -8,7 +8,7 @@
 
     {% if project.cover_image_id %}
     <div class="mb-6 rounded-lg overflow-hidden">
-        <img src="/images/{{ project.cover_image_id }}/view" alt="{{ project.title }}" class="w-full max-h-80 object-cover">
+        <img src="/images/{{ project.cover_image_id }}/view" alt="{{ project.title }}" class="w-full max-h-80 object-contain">
     </div>
     {% endif %}
 

@@ -1,0 +1,9 @@
+from fastapi import FastAPI
+
+from benchlog.routes.auth import router as auth_router
+from benchlog.routes.projects import router as projects_router
+
+
+def register_routes(app: FastAPI) -> None:
+    app.include_router(auth_router)
+    app.include_router(projects_router)

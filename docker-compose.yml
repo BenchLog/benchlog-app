@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: benchlog
+      POSTGRES_PASSWORD: benchlog
+      POSTGRES_DB: benchlog
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      BENCHLOG_SECRET_KEY: dev-secret-change-me
+      BENCHLOG_DATABASE_URL: postgresql+asyncpg://benchlog:benchlog@db/benchlog
+      BENCHLOG_USERNAME: admin
+      BENCHLOG_PASSWORD: admin
+      BENCHLOG_STORAGE_LOCAL_PATH: /app/data/files
+    volumes:
+      - filedata:/app/data/files
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+  filedata:

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-gray-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}BenchLog{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='css/output.css') }}">
+    <script src="{{ url_for('static', path='js/htmx.min.js') }}"></script>
+    <script src="{{ url_for('static', path='js/alpine.min.js') }}" defer></script>
+</head>
+<body class="h-full" hx-boost="true">
+    {% if request.session.get('user') %}
+    <nav class="bg-white border-b border-gray-200">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div class="flex h-14 items-center justify-between">
+                <div class="flex items-center gap-6">
+                    <a href="/" class="text-lg font-bold text-gray-900">BenchLog</a>
+                    <a href="/" class="text-sm text-gray-600 hover:text-gray-900">Projects</a>
+                    <a href="/tags" class="text-sm text-gray-600 hover:text-gray-900">Tags</a>
+                    <a href="/search" class="text-sm text-gray-600 hover:text-gray-900">Search</a>
+                </div>
+                <div class="flex items-center gap-4">
+                    <a href="/projects/new" class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
+                        New Project
+                    </a>
+                    <form method="post" action="/logout">
+                        <button type="submit" class="text-sm text-gray-500 hover:text-gray-700">Log out</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </nav>
+    {% endif %}
+
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

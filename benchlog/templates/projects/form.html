@@ -47,7 +47,7 @@
 
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Cover Image</label>
-            {% if project and project.cover_image %}
+            {% if project and project.cover_image_id %}
             <div class="mb-2 flex items-center gap-3">
                 <img src="/images/{{ project.cover_image_id }}/thumb" alt="Cover" class="h-20 w-32 rounded object-cover border border-gray-200">
                 <span class="text-xs text-gray-500">Current cover image</span>

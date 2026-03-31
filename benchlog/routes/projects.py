@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.get("/", response_class=HTMLResponse)
 async def project_list(request: Request, status: str | None = None, tag: str | None = None, db: AsyncSession = Depends(get_db)):
-    query = select(Project).options(selectinload(Project.tags), selectinload(Project.cover_image))
+    query = select(Project).options(selectinload(Project.tags))
 
     if status:
         query = query.where(Project.status == ProjectStatus(status))
@@ -108,7 +108,7 @@ async def create_project(request: Request, db: AsyncSession = Depends(get_db)):
 async def project_detail(request: Request, slug: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.tags), selectinload(Project.cover_image))
+        .options(selectinload(Project.tags))
         .where(Project.slug == slug)
     )
     project = result.scalar_one_or_none()
@@ -202,7 +202,7 @@ async def toggle_status(request: Request, slug: str, db: AsyncSession = Depends(
     new_status = form.get("status")
 
     result = await db.execute(
-        select(Project).options(selectinload(Project.tags), selectinload(Project.cover_image)).where(Project.slug == slug)
+        select(Project).options(selectinload(Project.tags)).where(Project.slug == slug)
     )
     project = result.scalar_one_or_none()
     if not project:
@@ -217,7 +217,7 @@ async def toggle_status(request: Request, slug: str, db: AsyncSession = Depends(
 @router.post("/projects/{slug}/pin", response_class=HTMLResponse)
 async def toggle_pin(request: Request, slug: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Project).options(selectinload(Project.tags), selectinload(Project.cover_image)).where(Project.slug == slug)
+        select(Project).options(selectinload(Project.tags)).where(Project.slug == slug)
     )
     project = result.scalar_one_or_none()
     if not project:

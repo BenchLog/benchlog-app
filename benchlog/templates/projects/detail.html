@@ -6,9 +6,9 @@
 <div class="max-w-5xl mx-auto">
     {% include "components/_project_header.html" %}
 
-    {% if project.cover_image %}
+    {% if project.cover_image_id %}
     <div class="mb-6 rounded-lg overflow-hidden">
-        <img src="{{ project.cover_image.storage_path }}" alt="{{ project.title }}" class="w-full max-h-80 object-cover">
+        <img src="/images/{{ project.cover_image_id }}/view" alt="{{ project.title }}" class="w-full max-h-80 object-cover">
     </div>
     {% endif %}
 

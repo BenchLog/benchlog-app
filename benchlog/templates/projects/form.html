@@ -8,7 +8,7 @@
         {{ 'Edit Project' if project else 'New Project' }}
     </h1>
 
-    <form method="post" action="{{ '/projects/' ~ project.slug ~ '/edit' if project else '/projects' }}" class="space-y-6">
+    <form method="post" action="{{ '/projects/' ~ project.slug ~ '/edit' if project else '/projects' }}" enctype="multipart/form-data" class="space-y-6">
         <div>
             <label for="title" class="block text-sm font-medium text-gray-700">Title</label>
             <input type="text" id="title" name="title" required
@@ -43,6 +43,19 @@
             <p class="text-xs text-gray-500 mb-1">Supports Markdown</p>
             <textarea id="description" name="description" rows="12"
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-sm">{{ project.description if project else '' }}</textarea>
+        </div>
+
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Cover Image</label>
+            {% if project and project.cover_image %}
+            <div class="mb-2 flex items-center gap-3">
+                <img src="/images/{{ project.cover_image_id }}/thumb" alt="Cover" class="h-20 w-32 rounded object-cover border border-gray-200">
+                <span class="text-xs text-gray-500">Current cover image</span>
+            </div>
+            {% endif %}
+            <input type="file" name="cover_image" accept="image/*"
+                class="w-full text-sm text-gray-500 file:mr-3 file:rounded-md file:border-0 file:bg-indigo-50 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-indigo-700 hover:file:bg-indigo-100">
+            <p class="mt-1 text-xs text-gray-500">Optional. Displayed on the project card and detail page.</p>
         </div>
 
         {% if all_tags %}

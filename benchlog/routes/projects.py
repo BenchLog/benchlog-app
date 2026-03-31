@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from benchlog.database import get_db
 from benchlog.models import Project, Tag
 from benchlog.models.project import ProjectStatus
+from benchlog.services import image_service
 from benchlog.templating import templates
 
 router = APIRouter()
@@ -89,6 +90,16 @@ async def create_project(request: Request, db: AsyncSession = Depends(get_db)):
         tags_result = await db.execute(select(Tag).where(Tag.id.in_(tag_ids)))
         project.tags = list(tags_result.scalars().all())
 
+    # Handle cover image upload
+    cover = form.get("cover_image")
+    if cover and hasattr(cover, "read"):
+        cover_data = await cover.read()
+        if cover_data:
+            image = await image_service.upload_image(
+                db, project.user_id, cover_data, cover.filename, project_id=project.id
+            )
+            project.cover_image_id = image.id
+
     await db.commit()
     return RedirectResponse(f"/projects/{slug}", status_code=302)
 
@@ -158,6 +169,16 @@ async def update_project(request: Request, slug: str, db: AsyncSession = Depends
         project.tags = list(tags_result.scalars().all())
     else:
         project.tags = []
+
+    # Handle cover image upload
+    cover = form.get("cover_image")
+    if cover and hasattr(cover, "read"):
+        cover_data = await cover.read()
+        if cover_data:
+            image = await image_service.upload_image(
+                db, project.user_id, cover_data, cover.filename, project_id=project.id
+            )
+            project.cover_image_id = image.id
 
     await db.commit()
     return RedirectResponse(f"/projects/{slug}", status_code=302)

@@ -11,30 +11,70 @@
 </head>
 <body class="h-full" hx-boost="true">
     {% if request.session.get('user') %}
-    <nav class="bg-white border-b border-gray-200">
+    <nav class="bg-white border-b border-gray-200" x-data="{ mobileOpen: false }">
         <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
             <div class="flex h-14 items-center justify-between">
                 <div class="flex items-center gap-6">
-                    <a href="/" class="text-lg font-bold text-gray-900">BenchLog</a>
-                    <a href="/" class="text-sm text-gray-600 hover:text-gray-900">Projects</a>
-                    <a href="/tags" class="text-sm text-gray-600 hover:text-gray-900">Tags</a>
-                    <a href="/search" class="text-sm text-gray-600 hover:text-gray-900">Search</a>
+                    <a href="/" class="text-lg font-bold text-gray-900 shrink-0">BenchLog</a>
+                    <div class="hidden sm:flex items-center gap-4">
+                        <a href="/" class="text-sm text-gray-600 hover:text-gray-900">Projects</a>
+                        <a href="/tags" class="text-sm text-gray-600 hover:text-gray-900">Tags</a>
+                        <a href="/search" class="text-sm text-gray-600 hover:text-gray-900">Search</a>
+                    </div>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="hidden sm:flex items-center gap-4">
                     <a href="/projects/new" class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
                         New Project
                     </a>
+                    <a href="/settings" class="text-sm text-gray-500 hover:text-gray-700">Settings</a>
                     <form method="post" action="/logout">
                         <button type="submit" class="text-sm text-gray-500 hover:text-gray-700">Log out</button>
                     </form>
                 </div>
+                <!-- Mobile menu button -->
+                <button @click="mobileOpen = !mobileOpen" class="sm:hidden p-1 text-gray-600">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path x-show="!mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        <path x-show="mobileOpen" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <!-- Mobile menu -->
+        <div x-show="mobileOpen" @click.away="mobileOpen = false" class="sm:hidden border-t border-gray-200 bg-white">
+            <div class="px-4 py-3 space-y-2">
+                <a href="/" class="block text-sm text-gray-700 hover:text-gray-900 py-1">Projects</a>
+                <a href="/tags" class="block text-sm text-gray-700 hover:text-gray-900 py-1">Tags</a>
+                <a href="/search" class="block text-sm text-gray-700 hover:text-gray-900 py-1">Search</a>
+                <a href="/projects/new" class="block text-sm font-medium text-indigo-600 hover:text-indigo-500 py-1">New Project</a>
+                <hr class="border-gray-100">
+                <a href="/settings" class="block text-sm text-gray-500 hover:text-gray-700 py-1">Settings</a>
+                <form method="post" action="/logout">
+                    <button type="submit" class="block text-sm text-gray-500 hover:text-gray-700 py-1">Log out</button>
+                </form>
             </div>
         </div>
     </nav>
     {% endif %}
 
-    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         {% block content %}{% endblock %}
     </main>
+
+    {% if request.session.get('user') %}
+    <footer class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+        <div class="flex items-center justify-center gap-1 text-xs text-gray-400">
+            <span>Keyboard shortcuts:</span>
+            <kbd class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-gray-500">/</kbd>
+            <span>Search</span>
+            <span class="mx-1">&middot;</span>
+            <kbd class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-gray-500">n</kbd>
+            <span>New project</span>
+            <span class="mx-1">&middot;</span>
+            <kbd class="rounded border border-gray-200 bg-gray-100 px-1.5 py-0.5 font-mono text-gray-500">h</kbd>
+            <span>Home</span>
+        </div>
+    </footer>
+    {% endif %}
 </body>
 </html>

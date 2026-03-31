@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}{% if q %}Search: {{ q }}{% else %}Search{% endif %} — BenchLog{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+    <h1 class="text-2xl font-bold text-gray-900 mb-6">Search</h1>
+
+    <form method="get" action="/search" class="mb-8">
+        <div class="flex gap-2">
+            <input type="text" name="q" id="search-input" value="{{ q }}" placeholder="Search projects, files, updates..."
+                class="flex-1 rounded-md border border-gray-300 px-4 py-2.5 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+            <script>
+                const si = document.getElementById('search-input');
+                si.focus();
+                si.setSelectionRange(si.value.length, si.value.length);
+            </script>
+            <button type="submit"
+                class="rounded-md bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white hover:bg-indigo-500">
+                Search
+            </button>
+        </div>
+    </form>
+
+    {% if q %}
+    <p class="text-sm text-gray-500 mb-6">{{ total }} result{{ 's' if total != 1 else '' }} for "{{ q }}"</p>
+
+    {% if results.projects %}
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Projects</h2>
+        <div class="space-y-2">
+            {% for project in results.projects %}
+            <a href="/projects/{{ project.slug }}" class="block rounded-lg border border-gray-200 bg-white p-4 hover:bg-gray-50 transition-colors">
+                <div class="flex items-center gap-3">
+                    <h3 class="font-medium text-gray-900">{{ project.title }}</h3>
+                    <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium
+                        {% if project.status.value == 'idea' %}bg-yellow-100 text-yellow-800
+                        {% elif project.status.value == 'in_progress' %}bg-blue-100 text-blue-800
+                        {% elif project.status.value == 'completed' %}bg-green-100 text-green-800
+                        {% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {{ project.status.value | replace('_', ' ') | title }}
+                    </span>
+                </div>
+                {% if project.description %}
+                <p class="text-sm text-gray-500 mt-1 line-clamp-2">{{ project.description[:200] }}</p>
+                {% endif %}
+                {% if project.tags %}
+                <div class="flex flex-wrap gap-1 mt-2">
+                    {% for tag in project.tags %}
+                    <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600"
+                        {% if tag.color %}style="background-color: {{ tag.color }}20; color: {{ tag.color }};"{% endif %}>
+                        {{ tag.name }}
+                    </span>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if results.files %}
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Files</h2>
+        <div class="space-y-2">
+            {% for file in results.files %}
+            <a href="/projects/{{ file.project.slug }}/files/{{ file.id }}/detail" class="block rounded-lg border border-gray-200 bg-white p-4 hover:bg-gray-50 transition-colors">
+                <div class="flex items-center gap-2">
+                    <h3 class="font-medium text-gray-900">{{ file.filename }}</h3>
+                    <span class="text-xs text-gray-400">in {{ file.project.title }}</span>
+                </div>
+                {% if file.path %}
+                <p class="text-xs text-gray-400 font-mono mt-0.5">{{ file.path }}/</p>
+                {% endif %}
+                {% if file.description %}
+                <p class="text-sm text-gray-500 mt-1">{{ file.description[:200] }}</p>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if results.updates %}
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Updates</h2>
+        <div class="space-y-2">
+            {% for update in results.updates %}
+            <a href="/projects/{{ update.project.slug }}/updates/{{ update.id }}" class="block rounded-lg border border-gray-200 bg-white p-4 hover:bg-gray-50 transition-colors">
+                <div class="flex items-center gap-2">
+                    <h3 class="font-medium text-gray-900">{{ update.title or 'Update' }}</h3>
+                    <span class="text-xs text-gray-400">in {{ update.project.title }}</span>
+                </div>
+                <p class="text-sm text-gray-500 mt-1 line-clamp-2">{{ update.content[:200] }}</p>
+                <p class="text-xs text-gray-400 mt-1">{{ update.created_at.strftime('%b %d, %Y') }}</p>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if total == 0 %}
+    <div class="text-center py-12">
+        <p class="text-gray-400">No results found for "{{ q }}".</p>
+    </div>
+    {% endif %}
+
+    {% endif %}
+
+
+</div>
+{% endblock %}

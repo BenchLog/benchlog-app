@@ -1,0 +1,84 @@
+{% if items %}
+<div class="rounded-lg border border-gray-200 bg-white overflow-hidden">
+    <table class="w-full">
+        <thead class="border-b border-gray-200 bg-gray-50">
+            <tr>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Category</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
+                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Supplier</th>
+                <th class="w-24 px-4 py-2"></th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+            {% for item in items %}
+            <tr class="hover:bg-gray-50" x-data="{ editing: false }">
+                <!-- Display mode -->
+                <template x-if="!editing">
+                    <td class="px-4 py-2.5">
+                        <span class="text-sm font-medium text-gray-900">{{ item.name }}</span>
+                        {% if item.notes %}
+                        <p class="text-xs text-gray-400">{{ item.notes }}</p>
+                        {% endif %}
+                    </td>
+                </template>
+                <template x-if="!editing"><td class="px-4 py-2.5 text-sm text-gray-600">{{ item.quantity }}{{ ' ' ~ item.unit if item.unit else '' }}</td></template>
+                <template x-if="!editing"><td class="px-4 py-2.5 text-sm text-gray-500">{{ item.category or '—' }}</td></template>
+                <template x-if="!editing"><td class="px-4 py-2.5 text-sm text-gray-600">{{ ('$%.2f' | format(item.price)) if item.price else '—' }}</td></template>
+                <template x-if="!editing">
+                    <td class="px-4 py-2.5 text-sm">
+                        {% if item.supplier_url %}
+                        <a href="{{ item.supplier_url }}" target="_blank" rel="noopener" class="text-indigo-600 hover:text-indigo-500">Link</a>
+                        {% else %}—{% endif %}
+                    </td>
+                </template>
+                <template x-if="!editing">
+                    <td class="px-4 py-2.5 text-right">
+                        <button @click="editing = true" class="text-xs text-gray-500 hover:text-gray-700 mr-2">Edit</button>
+                        <form method="post" action="/projects/{{ project.slug }}/bom/{{ item.id }}/delete"
+                              hx-post="/projects/{{ project.slug }}/bom/{{ item.id }}/delete" hx-target="#bom-table" hx-swap="innerHTML"
+                              class="inline" hx-confirm="Delete this item?">
+                            <button type="submit" class="text-xs text-red-500 hover:text-red-700">Delete</button>
+                        </form>
+                    </td>
+                </template>
+
+                <!-- Edit mode -->
+                <template x-if="editing">
+                    <td colspan="6" class="px-4 py-3">
+                        <form method="post" action="/projects/{{ project.slug }}/bom/{{ item.id }}/edit"
+                              hx-post="/projects/{{ project.slug }}/bom/{{ item.id }}/edit" hx-target="#bom-table" hx-swap="innerHTML"
+                              class="grid grid-cols-4 gap-2">
+                            <input type="text" name="name" value="{{ item.name }}" required class="col-span-2 rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="number" name="quantity" value="{{ item.quantity }}" step="any" class="rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="text" name="unit" value="{{ item.unit or '' }}" placeholder="unit" class="rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="text" name="category" value="{{ item.category or '' }}" placeholder="category" class="rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="number" name="price" value="{{ item.price or '' }}" step="0.01" placeholder="price" class="rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="url" name="supplier_url" value="{{ item.supplier_url or '' }}" placeholder="supplier url" class="col-span-2 rounded border border-gray-300 px-2 py-1 text-sm">
+                            <input type="text" name="notes" value="{{ item.notes or '' }}" placeholder="notes" class="col-span-3 rounded border border-gray-300 px-2 py-1 text-sm">
+                            <div class="flex gap-2 items-center">
+                                <button type="submit" class="text-xs text-indigo-600 hover:text-indigo-500">Save</button>
+                                <button type="button" @click="editing = false" class="text-xs text-gray-500 hover:text-gray-700">Cancel</button>
+                            </div>
+                        </form>
+                    </td>
+                </template>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% set total = items | selectattr('price') | map(attribute='price') | list %}
+    {% if total %}
+    <div class="border-t border-gray-200 bg-gray-50 px-4 py-2 text-sm text-right">
+        <span class="text-gray-500">Total:</span>
+        <span class="font-medium text-gray-900">${{ '%.2f' | format(total | sum) }}</span>
+    </div>
+    {% endif %}
+</div>
+{% else %}
+<div class="text-center py-8">
+    <p class="text-gray-400">No items yet. Add your first part or material above.</p>
+</div>
+{% endif %}

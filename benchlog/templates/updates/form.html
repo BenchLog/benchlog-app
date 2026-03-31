@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Edit Update' if update else 'New Update' }} — {{ project.title }} — BenchLog{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+    <div class="flex items-center gap-2 text-sm text-gray-500 mb-4">
+        <a href="/projects/{{ project.slug }}" class="hover:text-gray-700">{{ project.title }}</a>
+        <span>/</span>
+        <a href="/projects/{{ project.slug }}/updates" class="hover:text-gray-700">Updates</a>
+        <span>/</span>
+        <span class="text-gray-900 font-medium">{{ 'Edit' if update else 'New' }}</span>
+    </div>
+
+    <h1 class="text-xl font-bold text-gray-900 mb-6">{{ 'Edit Update' if update else 'New Update' }}</h1>
+
+    <form method="post"
+        action="{{ '/projects/' ~ project.slug ~ '/updates/' ~ update.id ~ '/edit' if update else '/projects/' ~ project.slug ~ '/updates' }}"
+        class="space-y-4">
+
+        <div>
+            <label for="title" class="block text-sm font-medium text-gray-700">Title <span class="text-gray-400 font-normal">(optional — leave blank for a quick micro-update)</span></label>
+            <input type="text" id="title" name="title"
+                value="{{ update.title if update and update.title else '' }}"
+                placeholder="e.g. First test print complete"
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        </div>
+
+        <div>
+            <label for="content" class="block text-sm font-medium text-gray-700">Content <span class="text-gray-400 font-normal">(Markdown)</span></label>
+            <textarea id="content" name="content" rows="12" required
+                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-sm">{{ update.content if update else '' }}</textarea>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button type="submit"
+                class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+                {{ 'Save' if update else 'Post Update' }}
+            </button>
+            <a href="/projects/{{ project.slug }}/updates"
+                class="text-sm text-gray-500 hover:text-gray-700">Cancel</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

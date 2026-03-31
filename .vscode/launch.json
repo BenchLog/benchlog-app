@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "BenchLog: Dev Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": [
+                "benchlog.main:app",
+                "--reload",
+                "--port", "8000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "BenchLog: Tailwind Watch",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "./tailwindcss -i benchlog/static/css/input.css -o benchlog/static/css/output.css --watch",
+            "cwd": "${workspaceFolder}"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "BenchLog: Full Dev",
+            "configurations": ["BenchLog: Dev Server", "BenchLog: Tailwind Watch"]
+        }
+    ]
+}

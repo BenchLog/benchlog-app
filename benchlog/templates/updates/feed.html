@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Updates — {{ project.title }} — BenchLog{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <div class="flex items-center gap-2 text-sm text-gray-500 mb-1">
+        <a href="/projects/{{ project.slug }}" class="hover:text-gray-700">{{ project.title }}</a>
+        <span>/</span>
+        <span class="text-gray-900 font-medium">Updates</span>
+    </div>
+
+    <nav class="flex gap-4 border-b border-gray-200 mb-6">
+        <a href="/projects/{{ project.slug }}" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">Overview</a>
+        <a href="/projects/{{ project.slug }}/files" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">Files</a>
+        <a href="/projects/{{ project.slug }}/updates" class="border-b-2 border-indigo-500 px-1 pb-2 text-sm font-medium text-indigo-600">Updates</a>
+        <a href="/projects/{{ project.slug }}/bom" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">BOM</a>
+        <a href="/projects/{{ project.slug }}/links" class="border-b-2 border-transparent px-1 pb-2 text-sm text-gray-500 hover:border-gray-300 hover:text-gray-700">Links</a>
+    </nav>
+
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-xl font-bold text-gray-900">Updates</h1>
+        <a href="/projects/{{ project.slug }}/updates/new"
+            class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            New Update
+        </a>
+    </div>
+
+    {% if updates %}
+    <div class="space-y-6">
+        {% for entry in updates %}
+        {% set u = entry["entry"] %}
+        <article class="rounded-lg border border-gray-200 bg-white p-5">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    {% if u.title %}
+                    <a href="/projects/{{ project.slug }}/updates/{{ u.id }}" class="text-lg font-semibold text-gray-900 hover:text-indigo-600">{{ u.title }}</a>
+                    {% endif %}
+                    <p class="text-xs text-gray-400">{{ u.created_at.strftime('%b %d, %Y at %H:%M') }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a href="/projects/{{ project.slug }}/updates/{{ u.id }}/edit" class="text-xs text-gray-500 hover:text-gray-700">Edit</a>
+                    <form method="post" action="/projects/{{ project.slug }}/updates/{{ u.id }}/delete"
+                        onsubmit="return confirm('Delete this update?')">
+                        <button type="submit" class="text-xs text-red-500 hover:text-red-700">Delete</button>
+                    </form>
+                </div>
+            </div>
+            <div class="prose prose-sm prose-gray max-w-none">
+                {{ entry["content_html"] | safe }}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-center py-12">
+        <p class="text-gray-400 mb-3">No updates yet.</p>
+        <a href="/projects/{{ project.slug }}/updates/new" class="text-sm text-indigo-600 hover:text-indigo-500">Post your first update</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

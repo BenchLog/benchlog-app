@@ -1,0 +1,56 @@
+{% set type_icons = {
+    'github': '&#128187;',
+    'website': '&#127760;',
+    'video': '&#127909;',
+    'cloud_storage': '&#9729;',
+    'store': '&#128722;',
+    'documentation': '&#128196;',
+    'other': '&#128279;'
+} %}
+
+{% if links %}
+<div class="space-y-2">
+    {% for link in links %}
+    <div class="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3"
+         x-data="{ editing: false }">
+        <div x-show="!editing" class="flex items-center gap-3 min-w-0">
+            <span class="text-lg shrink-0" title="{{ link.link_type.value | replace('_', ' ') | title }}">{{ type_icons[link.link_type.value] | default('&#128279;') | safe }}</span>
+            <div class="min-w-0">
+                <a href="{{ link.url }}" target="_blank" rel="noopener"
+                    class="text-sm font-medium text-indigo-600 hover:text-indigo-500">{{ link.title }}</a>
+                <p class="text-xs text-gray-400 truncate">{{ link.url }}</p>
+            </div>
+        </div>
+
+        <form x-show="editing" method="post" action="/projects/{{ project.slug }}/links/{{ link.id }}/edit"
+              hx-post="/projects/{{ project.slug }}/links/{{ link.id }}/edit" hx-target="#link-list" hx-swap="innerHTML"
+              class="flex items-center gap-2 flex-1">
+            <input type="text" name="title" value="{{ link.title }}" required
+                class="rounded border border-gray-300 px-2 py-1 text-sm flex-1">
+            <input type="url" name="url" value="{{ link.url }}" required
+                class="rounded border border-gray-300 px-2 py-1 text-sm flex-1">
+            <select name="link_type" class="rounded border border-gray-300 px-2 py-1 text-sm">
+                {% for lt in link_types %}
+                <option value="{{ lt }}" {{ 'selected' if link.link_type.value == lt else '' }}>{{ lt | replace('_', ' ') | title }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="text-sm text-indigo-600 hover:text-indigo-500">Save</button>
+            <button type="button" @click="editing = false" class="text-sm text-gray-500 hover:text-gray-700">Cancel</button>
+        </form>
+
+        <div x-show="!editing" class="flex items-center gap-2 shrink-0 ml-3">
+            <button @click="editing = true" class="text-xs text-gray-500 hover:text-gray-700">Edit</button>
+            <form method="post" action="/projects/{{ project.slug }}/links/{{ link.id }}/delete"
+                  hx-post="/projects/{{ project.slug }}/links/{{ link.id }}/delete" hx-target="#link-list" hx-swap="innerHTML"
+                  hx-confirm="Delete this link?">
+                <button type="submit" class="text-xs text-red-500 hover:text-red-700">Delete</button>
+            </form>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-8">
+    <p class="text-gray-400">No links yet. Add your first external resource above.</p>
+</div>
+{% endif %}

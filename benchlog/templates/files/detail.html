@@ -16,16 +16,16 @@
         <span class="text-gray-900">{{ file.filename }}</span>
     </div>
 
-    <div class="flex items-start justify-between mb-6">
-        <div>
-            <h1 class="text-xl font-bold text-gray-900">{{ file.filename }}</h1>
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-6">
+        <div class="min-w-0">
+            <h1 class="text-xl font-bold text-gray-900 break-words">{{ file.filename }}</h1>
             {% if current_version %}
             <p class="text-sm text-gray-500 mt-1">
                 {{ format_size(current_version.size_bytes) }} · {{ current_version.mime_type }} · Version {{ current_version.version_number }}
             </p>
             {% endif %}
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 shrink-0">
             <a href="/projects/{{ project.slug }}/files/{{ file.id }}/download"
                 class="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
                 Download

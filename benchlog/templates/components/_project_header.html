@@ -22,10 +22,17 @@
         </div>
         {% endif %}
     </div>
-    <a href="/projects/{{ project.slug }}/edit"
-        class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 shrink-0 self-start">
-        Edit
-    </a>
+    <div class="flex items-center gap-2 shrink-0 self-start">
+        <a href="/projects/{{ project.slug }}/export"
+            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
+            title="Download project as ZIP">
+            Export ZIP
+        </a>
+        <a href="/projects/{{ project.slug }}/edit"
+            class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">
+            Edit
+        </a>
+    </div>
 </div>
 
 <nav class="flex gap-4 border-b border-gray-200 mb-6 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 scrollbar-hide">

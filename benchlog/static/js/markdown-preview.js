@@ -3,9 +3,16 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('markdownEditor', () => ({
         source: '',
         showPreview: false,
+        _md: null,
 
         init() {
-            // Initialize source from the textarea content
+            if (window.markdownit) {
+                this._md = window.markdownit({
+                    html: false,
+                    linkify: true,
+                    typographer: true,
+                });
+            }
             const textarea = this.$el.querySelector('textarea');
             if (textarea) {
                 this.source = textarea.value;
@@ -16,13 +23,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         get rendered() {
-            if (!this.source || !window.markdownit) return '';
-            const md = window.markdownit({
-                html: false,
-                linkify: true,
-                typographer: true,
-            });
-            return md.render(this.source);
+            if (!this.source || !this._md) return '';
+            return this._md.render(this.source);
         },
     }));
 });

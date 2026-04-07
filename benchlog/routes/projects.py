@@ -115,8 +115,21 @@ async def project_detail(request: Request, slug: str, db: AsyncSession = Depends
     if not project:
         return HTMLResponse("Project not found", status_code=404)
 
-    from benchlog.markdown import render_markdown
-    description_html = render_markdown(project.description or "")
+    from benchlog.markdown import render_markdown_for_project
+    from benchlog.models.file import ProjectFile
+
+    # Build file lookup for markdown file links
+    file_result = await db.execute(
+        select(ProjectFile.id, ProjectFile.path, ProjectFile.filename)
+        .where(ProjectFile.project_id == project.id)
+    )
+    file_rows = file_result.all()
+    file_map = {(p, f): str(fid) for fid, p, f in file_rows}
+    file_lookup = lambda path, filename: file_map.get((path, filename))
+
+    description_html = render_markdown_for_project(
+        project.description or "", project.slug, file_lookup
+    ) if project.description else ""
 
     return templates.TemplateResponse(request, "projects/detail.html", {
         "project": project,

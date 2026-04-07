@@ -7,8 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
-from benchlog.markdown import render_markdown
+from benchlog.markdown import render_markdown, render_markdown_for_project
 from benchlog.models import Project
+from benchlog.models.file import ProjectFile
 from benchlog.models.update import ProjectUpdate
 from benchlog.templating import templates
 
@@ -35,12 +36,21 @@ async def update_feed(request: Request, slug: str, db: AsyncSession = Depends(ge
     )
     updates = result.scalars().all()
 
+    # Build file lookup for markdown file links
+    file_result = await db.execute(
+        select(ProjectFile.id, ProjectFile.path, ProjectFile.filename)
+        .where(ProjectFile.project_id == project.id)
+    )
+    file_rows = file_result.all()
+    file_map = {(p, f): str(fid) for fid, p, f in file_rows}
+    file_lookup = lambda path, filename: file_map.get((path, filename))
+
     # Render markdown for each update
     rendered = []
     for u in updates:
         rendered.append({
             "entry": u,
-            "content_html": render_markdown(u.content),
+            "content_html": render_markdown_for_project(u.content, slug, file_lookup),
         })
 
     return templates.TemplateResponse(request, "updates/feed.html", {
@@ -96,7 +106,16 @@ async def single_update(request: Request, slug: str, update_id: str, db: AsyncSe
     if not update:
         return HTMLResponse("Update not found", status_code=404)
 
-    content_html = render_markdown(update.content)
+    # Build file lookup for markdown file links
+    file_result = await db.execute(
+        select(ProjectFile.id, ProjectFile.path, ProjectFile.filename)
+        .where(ProjectFile.project_id == project.id)
+    )
+    file_rows = file_result.all()
+    file_map = {(p, f): str(fid) for fid, p, f in file_rows}
+    file_lookup = lambda path, filename: file_map.get((path, filename))
+
+    content_html = render_markdown_for_project(update.content, slug, file_lookup)
 
     return templates.TemplateResponse(request, "updates/detail.html", {
         "project": project,

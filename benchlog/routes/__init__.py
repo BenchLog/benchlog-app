@@ -10,6 +10,7 @@ from benchlog.routes.search import router as search_router
 from benchlog.routes.settings import router as settings_router
 from benchlog.routes.tags import router as tags_router
 from benchlog.routes.export import router as export_router
+from benchlog.routes.feed import router as feed_router
 from benchlog.routes.updates import router as updates_router
 
 
@@ -23,5 +24,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(tags_router)
     app.include_router(images_router)
     app.include_router(export_router)
+    app.include_router(feed_router)
     app.include_router(search_router)
     app.include_router(settings_router)

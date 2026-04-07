@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}BenchLog{% endblock %}</title>
+    <link rel="alternate" type="application/atom+xml" title="BenchLog Updates" href="/feed.atom">
     <link rel="stylesheet" href="{{ url_for('static', path='css/output.css') }}">
     <style>[x-cloak] { display: none !important; }</style>
     <script src="{{ url_for('static', path='js/htmx.min.js') }}"></script>

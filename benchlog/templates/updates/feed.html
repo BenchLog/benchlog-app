@@ -8,10 +8,16 @@
 
     <div class="flex items-center justify-between mb-6">
         <h2 class="text-lg font-semibold text-gray-900">Updates</h2>
-        <a href="/projects/{{ project.slug }}/updates/new"
-            class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
-            New Update
-        </a>
+        <div class="flex items-center gap-3">
+            <a href="/projects/{{ project.slug }}/feed.atom"
+                class="text-sm text-gray-400 hover:text-orange-500" title="Atom Feed">
+                RSS
+            </a>
+            <a href="/projects/{{ project.slug }}/updates/new"
+                class="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+                New Update
+            </a>
+        </div>
     </div>
 
     {% if updates %}

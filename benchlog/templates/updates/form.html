@@ -26,10 +26,26 @@
                 class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
         </div>
 
-        <div>
-            <label for="content" class="block text-sm font-medium text-gray-700">Content <span class="text-gray-400 font-normal">(Markdown)</span></label>
-            <textarea id="content" name="content" rows="12" required
-                class="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-sm">{{ update.content if update else '' }}</textarea>
+        <div x-data="markdownEditor()">
+            <div class="flex items-center justify-between mb-1">
+                <label for="content" class="block text-sm font-medium text-gray-700">Content <span class="text-gray-400 font-normal">(Markdown)</span></label>
+                <button type="button" @click="showPreview = !showPreview"
+                    class="text-xs text-indigo-600 hover:text-indigo-500"
+                    x-text="showPreview ? 'Hide Preview' : 'Show Preview'">
+                </button>
+            </div>
+            <div class="grid gap-4" :class="showPreview ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'">
+                <div>
+                    <textarea id="content" name="content" rows="16" required
+                        class="block w-full rounded-md border border-gray-300 px-3 py-2 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-sm">{{ update.content if update else '' }}</textarea>
+                </div>
+                <div x-show="showPreview" x-cloak
+                    class="rounded-md border border-gray-200 bg-white px-4 py-3 overflow-y-auto prose prose-sm prose-gray max-w-none"
+                    style="min-height: 20rem; max-height: 32rem;"
+                    x-html="rendered">
+                </div>
+            </div>
+            <p class="mt-1 text-xs text-gray-400">Paste images with Ctrl+V to auto-upload.</p>
         </div>
 
         <div class="flex items-center gap-3">

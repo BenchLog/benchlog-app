@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}BenchLog{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='css/output.css') }}">
+    <style>[x-cloak] { display: none !important; }</style>
     <script src="{{ url_for('static', path='js/htmx.min.js') }}"></script>
     <script src="{{ url_for('static', path='js/app.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
+    <script src="{{ url_for('static', path='js/markdown-preview.js') }}"></script>
     <script src="{{ url_for('static', path='js/alpine.min.js') }}" defer></script>
 </head>
 <body class="h-full" hx-boost="true">

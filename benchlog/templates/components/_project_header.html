@@ -23,7 +23,7 @@
         {% endif %}
     </div>
     <div class="flex items-center gap-2 shrink-0 self-start">
-        <a href="/projects/{{ project.slug }}/export"
+        <a href="/projects/{{ project.slug }}/export" hx-boost="false"
             class="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50"
             title="Download project as ZIP">
             Export ZIP

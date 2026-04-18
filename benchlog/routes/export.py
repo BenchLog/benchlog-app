@@ -72,7 +72,7 @@ async def export_project_zip(slug: str, db: AsyncSession = Depends(get_db)):
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         # Add README.md
-        readme = _build_readme(project, updates, bom_items, links)
+        readme = _build_readme(project)
         zf.writestr(f"{prefix}/README.md", readme)
 
         # Add project files (current versions only)
@@ -92,6 +92,44 @@ async def export_project_zip(slug: str, db: AsyncSession = Depends(get_db)):
             except FileNotFoundError:
                 continue
 
+        # Add updates as a single markdown file
+        if updates:
+            update_lines = ["# Updates\n"]
+            for u in updates:
+                date_str = u.created_at.strftime("%Y-%m-%d %H:%M")
+                if u.title:
+                    update_lines.append(f"## {u.title}")
+                    update_lines.append(f"*{date_str}*\n")
+                else:
+                    update_lines.append(f"## {date_str}\n")
+                update_lines.append(u.content)
+                update_lines.append("\n---\n")
+            zf.writestr(f"{prefix}/updates.md", "\n".join(update_lines))
+
+        # Add BOM as CSV
+        if bom_items:
+            csv_lines = ["Name,Quantity,Unit,Category,Price,Supplier URL,Notes"]
+            for item in bom_items:
+                row = [
+                    _csv_escape(item.name),
+                    str(item.quantity) if item.quantity else "",
+                    item.unit or "",
+                    item.category or "",
+                    f"{item.price:.2f}" if item.price else "",
+                    item.supplier_url or "",
+                    _csv_escape(item.notes or ""),
+                ]
+                csv_lines.append(",".join(row))
+            zf.writestr(f"{prefix}/bom.csv", "\n".join(csv_lines))
+
+        # Add links as markdown
+        if links:
+            link_lines = ["# External Links\n"]
+            for link in links:
+                link_type = link.link_type.value.replace("_", " ").title()
+                link_lines.append(f"- [{link.title}]({link.url}) ({link_type})")
+            zf.writestr(f"{prefix}/links.md", "\n".join(link_lines))
+
     buf.seek(0)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     filename = f"{project.slug}-{timestamp}.zip"
@@ -103,7 +141,14 @@ async def export_project_zip(slug: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-def _build_readme(project, updates, bom_items, links) -> str:
+def _csv_escape(value: str) -> str:
+    """Escape a value for CSV output."""
+    if "," in value or '"' in value or "\n" in value:
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
+def _build_readme(project) -> str:
     """Generate a README.md for the exported project."""
     lines = [f"# {project.title}\n"]
 
@@ -117,40 +162,6 @@ def _build_readme(project, updates, bom_items, links) -> str:
     if project.description:
         lines.append("")
         lines.append(project.description)
-        lines.append("")
-
-    if updates:
-        lines.append("\n---\n")
-        lines.append("## Updates\n")
-        for u in updates:
-            date_str = u.created_at.strftime("%Y-%m-%d %H:%M")
-            if u.title:
-                lines.append(f"### {u.title}")
-                lines.append(f"*{date_str}*\n")
-            else:
-                lines.append(f"### {date_str}\n")
-            lines.append(u.content)
-            lines.append("")
-
-    if bom_items:
-        lines.append("\n---\n")
-        lines.append("## Bill of Materials\n")
-        lines.append("| Name | Qty | Unit | Category | Price | Notes |")
-        lines.append("|------|-----|------|----------|-------|-------|")
-        for item in bom_items:
-            qty = str(item.quantity) if item.quantity else ""
-            unit = item.unit or ""
-            cat = item.category or ""
-            price = f"${item.price:.2f}" if item.price else ""
-            notes = item.notes or ""
-            lines.append(f"| {item.name} | {qty} | {unit} | {cat} | {price} | {notes} |")
-        lines.append("")
-
-    if links:
-        lines.append("\n---\n")
-        lines.append("## Links\n")
-        for link in links:
-            lines.append(f"- [{link.title}]({link.url})")
         lines.append("")
 
     lines.append("\n---\n")

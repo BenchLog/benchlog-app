@@ -16,7 +16,10 @@ from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
 
 _md = (
-    MarkdownIt("gfm-like", {"linkify": True, "typographer": True})
+    # html: false forces escaping of raw HTML tags in the source — otherwise
+    # the gfm-like preset would let `<script>` etc. through unchanged, since
+    # we mark the rendered output safe for Jinja.
+    MarkdownIt("gfm-like", {"linkify": True, "typographer": True, "html": False})
     .enable("table")
     .enable("strikethrough")
 )

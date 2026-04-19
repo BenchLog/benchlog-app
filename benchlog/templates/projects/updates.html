@@ -1,0 +1,35 @@
+{% extends "projects/_layout.html" %}
+{% block title %}Updates · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Updates</h2>
+    {% if is_owner %}
+    <a href="{{ project_url }}/updates/new" class="btn-primary text-sm">Post update</a>
+    {% endif %}
+</div>
+
+{% if updates %}
+<ul class="space-y-4 list-none p-0">
+    {% for update in updates %}
+    <li>
+        {% include "updates/_feed_item.html" %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted mb-4">
+        {% if is_owner %}
+            No updates yet. Post the first one as you make progress.
+        {% else %}
+            No public updates posted yet.
+        {% endif %}
+    </p>
+    {% if is_owner %}
+    <a href="{{ project_url }}/updates/new" class="btn-primary text-sm">Post update</a>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

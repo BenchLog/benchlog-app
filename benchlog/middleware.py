@@ -17,19 +17,32 @@ PUBLIC_PREFIXES = (
 
 
 def _is_public_project_view(method: str, path: str) -> bool:
-    """Allow `GET /u/{username}/{slug}` through for guests.
+    """Allow guest GETs for canonical project + update permalinks.
 
-    The route itself enforces visibility — private projects still 404 for
-    non-owners and guests. We restrict to GET and to exactly two non-empty
-    path segments so `/u/{username}/{slug}/edit` etc. stay gated.
+    - `/u/{username}/{slug}` — overview tab
+    - `/u/{username}/{slug}/updates` — updates tab (full feed)
+    - `/u/{username}/{slug}/updates/{id}` — single update permalink
+
+    Route-level visibility checks enforce private-project 404s. Anything
+    with a mutation suffix (`/edit`, `/delete`, `/new`) stays auth-gated.
     """
     if method != "GET":
         return False
     if not path.startswith("/u/"):
         return False
-    tail = path[len("/u/"):].rstrip("/")
-    parts = tail.split("/")
-    return len(parts) == 2 and all(parts)
+    parts = path[len("/u/"):].rstrip("/").split("/")
+    if not all(parts):
+        return False
+    # /u/{username}/{slug}
+    if len(parts) == 2:
+        return True
+    # /u/{username}/{slug}/updates
+    if len(parts) == 3 and parts[2] == "updates":
+        return True
+    # /u/{username}/{slug}/updates/{id} — but not /updates/new, /edit, /delete
+    if len(parts) == 4 and parts[2] == "updates" and parts[3] != "new":
+        return True
+    return False
 
 CSP_POLICY = (
     "default-src 'self'; "

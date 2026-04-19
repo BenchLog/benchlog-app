@@ -1,21 +1,21 @@
-{% extends "base.html" %}
+{% extends "projects/_layout.html" %}
 {% block title %}{{ project.title }} · BenchLog{% endblock %}
-{% block content %}
-{% include "components/_project_header.html" %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
 {% if project.description %}
-<section class="card mb-6">
+<section class="card">
     <h2 class="text-lg mb-3">Description</h2>
     <p class="text-ink whitespace-pre-wrap">{{ project.description }}</p>
 </section>
-{% endif %}
-
-{% if is_owner %}
-<section class="card">
-    <h2 class="text-lg mb-2">Next up</h2>
-    <p class="text-sm text-ink-muted">
-        Updates, BOM, links, files, and images will appear here as we bring each feature back.
-    </p>
-</section>
+{% elif is_owner %}
+<div class="card text-center py-8">
+    <p class="text-ink-muted mb-3">No description yet.</p>
+    <a href="{{ project_url }}/edit" class="btn-ghost text-sm">Add a description</a>
+</div>
+{% else %}
+<div class="card text-center py-8">
+    <p class="text-ink-muted">No description yet.</p>
+</div>
 {% endif %}
 {% endblock %}

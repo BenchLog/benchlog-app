@@ -1,0 +1,30 @@
+{# Tab bar rendered below the project header on every project-scoped page,
+   so the user can always navigate between sections and deep-link to one.
+   Expects `project` in scope; additional tabs appear here as new feature
+   areas (files, bom, links, images) come online. #}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set tabs = [
+    ('',         'Overview'),
+    ('/updates', 'Updates'),
+] %}
+{% set path = request.url.path %}
+<nav class="mb-6 border-b border-edge" aria-label="Project sections">
+    <ul class="flex flex-wrap -mb-px list-none p-0 m-0">
+        {% for suffix, label in tabs %}
+            {% set href = project_url + suffix %}
+            {% if suffix %}
+                {% set active = path == href or path.startswith(href + '/') %}
+            {% else %}
+                {% set active = path == project_url %}
+            {% endif %}
+            <li>
+                <a href="{{ href }}"
+                   {% if active %}aria-current="page"{% endif %}
+                   class="inline-flex items-center px-4 py-2 border-b-2 text-sm transition-colors
+                          {% if active %}border-rust text-ink font-medium{% else %}border-transparent text-ink-muted hover:border-edge hover:text-ink{% endif %}">
+                    {{ label }}
+                </a>
+            </li>
+        {% endfor %}
+    </ul>
+</nav>

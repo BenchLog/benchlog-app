@@ -1,0 +1,9 @@
+{# Shared wrapper for every project-scoped page. Renders the header +
+   tab bar once, and lets child templates drop their content into the
+   `project_content` block. Used by overview/updates/update-detail. #}
+{% extends "base.html" %}
+{% block content %}
+{% include "components/_project_header.html" %}
+{% include "components/_project_tabs.html" %}
+{% block project_content %}{% endblock %}
+{% endblock %}

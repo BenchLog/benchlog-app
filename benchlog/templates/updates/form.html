@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{% if update %}Edit update{% else %}Post update{% endif %} · {{ project.title }}{% endblock %}
+{% block content %}
+{% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug %}
+{% set action_url = project_url ~ '/updates/' ~ update.id if update else project_url ~ '/updates' %}
+
+<div class="meta mb-2">
+    <a href="/projects" class="hover:text-rust">My Projects</a> /
+    <a href="{{ project_url }}" class="hover:text-rust">{{ project.title }}</a>
+    {% if update %} / <a href="{{ project_url }}/updates/{{ update.id }}" class="hover:text-rust">Update</a> / Edit{% else %} / New update{% endif %}
+</div>
+<h1 class="text-3xl mb-6">{% if update %}Edit update{% else %}Post update{% endif %}</h1>
+
+{% if error %}
+<div class="card max-w-2xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
+    {{ error }}
+</div>
+{% endif %}
+
+<form method="post" action="{{ action_url }}" class="card max-w-2xl space-y-4">
+    {% include "components/_csrf.html" %}
+
+    <div>
+        <label for="title">Title <span class="meta ml-2">optional</span></label>
+        <input id="title" name="title" type="text" maxlength="256"
+               value="{{ form_values.title }}"
+               placeholder="e.g. Finished the base coat">
+    </div>
+
+    <div>
+        <label for="content">Content</label>
+        <textarea id="content" name="content" rows="12" required autofocus>{{ form_values.content }}</textarea>
+        <p class="meta mt-1">Markdown supported — headings, lists, task lists, tables, and footnotes.</p>
+    </div>
+
+    <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" name="is_public" value="1" {% if form_values.is_public %}checked{% endif %}>
+        Public — visible to anyone who can see this project.
+        <span class="meta">Default is private so you can post todos and thoughts without polishing them first.</span>
+    </label>
+
+    <div class="flex flex-wrap items-center gap-2 pt-2">
+        <button type="submit" class="btn-primary text-sm">
+            {% if update %}Save changes{% else %}Post update{% endif %}
+        </button>
+        <a href="{% if update %}{{ project_url }}/updates/{{ update.id }}{% else %}{{ project_url }}{% endif %}" class="btn-ghost text-sm">Cancel</a>
+    </div>
+</form>
+{% endblock %}

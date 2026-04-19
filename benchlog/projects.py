@@ -78,12 +78,16 @@ async def get_project_by_username_and_slug(
     """Look up the canonical `/u/{username}/{slug}` view target.
 
     Username matching is case-insensitive so `/u/Alice/foo` and
-    `/u/alice/foo` land on the same project. Tags and owner are
-    eager-loaded for the detail template.
+    `/u/alice/foo` land on the same project. Tags, owner, and updates
+    are eager-loaded for the detail template.
     """
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.user), selectinload(Project.tags))
+        .options(
+            selectinload(Project.user),
+            selectinload(Project.tags),
+            selectinload(Project.updates),
+        )
         .join(Project.user)
         .where(
             func.lower(User.username) == username.lower(),

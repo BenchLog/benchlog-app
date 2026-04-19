@@ -1,0 +1,18 @@
+{# Renders a row of clickable tag chips.
+   Args:
+     tags             — iterable of Tag (or objects with `.slug`)
+     href_prefix      — "/projects" or "/explore" ; where the tag click lands
+     class            — optional extra classes on the wrapper
+#}
+{% if tags %}
+<ul class="flex flex-wrap gap-1.5 list-none p-0 m-0 {{ class or '' }}">
+    {% for tag in tags %}
+    <li>
+        <a href="{{ href_prefix }}?tag={{ tag.slug }}"
+           class="inline-flex items-center rounded-full border border-edge bg-rust/10 text-rust-deep px-2 py-0.5 text-xs font-mono tracking-wide no-underline hover:border-rust">
+            #{{ tag.slug }}
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}

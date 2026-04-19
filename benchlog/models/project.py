@@ -38,3 +38,6 @@ class Project(TimestampMixin, Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
     user: Mapped["User"] = relationship(back_populates="projects")  # noqa: F821
+    tags: Mapped[list["Tag"]] = relationship(  # noqa: F821
+        secondary="project_tags", back_populates="projects", lazy="raise_on_sql"
+    )

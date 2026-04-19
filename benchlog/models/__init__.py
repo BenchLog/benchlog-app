@@ -5,6 +5,7 @@ from benchlog.models.oidc import OIDCIdentity, OIDCProvider
 from benchlog.models.project import Project, ProjectStatus
 from benchlog.models.site_settings import SiteSettings
 from benchlog.models.smtp_config import SMTPConfig
+from benchlog.models.tag import ProjectTag, Tag
 from benchlog.models.user import User
 from benchlog.models.webauthn_credential import WebAuthnCredential
 
@@ -16,8 +17,10 @@ __all__ = [
     "OIDCProvider",
     "Project",
     "ProjectStatus",
+    "ProjectTag",
     "SiteSettings",
     "SMTPConfig",
+    "Tag",
     "User",
     "WebAuthnCredential",
 ]

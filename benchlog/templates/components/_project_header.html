@@ -3,14 +3,22 @@
      project   — required (with eager-loaded `user`)
      is_owner  — boolean; hides Edit/management when the viewer is not the owner #}
 <header class="mb-6">
-    <div class="meta mb-2">
+    <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {% if is_owner %}
             <a href="/projects" class="hover:text-rust">My Projects</a>
         {% else %}
             <a href="/explore" class="hover:text-rust">Explore</a>
         {% endif %}
-        / {{ project.status.value.replace('_', ' ') }}
-        {% if not project.is_public %} · <span class="text-ink-muted">Private</span>{% endif %}
+        <span aria-hidden="true">/</span>
+        <span>{{ project.status.value.replace('_', ' ') }}</span>
+        {% if project.is_public %}
+        <span aria-hidden="true">·</span>
+        <span class="inline-flex items-center gap-1 text-rust-deep"
+              title="Public — anyone with the link can view, and it appears on Explore">
+            <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+            Public
+        </span>
+        {% endif %}
     </div>
     <div class="flex flex-wrap items-start justify-between gap-3">
         <h1 class="text-4xl leading-tight">
@@ -28,4 +36,11 @@
         Created {{ project.created_at.strftime("%Y-%m-%d") }} ·
         Updated {{ project.updated_at.strftime("%Y-%m-%d") }}
     </div>
+    {% if project.tags %}
+    <div class="mt-3">
+        {% with tags = project.tags, href_prefix = tag_href_prefix or '/explore' %}
+            {% include "components/_tag_chips.html" %}
+        {% endwith %}
+    </div>
+    {% endif %}
 </header>

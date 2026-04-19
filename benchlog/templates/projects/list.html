@@ -6,18 +6,32 @@
     <a href="/projects/new" class="btn-primary text-sm">New project</a>
 </div>
 
-<nav class="mb-6 flex flex-wrap items-center gap-2" aria-label="Filter by status">
+<nav class="mb-4 flex flex-wrap items-center gap-2" aria-label="Filter by status">
     {% set filter_items = [(none, 'Active')] %}
     {% for s in statuses %}{% set _ = filter_items.append((s, s.replace('_', ' '))) %}{% endfor %}
     {% for value, label in filter_items %}
         {% set active = current_status == value %}
-        <a href="{% if value %}/projects?status={{ value }}{% else %}/projects{% endif %}"
+        {% set href = '/projects?status=' ~ value if value else '/projects' %}
+        {% if current_tag %}{% set href = href ~ ('&' if value else '?') ~ 'tag=' ~ current_tag %}{% endif %}
+        <a href="{{ href }}"
            class="meta px-3 py-1 rounded-full border {% if active %}bg-rust text-paper border-rust{% else %}border-edge text-ink-muted hover:border-rust hover:text-rust{% endif %}"
            {% if active %}aria-current="page"{% endif %}>
             {{ label }}
         </a>
     {% endfor %}
 </nav>
+
+{% if current_tag %}
+<div class="mb-6 flex flex-wrap items-center gap-2 text-sm">
+    <span class="text-ink-muted">Filtering by</span>
+    <span class="inline-flex items-center gap-1 rounded-full border border-rust bg-rust/10 text-rust-deep px-2 py-0.5 font-mono text-xs tracking-wide">
+        #{{ current_tag }}
+    </span>
+    <a href="/projects{% if current_status %}?status={{ current_status }}{% endif %}" class="meta underline hover:text-rust">
+        clear
+    </a>
+</div>
+{% endif %}
 
 {% if projects %}
 <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
@@ -30,7 +44,9 @@
 {% else %}
 <div class="card text-center py-10">
     <p class="text-ink-muted mb-4">
-        {% if current_status %}
+        {% if current_tag %}
+            No {% if current_status %}{{ current_status.replace('_', ' ') }} {% endif %}projects tagged <code class="font-mono">#{{ current_tag }}</code>.
+        {% elif current_status %}
             No {{ current_status.replace('_', ' ') }} projects yet.
         {% else %}
             You haven't started any projects yet.

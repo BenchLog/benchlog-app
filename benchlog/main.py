@@ -46,6 +46,13 @@ async def _lifespan(app: FastAPI):
     from benchlog.database import async_session
     from benchlog.bootstrap import seed_initial_config
 
+    if settings.storage_backend == "local":
+        root = settings.storage_path
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "files").mkdir(exist_ok=True)
+        (root / "images").mkdir(exist_ok=True)
+        (root / "thumbnails").mkdir(exist_ok=True)
+
     async with async_session() as db:
         try:
             await seed_initial_config(db, settings)

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +47,26 @@ class Settings(BaseSettings):
     initial_oidc_auto_create_users: bool = False
     initial_oidc_auto_link_verified_email: bool = False
     initial_oidc_allow_private_network: bool = False
+
+    # ---- storage ----
+    # Pluggable backend; only "local" is wired up right now. The s3_* fields
+    # are placeholders for a future S3/MinIO backend.
+    storage_backend: str = "local"
+    storage_local_path: str = "./data/files"
+    storage_s3_bucket: str = ""
+    storage_s3_endpoint: str = ""
+    storage_s3_access_key: str = ""
+    storage_s3_secret_key: str = ""
+    storage_s3_region: str = ""
+
+    # Upload limits (bytes). Enforced at the file-upload route.
+    max_upload_size: int = 500 * 1024 * 1024  # 500 MB
+    # "*" means no extension whitelist; otherwise comma-separated list.
+    allowed_extensions: str = "*"
+
+    @property
+    def storage_path(self) -> Path:
+        return Path(self.storage_local_path)
 
 
 settings = Settings()

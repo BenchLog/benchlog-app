@@ -375,6 +375,297 @@ html[data-theme="dark"] {
 }
 
 /*
+ * Finder-style file list — a real <table>. Folders are rows with a toggle
+ * button that hides descendant rows via a tiny JS helper on the Files tab.
+ * Kept dense (small text, tight padding) so deep trees stay scannable.
+ * Indentation on the name column is driven by `--indent` (1 level = 1.25rem).
+ */
+@utility file-tree {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.8125rem;
+  border: 1px solid var(--color-edge);
+  border-radius: 5px;
+  overflow: hidden;
+
+  & thead th {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: normal;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    background-color: var(--color-paper);
+    text-align: left;
+    padding: 0;
+    border-bottom: 1px solid var(--color-edge);
+  }
+  & .file-tree-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    width: 100%;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  & .file-tree-sort:hover {
+    color: var(--color-ink);
+    background-color: color-mix(in srgb, var(--color-edge) 40%, transparent);
+  }
+  & .file-tree-sort.is-active {
+    color: var(--color-ink);
+  }
+  & th.col-size .file-tree-sort,
+  & th.col-version .file-tree-sort,
+  & th.col-modified .file-tree-sort {
+    justify-content: flex-end;
+  }
+  & .file-tree-sort-indicator {
+    flex-shrink: 0;
+  }
+  & tbody td {
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-edge) 55%, transparent);
+    vertical-align: middle;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  & tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  & tbody tr:hover td {
+    background-color: color-mix(in srgb, var(--color-rust) 8%, transparent);
+  }
+  & tbody tr:hover .file-tree-name a,
+  & tbody tr:hover .file-tree-folder-label {
+    color: var(--color-rust);
+  }
+  & tr.is-hidden {
+    display: none;
+  }
+
+  /* Name column grows; metas shrink to content. `max-width: 0 + width: 100%`
+     is the table-cell trick that lets ellipsis work inside a <td>. Inside
+     we use flex so the filename/folder label ellipsizes while actions
+     stay pinned to the right — long names never push them offscreen. */
+  & .file-tree-name {
+    max-width: 0;
+    width: 100%;
+    padding-left: calc(0.5rem + var(--indent, 0) * 1.25rem);
+  }
+  & .file-tree-name-row {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    width: 100%;
+  }
+  & .file-tree-name-label,
+  & .file-tree-folder-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  & .col-size, & .col-version, & .col-modified {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink-muted);
+    width: 1%;
+  }
+  & .file-tree-count {
+    font-size: 0.7rem;
+    color: color-mix(in srgb, var(--color-ink-muted) 75%, transparent);
+    margin-left: 0.125rem;
+  }
+  & thead .col-size, & thead .col-version, & thead .col-modified {
+    text-align: right;
+  }
+
+  & .file-tree-toggle {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    margin-right: 0.25rem;
+    cursor: pointer;
+    color: var(--color-ink-muted);
+    display: inline-flex;
+    vertical-align: middle;
+    width: 1rem;
+    justify-content: center;
+  }
+  & .file-tree-toggle[aria-expanded="true"] .file-tree-chevron {
+    transform: rotate(90deg);
+  }
+  & .file-tree-chevron {
+    display: inline-flex;
+    transition: transform 0.12s ease;
+  }
+  & .file-tree-chevron-spacer {
+    display: inline-block;
+    width: 1rem;
+    margin-right: 0.25rem;
+  }
+  & .file-tree-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.375rem;
+    color: var(--color-ink-muted);
+    overflow: hidden;
+    border-radius: 3px;
+  }
+  & .file-tree-icon img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  & .file-tree-folder-label {
+    font-weight: 500;
+    color: var(--color-ink);
+    cursor: pointer;
+  }
+  & .file-tree-name a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Hover-reveal row actions (edit / delete) inside the name cell. The
+     container wraps the buttons so they appear as a single cluster to
+     the right of the filename/folder label. Forms inside reset their
+     defaults so they don't add margin/padding. */
+  & .file-tree-row-actions {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: 0.125rem;
+    margin-left: auto;
+    padding-left: 0.5rem;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  & tr:hover .file-tree-row-actions,
+  & .file-tree-row-actions:focus-within {
+    opacity: 1;
+  }
+  & .file-tree-row-actions form {
+    display: inline-flex;
+    margin: 0;
+  }
+  & .file-tree-action-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    border: 0;
+    background: transparent;
+    border-radius: 3px;
+    color: var(--color-ink-muted);
+    cursor: pointer;
+    padding: 0;
+  }
+  & .file-tree-action-btn:hover {
+    background-color: color-mix(in srgb, var(--color-ink) 12%, transparent);
+    color: var(--color-ink);
+  }
+
+  /* Drag & drop states. During a drag the source row fades to indicate
+     selection; drop-targeted folder rows flash a rust tint. The thead
+     becomes the "move to root" drop zone — hidden cue that appears only
+     while a drag is active (toggled by the JS via `data-dragging`). */
+  & tr.is-dragging > td {
+    opacity: 0.35;
+  }
+  & tr.is-drop-target > td {
+    background-color: color-mix(in srgb, var(--color-rust) 14%, transparent) !important;
+    outline: 1px dashed var(--color-rust);
+    outline-offset: -2px;
+  }
+  &[data-dragging="true"] thead {
+    cursor: copy;
+  }
+  /* Highlight the root drop zone whenever it's currently a target —
+     internal row moves AND external file/folder drops both land here. */
+  & thead.is-drop-target th {
+    background-color: color-mix(in srgb, var(--color-rust) 14%, transparent);
+    outline: 1px dashed var(--color-rust);
+    outline-offset: -2px;
+  }
+}
+
+/* Inline status banner shown while a drag-drop upload is in flight.
+   Sits above the file tree as a polite live region for screen readers. */
+@utility file-upload-status {
+  border: 1px dashed var(--color-rust);
+  background-color: color-mix(in srgb, var(--color-rust) 8%, transparent);
+  color: var(--color-rust-deep);
+  border-radius: 5px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+}
+
+/*
+ * Gallery tile + hover action button. The tile is a square thumbnail that
+ * links to the file detail page; the action button sits over the top-right
+ * corner to toggle that image's `show_in_gallery` flag without leaving the
+ * grid. Hidden by default, revealed on hover or keyboard focus. Touch
+ * devices don't hover, so it stays visible there (opacity still damped so
+ * it doesn't shout).
+ */
+@utility gallery-tile {
+  position: relative;
+  & .gallery-tile-action {
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    z-index: 10;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    pointer-events: none;
+  }
+  &:hover .gallery-tile-action,
+  &:focus-within .gallery-tile-action {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+}
+@media (hover: none) {
+  .gallery-tile .gallery-tile-action {
+    opacity: 0.85;
+    transform: none;
+    pointer-events: auto;
+  }
+}
+@utility gallery-tile-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  background-color: color-mix(in srgb, var(--color-ink) 80%, transparent);
+  color: var(--color-paper);
+  border: 0;
+  border-radius: 999px;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  &:hover {
+    background-color: var(--color-rust);
+  }
+}
+
+/*
  * Shared modal styling — apply to a native <dialog class="modal"> and open
  * via dialog.showModal() so the browser handles centering, the backdrop,
  * focus trap, and Escape-to-close.

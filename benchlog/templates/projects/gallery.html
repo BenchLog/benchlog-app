@@ -1,0 +1,96 @@
+{% extends "projects/_layout.html" %}
+{% block title %}Gallery · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+
+{% macro render_tile(file) %}
+    <div class="gallery-tile aspect-square overflow-hidden rounded-md border border-edge bg-paper hover:border-rust transition-colors">
+        <a href="{{ project_url }}/files/{{ file.id }}"
+           class="stretched-link block w-full h-full no-underline">
+            <img src="{{ project_url }}/files/{{ file.id }}/thumb"
+                 alt="{{ file.filename }}"
+                 loading="lazy"
+                 class="w-full h-full object-cover">
+        </a>
+        {% if project.cover_file_id == file.id %}
+        <span class="absolute top-1 left-1 inline-flex items-center gap-1 text-xs bg-rust text-paper rounded-full px-2 py-0.5 z-10"
+              title="Project cover image">
+            <i data-lucide="star" class="w-3 h-3"></i>
+            Cover
+        </span>
+        {% endif %}
+        {% if is_owner %}
+        <form method="post" action="{{ project_url }}/files/{{ file.id }}/gallery-visibility"
+              class="gallery-tile-action">
+            {% include "components/_csrf.html" %}
+            <input type="hidden" name="next" value="{{ project_url }}/gallery">
+            {% if file.show_in_gallery %}
+            <button type="submit" class="gallery-tile-btn"
+                    title="Hide this image from the gallery"
+                    aria-label="Hide {{ file.filename }} from gallery">
+                <i data-lucide="eye-off" class="w-3 h-3"></i>
+                Hide
+            </button>
+            {% else %}
+            <button type="submit" class="gallery-tile-btn"
+                    title="Add this image back to the gallery"
+                    aria-label="Show {{ file.filename }} in gallery">
+                <i data-lucide="eye" class="w-3 h-3"></i>
+                Show
+            </button>
+            {% endif %}
+        </form>
+        {% endif %}
+    </div>
+{% endmacro %}
+
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Gallery</h2>
+    {% if is_owner %}
+    <a href="{{ project_url }}/files/new" class="btn-primary text-sm">Upload image</a>
+    {% endif %}
+</div>
+
+{% if visible_images %}
+<ul class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 list-none p-0">
+    {% for file in visible_images %}
+    <li>{{ render_tile(file) }}</li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted mb-4">
+        {% if is_owner %}
+            No images in the gallery yet.
+            {% if hidden_images %}
+            All your images are currently hidden — expand the section below to manage them.
+            {% else %}
+            Upload photos or screenshots — they'll show up here automatically.
+            {% endif %}
+        {% else %}
+            No images on this project yet.
+        {% endif %}
+    </p>
+    {% if is_owner %}
+    <a href="{{ project_url }}/files/new" class="btn-primary text-sm">Upload image</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if is_owner and hidden_images %}
+<details class="mt-6 border border-edge rounded-md">
+    <summary class="cursor-pointer px-4 py-2 text-sm text-ink-muted hover:bg-paper flex items-center gap-2">
+        <i data-lucide="eye-off" class="w-4 h-4"></i>
+        <span>Hidden from gallery ({{ hidden_images | length }})</span>
+        <span class="meta ml-auto">Only you can see these</span>
+    </summary>
+    <div class="p-4 border-t border-edge">
+        <ul class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 list-none p-0">
+            {% for file in hidden_images %}
+            <li>{{ render_tile(file) }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+</details>
+{% endif %}
+{% endblock %}

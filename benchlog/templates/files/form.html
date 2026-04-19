@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{% if file %}Edit file{% else %}Upload file{% endif %} · {{ project.title }}{% endblock %}
+{% block content %}
+{% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug %}
+{% set action_url = project_url ~ '/files/' ~ file.id if file else project_url ~ '/files' %}
+
+<div class="meta mb-2">
+    <a href="/projects" class="hover:text-rust">My Projects</a> /
+    <a href="{{ project_url }}" class="hover:text-rust">{{ project.title }}</a> /
+    <a href="{{ project_url }}/files" class="hover:text-rust">Files</a>
+    {% if file %} / Edit{% else %} / Upload{% endif %}
+</div>
+<h1 class="text-3xl mb-6">{% if file %}Edit file{% else %}Upload file{% endif %}</h1>
+
+{% if error %}
+<div class="card max-w-2xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
+    {{ error }}
+</div>
+{% endif %}
+
+<form method="post" action="{{ action_url }}"
+      {% if not file %}enctype="multipart/form-data"{% endif %}
+      class="card max-w-2xl space-y-4">
+    {% include "components/_csrf.html" %}
+
+    {% if not file %}
+    <div>
+        <label for="upload">File</label>
+        <input id="upload" name="upload" type="file" required>
+        <p class="meta mt-1">Max upload size: {{ (max_upload_size / 1024 / 1024) | round(0, 'floor') | int }} MB.</p>
+    </div>
+    {% else %}
+    <div>
+        <label for="filename">Filename</label>
+        <input id="filename" name="filename" type="text" required maxlength="256"
+               value="{{ form_values.filename }}">
+    </div>
+    {% endif %}
+
+    <div>
+        <label for="path">Folder <span class="meta ml-2">optional</span></label>
+        <input id="path" name="path" type="text" maxlength="1024"
+               value="{{ form_values.path }}"
+               placeholder="e.g. models/widgets">
+        <p class="meta mt-1">Leave blank for the project root. Forward slashes for subfolders.</p>
+    </div>
+
+    <div>
+        <label for="description">Description <span class="meta ml-2">optional</span></label>
+        <textarea id="description" name="description" rows="3" maxlength="2000">{{ form_values.description }}</textarea>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 pt-2">
+        <button type="submit" class="btn-primary text-sm">
+            {% if file %}Save changes{% else %}Upload{% endif %}
+        </button>
+        <a href="{% if file %}{{ project_url }}/files/{{ file.id }}{% else %}{{ project_url }}/files{% endif %}" class="btn-ghost text-sm">Cancel</a>
+    </div>
+</form>
+
+{% if file %}
+<form method="post" action="{{ project_url }}/files/{{ file.id }}/delete"
+      class="max-w-2xl mt-4"
+      data-confirm
+      data-confirm-title="Delete file?"
+      data-confirm-body="{{ file.filename }} and all of its versions will be removed."
+      data-confirm-ok="Delete file">
+    {% include "components/_csrf.html" %}
+    <button type="submit" class="btn-danger text-sm">Delete file</button>
+</form>
+{% endif %}
+{% endblock %}

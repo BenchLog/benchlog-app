@@ -19,6 +19,14 @@
         <i data-lucide="pin" class="w-3.5 h-3.5"></i>
     </span>
     {% endif %}
+    {% if project.cover_file and project.cover_file.current_version and project.cover_file.current_version.is_image %}
+    <div class="-mx-4 -mt-4 mb-3 aspect-video overflow-hidden border-b border-edge bg-paper">
+        <img src="/u/{{ project.user.username }}/{{ project.slug }}/files/{{ project.cover_file.id }}/thumb"
+             alt=""
+             loading="lazy"
+             class="w-full h-full object-cover">
+    </div>
+    {% endif %}
     <div class="flex items-start justify-between gap-3 mb-2">
         <h3 class="text-lg leading-tight text-ink m-0 min-w-0 flex-1">
             <a href="/u/{{ project.user.username }}/{{ project.slug }}"

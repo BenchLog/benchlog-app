@@ -78,9 +78,12 @@ async def get_project_by_username_and_slug(
     """Look up the canonical `/u/{username}/{slug}` view target.
 
     Username matching is case-insensitive so `/u/Alice/foo` and
-    `/u/alice/foo` land on the same project. Tags, owner, and updates
-    are eager-loaded for the detail template.
+    `/u/alice/foo` land on the same project. Tags, owner, updates,
+    links, and files (with current versions) are eager-loaded so the
+    detail template doesn't trip the `raise_on_sql` guard.
     """
+    from benchlog.models import ProjectFile  # local to avoid circular import
+
     result = await db.execute(
         select(Project)
         .options(
@@ -88,6 +91,8 @@ async def get_project_by_username_and_slug(
             selectinload(Project.tags),
             selectinload(Project.updates),
             selectinload(Project.links),
+            selectinload(Project.files).selectinload(ProjectFile.current_version),
+            selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .join(Project.user)
         .where(

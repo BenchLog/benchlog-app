@@ -10,6 +10,7 @@ their database IDs.
 
 import re
 from typing import Callable
+from urllib.parse import quote
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
@@ -43,15 +44,18 @@ _FILES_LINK_RE = re.compile(
 
 def rewrite_project_file_links(
     html: str,
+    username: str,
     slug: str,
     file_lookup: FileLookup | None = None,
 ) -> str:
-    """Rewrite `href="files/..."` anchors to project file routes.
+    """Rewrite `href="files/..."` anchors to canonical project file URLs.
 
     If a `file_lookup` is provided and matches, the link points at the
-    file's download URL. Otherwise it falls back to the file browser at
-    the referenced path.
+    file's download URL (`/u/{username}/{slug}/files/{id}/download`).
+    Otherwise it falls back to the file browser at the referenced path.
     """
+
+    base = f"/u/{username}/{slug}/files"
 
     def _replace(match: re.Match[str]) -> str:
         prefix = match.group(1)
@@ -63,9 +67,9 @@ def rewrite_project_file_links(
 
         file_id = file_lookup(path, filename) if file_lookup else None
         if file_id:
-            href = f"/projects/{slug}/files/{file_id}/download"
+            href = f"{base}/{file_id}/download"
         else:
-            href = f"/projects/{slug}/files?path={path}"
+            href = f"{base}?path={quote(path)}" if path else base
         return f'{prefix}href="{href}"'
 
     return _FILES_LINK_RE.sub(_replace, html)
@@ -73,7 +77,8 @@ def rewrite_project_file_links(
 
 def render_for_project(
     text: str,
+    username: str,
     slug: str,
     file_lookup: FileLookup | None = None,
 ) -> str:
-    return rewrite_project_file_links(render(text), slug, file_lookup)
+    return rewrite_project_file_links(render(text), username, slug, file_lookup)

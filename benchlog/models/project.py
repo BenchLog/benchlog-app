@@ -37,6 +37,18 @@ class Project(TimestampMixin, Base):
     # to share the project on /explore and via direct link.
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
+    # FK to a ProjectFile (an image one) used as the project's cover. Nullable;
+    # `use_alter=True` breaks the projects <-> project_files cycle.
+    cover_file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "project_files.id",
+            use_alter=True,
+            name="fk_projects_cover_file_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+
     user: Mapped["User"] = relationship(back_populates="projects")  # noqa: F821
     tags: Mapped[list["Tag"]] = relationship(  # noqa: F821
         secondary="project_tags", back_populates="projects", lazy="raise_on_sql"
@@ -52,4 +64,16 @@ class Project(TimestampMixin, Base):
         cascade="all, delete-orphan",
         lazy="raise_on_sql",
         order_by="(ProjectLink.sort_order, ProjectLink.created_at)",
+    )
+    files: Mapped[list["ProjectFile"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="raise_on_sql",
+        order_by="(ProjectFile.path, ProjectFile.filename)",
+        foreign_keys="ProjectFile.project_id",
+    )
+    cover_file: Mapped["ProjectFile | None"] = relationship(  # noqa: F821
+        foreign_keys=[cover_file_id],
+        post_update=True,
+        lazy="raise_on_sql",
     )

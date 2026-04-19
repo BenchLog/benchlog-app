@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
-from benchlog.models import Project, ProjectStatus, Tag, User
+from benchlog.models import Project, ProjectFile, ProjectStatus, Tag, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -122,6 +122,7 @@ async def list_projects(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .where(Project.user_id == user.id)
     )

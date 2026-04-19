@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
+from benchlog.files import human_size
 from benchlog.markdown import render as render_markdown
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -19,3 +20,4 @@ def _markdown_filter(text: str | None) -> Markup:
 
 
 templates.env.filters["markdown"] = _markdown_filter
+templates.env.filters["human_size"] = human_size

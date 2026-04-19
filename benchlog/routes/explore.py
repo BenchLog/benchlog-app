@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
-from benchlog.models import Project, ProjectStatus, Tag, User
+from benchlog.models import Project, ProjectFile, ProjectStatus, Tag, User
 from benchlog.projects import normalize_slug
 from benchlog.templating import templates
 
@@ -26,6 +26,7 @@ async def explore(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .where(
             Project.is_public.is_(True),

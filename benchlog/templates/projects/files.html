@@ -1,0 +1,807 @@
+{% extends "projects/_layout.html" %}
+{% block title %}Files · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set files_base = project_url ~ '/files' %}
+
+{% macro render_file_row(file, depth, parent_path) %}
+{% set fullpath = (file.path ~ '/' ~ file.filename) if file.path else file.filename %}
+<tr class="file-tree-row-file"
+    data-parent-path="{{ parent_path }}"
+    data-file-id="{{ file.id }}"
+    data-file-filename="{{ file.filename }}"
+    {% if is_owner %}draggable="true"{% endif %}>
+    <td class="file-tree-name" style="--indent: {{ depth }};">
+        <div class="file-tree-name-row">
+            <span class="file-tree-chevron-spacer" aria-hidden="true"></span>
+            <span class="file-tree-icon">
+                {% if file.current_version and file.current_version.is_image %}
+                <img src="{{ files_base }}/{{ file.id }}/thumb" alt="" loading="lazy">
+                {% elif file.current_version and file.current_version.mime_type.startswith('video/') %}
+                <i data-lucide="film" class="w-3.5 h-3.5"></i>
+                {% elif file.current_version and file.current_version.mime_type.startswith('audio/') %}
+                <i data-lucide="music" class="w-3.5 h-3.5"></i>
+                {% elif file.current_version and file.current_version.mime_type == 'application/pdf' %}
+                <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+                {% else %}
+                <i data-lucide="file" class="w-3.5 h-3.5"></i>
+                {% endif %}
+            </span>
+            <a href="{{ files_base }}/{{ file.id }}"
+               class="file-tree-name-label"
+               title="{{ file.filename }}">{{ file.filename }}</a>
+            <span class="file-tree-row-actions">
+                <a href="{{ files_base }}/{{ file.id }}/download"
+                   class="file-tree-action-btn"
+                   title="Download" aria-label="Download {{ file.filename }}">
+                    <i data-lucide="download" class="w-3 h-3"></i>
+                </a>
+                {% if is_owner %}
+                <a href="{{ files_base }}/{{ file.id }}/edit"
+                   class="file-tree-action-btn"
+                   data-file-edit-trigger
+                   data-file-submit-url="{{ files_base }}/{{ file.id }}"
+                   data-file-fullpath="{{ fullpath }}"
+                   data-file-description="{{ file.description or '' }}"
+                   title="Edit" aria-label="Edit {{ file.filename }}">
+                    <i data-lucide="pencil" class="w-3 h-3"></i>
+                </a>
+                <form method="post" action="{{ files_base }}/{{ file.id }}/delete"
+                      data-confirm
+                      data-confirm-title="Delete file?"
+                      data-confirm-body="{{ file.filename }} and all of its versions will be removed."
+                      data-confirm-ok="Delete file">
+                    {% include "components/_csrf.html" %}
+                    <button type="submit" class="file-tree-action-btn"
+                            title="Delete" aria-label="Delete {{ file.filename }}">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i>
+                    </button>
+                </form>
+                {% endif %}
+            </span>
+        </div>
+    </td>
+    <td class="col-size">{% if file.current_version %}{{ file.current_version.size_bytes | human_size }}{% endif %}</td>
+    <td class="col-modified">
+        {% if file.current_version %}
+        <time datetime="{{ file.current_version.uploaded_at.isoformat() }}"
+              title="{{ file.current_version.uploaded_at.strftime('%Y-%m-%d %H:%M:%S UTC') }}">{{ file.current_version.uploaded_at.strftime('%Y-%m-%d') }}</time>
+        {% endif %}
+    </td>
+</tr>
+{% endmacro %}
+
+{% macro render_folder_row(folder, depth, parent_path) %}
+<tr class="file-tree-row-folder"
+    data-folder-path="{{ folder.path }}"
+    data-parent-path="{{ parent_path }}"
+    {% if is_owner %}draggable="true"{% endif %}>
+    <td class="file-tree-name" style="--indent: {{ depth }};">
+        <div class="file-tree-name-row">
+            <button type="button" class="file-tree-toggle" aria-expanded="true"
+                    aria-label="Toggle {{ folder.name }}">
+                <span class="file-tree-chevron">
+                    <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                </span>
+            </button>
+            <span class="file-tree-icon">
+                <i data-lucide="folder" class="w-3.5 h-3.5"></i>
+            </span>
+            <span class="file-tree-folder-label" title="{{ folder.path or folder.name }}">{{ folder.name }}</span>
+            <span class="file-tree-row-actions">
+                <a href="{{ files_base }}/download-zip?path={{ folder.path | urlencode }}"
+                   class="file-tree-action-btn"
+                   title="Download folder as zip" aria-label="Download folder {{ folder.path }} as zip">
+                    <i data-lucide="download" class="w-3 h-3"></i>
+                </a>
+                {% if is_owner %}
+                <a href="{{ files_base }}/folder/edit?path={{ folder.path | urlencode }}"
+                   class="file-tree-action-btn"
+                   data-folder-edit-trigger
+                   data-folder-submit-url="{{ files_base }}/folder/rename"
+                   data-folder-current-path="{{ folder.path }}"
+                   title="Edit folder" aria-label="Edit folder {{ folder.path }}">
+                    <i data-lucide="pencil" class="w-3 h-3"></i>
+                </a>
+                <form method="post" action="{{ files_base }}/folder/delete"
+                      data-confirm
+                      data-confirm-title="Delete folder?"
+                      data-confirm-body="{{ folder.path }} and every file inside it will be permanently deleted."
+                      data-confirm-ok="Delete folder">
+                    {% include "components/_csrf.html" %}
+                    <input type="hidden" name="path" value="{{ folder.path }}">
+                    <button type="submit" class="file-tree-action-btn"
+                            title="Delete folder" aria-label="Delete folder {{ folder.path }}">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i>
+                    </button>
+                </form>
+                {% endif %}
+            </span>
+        </div>
+    </td>
+    <td class="col-size">
+        {% if folder.total_file_count %}
+        {{ folder.total_size_bytes | human_size }}
+        <span class="file-tree-count" aria-label="{{ folder.total_file_count }} file{% if folder.total_file_count != 1 %}s{% endif %} nested">({{ folder.total_file_count }})</span>
+        {% else %}
+        —
+        {% endif %}
+    </td>
+    <td class="col-modified">
+        {% if folder.max_modified %}
+        <time datetime="{{ folder.max_modified.isoformat() }}"
+              title="{{ folder.max_modified.strftime('%Y-%m-%d %H:%M:%S UTC') }}">{{ folder.max_modified.strftime('%Y-%m-%d') }}</time>
+        {% else %}—{% endif %}
+    </td>
+</tr>
+{% for child in folder.children %}
+    {% if child.kind == 'folder' %}
+        {{ render_folder_row(child.folder, depth + 1, folder.path) }}
+    {% else %}
+        {{ render_file_row(child.file, depth + 1, folder.path) }}
+    {% endif %}
+{% endfor %}
+{% endmacro %}
+
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Files</h2>
+    <div class="flex flex-wrap items-center gap-2">
+        {% if has_folders %}
+        <button type="button" class="btn-ghost text-sm"
+                data-file-tree-expand-all title="Expand every folder in the tree">
+            <i data-lucide="unfold-vertical" class="inline w-3.5 h-3.5 mr-1"></i>
+            Expand all
+        </button>
+        <button type="button" class="btn-ghost text-sm"
+                data-file-tree-collapse-all title="Collapse every folder in the tree">
+            <i data-lucide="fold-vertical" class="inline w-3.5 h-3.5 mr-1"></i>
+            Collapse all
+        </button>
+        {% endif %}
+        {% if tree.children %}
+        <a href="{{ files_base }}/download-zip" class="btn-ghost text-sm"
+           title="Download every file as a zip (latest versions only)">
+            <i data-lucide="download" class="inline w-3.5 h-3.5 mr-1"></i>
+            Download all
+        </a>
+        {% endif %}
+        {% if is_owner %}
+        <a href="{{ files_base }}/new" class="btn-primary text-sm">Upload file</a>
+        {% endif %}
+    </div>
+</div>
+
+{% macro sort_link(column, label) %}
+    {% if column == sort_column %}
+        {% set next_dir = 'desc' if sort_direction == 'asc' else 'asc' %}
+    {% else %}
+        {% set next_dir = 'asc' %}
+    {% endif %}
+    <a href="{{ files_base }}?sort={{ column }}&amp;dir={{ next_dir }}"
+       class="file-tree-sort{% if column == sort_column %} is-active{% endif %}"
+       aria-sort="{% if column == sort_column %}{{ 'ascending' if sort_direction == 'asc' else 'descending' }}{% else %}none{% endif %}">
+        <span>{{ label }}</span>
+        {% if column == sort_column %}
+        <i data-lucide="{{ 'chevron-up' if sort_direction == 'asc' else 'chevron-down' }}"
+           class="w-3 h-3 file-tree-sort-indicator" aria-hidden="true"></i>
+        {% endif %}
+    </a>
+{% endmacro %}
+
+{% if is_owner %}
+<div class="file-upload-status" data-upload-status hidden role="status" aria-live="polite"></div>
+{% endif %}
+
+{% if tree.children %}
+<table class="file-tree" data-file-tree
+       {% if is_owner %}data-move-url="{{ files_base }}/move" data-upload-url="{{ files_base }}"{% endif %}>
+    <thead{% if is_owner %} data-root-drop-target{% endif %}>
+        <tr>
+            <th>{{ sort_link('name', 'Name') }}</th>
+            <th class="col-size">{{ sort_link('size', 'Size') }}</th>
+            <th class="col-modified">{{ sort_link('modified', 'Modified') }}</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for child in tree.children %}
+            {% if child.kind == 'folder' %}
+                {{ render_folder_row(child.folder, 0, "") }}
+            {% else %}
+                {{ render_file_row(child.file, 0, "") }}
+            {% endif %}
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted mb-4">
+        {% if is_owner %}
+            No files yet. Upload models, photos, schematics, or notes.
+        {% else %}
+            No files on this project yet.
+        {% endif %}
+    </p>
+    {% if is_owner %}
+    <a href="{{ files_base }}/new" class="btn-primary text-sm">Upload file</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if is_owner %}
+<dialog class="modal" data-file-edit-modal>
+    <form data-file-edit-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0">Edit file</h2>
+            <button type="button" class="btn-ghost text-xs" data-file-edit-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div>
+            <label for="file-edit-fullpath">Path</label>
+            <input id="file-edit-fullpath" name="fullpath" type="text" required
+                   autocomplete="off" spellcheck="false" maxlength="1280">
+            <p class="meta mt-1">Folder + filename. Use <code>/</code> for nested folders.</p>
+        </div>
+        <div>
+            <label for="file-edit-description">Description <span class="meta ml-2">optional</span></label>
+            <textarea id="file-edit-description" name="description" rows="3" maxlength="2000"></textarea>
+        </div>
+        <p class="text-rust-deep text-sm m-0" data-file-edit-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-file-edit-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">Save</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="modal" data-folder-edit-modal>
+    <form data-folder-edit-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0">Edit folder</h2>
+            <button type="button" class="btn-ghost text-xs" data-folder-edit-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div>
+            <label for="folder-edit-path">Path</label>
+            <input id="folder-edit-path" name="new_path" type="text" required
+                   autocomplete="off" spellcheck="false" maxlength="1024">
+            <p class="meta mt-1">Rename or move — every file inside moves with the folder.</p>
+        </div>
+        <p class="text-rust-deep text-sm m-0" data-folder-edit-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-folder-edit-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">Save</button>
+        </div>
+    </form>
+</dialog>
+{% endif %}
+
+{% if tree.children %}
+<script>
+(() => {
+  const table = document.querySelector('[data-file-tree]');
+  if (!table) return;
+
+  // ---------- Collapsed-folder state (persisted across sort clicks) ----------
+  const STORAGE_KEY = `benchlog:file-tree-collapsed:${window.location.pathname}`;
+
+  function loadCollapsed() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+      return new Set(Array.isArray(raw) ? raw : []);
+    } catch {
+      return new Set();
+    }
+  }
+  function saveCollapsed() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...collapsed]));
+    } catch {}
+  }
+
+  const collapsed = loadCollapsed();
+  const present = new Set(
+    [...table.querySelectorAll('tr[data-folder-path]')].map(r => r.dataset.folderPath)
+  );
+  let pruned = false;
+  for (const path of [...collapsed]) {
+    if (!present.has(path)) {
+      collapsed.delete(path);
+      pruned = true;
+    }
+  }
+  if (pruned) saveCollapsed();
+
+  function refresh() {
+    table.querySelectorAll('tbody tr[data-parent-path]').forEach((row) => {
+      const parent = row.dataset.parentPath || '';
+      let hide = false;
+      if (parent) {
+        const parts = parent.split('/');
+        for (let i = 1; i <= parts.length; i++) {
+          if (collapsed.has(parts.slice(0, i).join('/'))) {
+            hide = true;
+            break;
+          }
+        }
+      }
+      row.classList.toggle('is-hidden', hide);
+    });
+    table.querySelectorAll('.file-tree-toggle').forEach((btn) => {
+      const path = btn.closest('tr')?.dataset.folderPath;
+      btn.setAttribute('aria-expanded', String(!(path && collapsed.has(path))));
+    });
+  }
+
+  table.querySelectorAll('.file-tree-toggle').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const path = btn.closest('tr').dataset.folderPath;
+      if (collapsed.has(path)) collapsed.delete(path);
+      else collapsed.add(path);
+      saveCollapsed();
+      refresh();
+    });
+  });
+  table.querySelectorAll('.file-tree-folder-label').forEach((label) => {
+    label.addEventListener('click', () => {
+      label.closest('tr').querySelector('.file-tree-toggle')?.click();
+    });
+  });
+
+  // Expand-all / collapse-all controls in the page header.
+  document.querySelector('[data-file-tree-expand-all]')?.addEventListener('click', () => {
+    collapsed.clear();
+    saveCollapsed();
+    refresh();
+  });
+  document.querySelector('[data-file-tree-collapse-all]')?.addEventListener('click', () => {
+    table.querySelectorAll('tr[data-folder-path]').forEach((row) => {
+      collapsed.add(row.dataset.folderPath);
+    });
+    saveCollapsed();
+    refresh();
+  });
+
+  refresh();
+
+  // Swap each Modified cell's tooltip to a nice locale-formatted timestamp
+  // in the viewer's own timezone. The rendered text stays as the server's
+  // UTC date; only the `title` changes, so the cell width doesn't shift.
+  const timeFormatter = (typeof Intl !== 'undefined' && Intl.DateTimeFormat)
+    ? new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+      })
+    : null;
+  table.querySelectorAll('time[datetime]').forEach((el) => {
+    const d = new Date(el.getAttribute('datetime'));
+    if (isNaN(d.getTime())) return;
+    const localized = timeFormatter ? timeFormatter.format(d) : d.toString();
+    el.title = localized;
+  });
+
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  // ---------- Edit modals (file + folder) ----------
+  //
+  // Pencil clicks are intercepted to open a <dialog> with pre-filled inputs.
+  // Submit goes through fetch with `Accept: application/json` so the server
+  // returns 204 / 4xx+JSON instead of HTML redirects — lets us show errors
+  // inline and reload only on success. Without JS the pencil's href still
+  // navigates to the existing full edit page, so behaviour degrades cleanly.
+  const fileEditModal = document.querySelector('[data-file-edit-modal]');
+  const fileEditForm = fileEditModal?.querySelector('[data-file-edit-form]');
+  const fileEditError = fileEditModal?.querySelector('[data-file-edit-error]');
+  let fileEditSubmitUrl = null;
+
+  if (fileEditModal) {
+    document.querySelectorAll('[data-file-edit-trigger]').forEach((trigger) => {
+      trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        fileEditSubmitUrl = trigger.dataset.fileSubmitUrl;
+        fileEditForm.fullpath.value = trigger.dataset.fileFullpath || '';
+        fileEditForm.description.value = trigger.dataset.fileDescription || '';
+        fileEditError.hidden = true;
+        fileEditError.textContent = '';
+        fileEditModal.showModal();
+        requestAnimationFrame(() => {
+          fileEditForm.fullpath.focus();
+          fileEditForm.fullpath.select();
+        });
+      });
+    });
+
+    fileEditModal.querySelectorAll('[data-file-edit-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => fileEditModal.close());
+    });
+
+    fileEditForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!fileEditSubmitUrl) return;
+      const fullpath = fileEditForm.fullpath.value.trim();
+      if (!fullpath) {
+        showError(fileEditError, 'Path is required.');
+        return;
+      }
+      const lastSlash = fullpath.lastIndexOf('/');
+      const path = lastSlash >= 0 ? fullpath.slice(0, lastSlash) : '';
+      const filename = lastSlash >= 0 ? fullpath.slice(lastSlash + 1) : fullpath;
+
+      const body = new URLSearchParams();
+      body.set('_csrf', csrfToken);
+      body.set('path', path);
+      body.set('filename', filename);
+      body.set('description', fileEditForm.description.value);
+
+      await submitEdit(fileEditSubmitUrl, body, fileEditError);
+    });
+  }
+
+  const folderEditModal = document.querySelector('[data-folder-edit-modal]');
+  const folderEditForm = folderEditModal?.querySelector('[data-folder-edit-form]');
+  const folderEditError = folderEditModal?.querySelector('[data-folder-edit-error]');
+  let folderEditSubmitUrl = null;
+  let folderEditOldPath = null;
+
+  if (folderEditModal) {
+    document.querySelectorAll('[data-folder-edit-trigger]').forEach((trigger) => {
+      trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        folderEditSubmitUrl = trigger.dataset.folderSubmitUrl;
+        folderEditOldPath = trigger.dataset.folderCurrentPath;
+        folderEditForm.new_path.value = folderEditOldPath || '';
+        folderEditError.hidden = true;
+        folderEditError.textContent = '';
+        folderEditModal.showModal();
+        requestAnimationFrame(() => {
+          folderEditForm.new_path.focus();
+          folderEditForm.new_path.select();
+        });
+      });
+    });
+
+    folderEditModal.querySelectorAll('[data-folder-edit-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => folderEditModal.close());
+    });
+
+    folderEditForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!folderEditSubmitUrl) return;
+      const newPath = folderEditForm.new_path.value.trim();
+      if (!newPath) {
+        showError(folderEditError, 'Path is required.');
+        return;
+      }
+      const body = new URLSearchParams();
+      body.set('_csrf', csrfToken);
+      body.set('old_path', folderEditOldPath);
+      body.set('new_path', newPath);
+      await submitEdit(folderEditSubmitUrl, body, folderEditError);
+    });
+  }
+
+  function showError(el, msg) {
+    el.textContent = msg;
+    el.hidden = false;
+  }
+
+  // After the dialog closes, focus naturally returns to the pencil that
+  // opened it — which keeps the row-actions visible via `:focus-within`
+  // until the user clicks elsewhere. Nudge focus off the trigger so the
+  // hover-only behaviour resumes immediately.
+  [fileEditModal, folderEditModal].forEach((modal) => {
+    if (!modal) return;
+    modal.addEventListener('close', () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active.closest('.file-tree-row-actions')) {
+        active.blur();
+      }
+    });
+  });
+
+  async function submitEdit(url, body, errorEl) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: body.toString(),
+      });
+      if (resp.status === 204 || resp.status === 200 || resp.redirected) {
+        location.reload();
+        return;
+      }
+      let msg = `Save failed (${resp.status}).`;
+      try {
+        const payload = await resp.json();
+        if (payload && payload.detail) msg = payload.detail;
+      } catch {}
+      showError(errorEl, msg);
+    } catch {
+      showError(errorEl, 'Save failed — check your connection.');
+    }
+  }
+
+  // ---------- Drag & drop: row moves + external file uploads ----------
+  //
+  // Two flavours of drop are handled on the same targets:
+  //   1. Internal: dragging an existing file / folder row → POST /files/move
+  //   2. External: dragging files (or a folder via webkitGetAsEntry) from
+  //      the OS → POST /files for each file with the right `path`.
+  //
+  // Only enabled for the owner — the move + upload endpoints reject
+  // non-owners anyway, but we gate the affordances client-side too so
+  // guests don't see a misleading "drop here" highlight.
+  const moveUrl = table.dataset.moveUrl;
+  const uploadUrl = table.dataset.uploadUrl;
+  if (!moveUrl) return;
+
+  let dragSource = null;
+  const thead = table.querySelector('thead[data-root-drop-target]');
+  const uploadStatusEl = document.querySelector('[data-upload-status]');
+
+  function clearTargets() {
+    table.querySelectorAll('.is-drop-target').forEach((el) =>
+      el.classList.remove('is-drop-target')
+    );
+  }
+
+  function isValidDropForFolder(targetPath) {
+    if (dragSource.kind !== 'folder') return true;
+    if (targetPath === dragSource.path) return false;
+    if (targetPath.startsWith(dragSource.path + '/')) return false;
+    return true;
+  }
+
+  function isExternalFileDrag(e) {
+    return Array.from(e.dataTransfer.types || []).includes('Files');
+  }
+
+  table.querySelectorAll('tr[draggable="true"]').forEach((row) => {
+    row.addEventListener('dragstart', (e) => {
+      if (row.classList.contains('file-tree-row-folder')) {
+        dragSource = { kind: 'folder', path: row.dataset.folderPath };
+      } else {
+        dragSource = { kind: 'file', id: row.dataset.fileId };
+      }
+      row.classList.add('is-dragging');
+      table.setAttribute('data-dragging', 'true');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', 'benchlog-file');
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('is-dragging');
+      table.removeAttribute('data-dragging');
+      clearTargets();
+      dragSource = null;
+    });
+  });
+
+  table.querySelectorAll('tr.file-tree-row-folder').forEach((folderRow) => {
+    folderRow.addEventListener('dragover', (e) => {
+      if (isExternalFileDrag(e)) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        clearTargets();
+        folderRow.classList.add('is-drop-target');
+        return;
+      }
+      if (!dragSource) return;
+      if (!isValidDropForFolder(folderRow.dataset.folderPath)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearTargets();
+      folderRow.classList.add('is-drop-target');
+    });
+    folderRow.addEventListener('dragleave', () => {
+      folderRow.classList.remove('is-drop-target');
+    });
+    folderRow.addEventListener('drop', (e) => {
+      if (isExternalFileDrag(e)) {
+        e.preventDefault();
+        clearTargets();
+        handleExternalDrop(e.dataTransfer, folderRow.dataset.folderPath);
+        return;
+      }
+      if (!dragSource) return;
+      e.preventDefault();
+      submitMove(folderRow.dataset.folderPath);
+    });
+  });
+
+  if (thead) {
+    thead.addEventListener('dragover', (e) => {
+      if (isExternalFileDrag(e)) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        clearTargets();
+        thead.classList.add('is-drop-target');
+        return;
+      }
+      if (!dragSource) return;
+      if (dragSource.kind === 'folder' && !dragSource.path) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearTargets();
+      thead.classList.add('is-drop-target');
+    });
+    thead.addEventListener('dragleave', () => {
+      thead.classList.remove('is-drop-target');
+    });
+    thead.addEventListener('drop', (e) => {
+      if (isExternalFileDrag(e)) {
+        e.preventDefault();
+        clearTargets();
+        handleExternalDrop(e.dataTransfer, '');
+        return;
+      }
+      if (!dragSource) return;
+      e.preventDefault();
+      submitMove('');
+    });
+  }
+
+  async function submitMove(destinationPath) {
+    if (!dragSource) return;
+    const body = new URLSearchParams();
+    body.set('source_kind', dragSource.kind);
+    if (dragSource.kind === 'file') body.set('source_id', dragSource.id);
+    else body.set('source_path', dragSource.path);
+    body.set('destination_path', destinationPath);
+    try {
+      const resp = await fetch(moveUrl, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: body.toString(),
+      });
+      if (!resp.ok) {
+        let msg = `Move failed (${resp.status})`;
+        try {
+          const payload = await resp.json();
+          if (payload.detail) msg = payload.detail;
+        } catch {}
+        alert(msg);
+        return;
+      }
+      location.reload();
+    } catch {
+      alert('Move failed — check your connection and try again.');
+    }
+  }
+
+  // ---------- External (OS → browser) upload drop ----------
+
+  function setUploadStatus(text) {
+    if (!uploadStatusEl) return;
+    uploadStatusEl.hidden = false;
+    uploadStatusEl.textContent = text;
+  }
+
+  function clearUploadStatus(delayMs = 0) {
+    if (!uploadStatusEl) return;
+    setTimeout(() => {
+      uploadStatusEl.hidden = true;
+      uploadStatusEl.textContent = '';
+    }, delayMs);
+  }
+
+  // Recursively flatten dropped files + folders into a single list of
+  // {file, relativePath} pairs. webkitGetAsEntry covers the folder case
+  // in every modern browser; fall back to dataTransfer.files for the
+  // (rare) browser without it — uploads will be flat in that case.
+  async function collectDroppedFiles(dataTransfer) {
+    const out = [];
+    const items = dataTransfer.items;
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [];
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) entries.push(entry);
+      }
+      for (const entry of entries) {
+        await walkEntry(entry, '', out);
+      }
+    } else {
+      for (const file of dataTransfer.files) {
+        out.push({ file, relativePath: '' });
+      }
+    }
+    return out;
+  }
+
+  async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      out.push({ file, relativePath: prefix });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      // readEntries returns batches — keep calling until empty.
+      while (true) {
+        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch.length) break;
+        for (const child of batch) {
+          await walkEntry(child, childPrefix, out);
+        }
+      }
+    }
+  }
+
+  async function runWithConcurrency(items, limit, fn) {
+    let i = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (i < items.length) {
+        const idx = i++;
+        await fn(items[idx], idx);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  async function uploadOne(item, basePath) {
+    const finalPath = [basePath, item.relativePath].filter(Boolean).join('/');
+    const formData = new FormData();
+    formData.append('_csrf', csrfToken);
+    formData.append('path', finalPath);
+    formData.append('description', '');
+    formData.append('upload', item.file, item.file.name);
+    try {
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Accept': 'application/json' },
+      });
+      if (resp.ok) return { ok: true };
+      let msg = `${item.file.name} (${resp.status})`;
+      try {
+        const payload = await resp.json();
+        if (payload.detail) msg = `${item.file.name} — ${payload.detail}`;
+      } catch {}
+      return { ok: false, msg };
+    } catch {
+      return { ok: false, msg: `${item.file.name} — network error` };
+    }
+  }
+
+  async function handleExternalDrop(dataTransfer, basePath) {
+    if (!uploadUrl) return;
+    setUploadStatus('Reading dropped items…');
+    const items = await collectDroppedFiles(dataTransfer);
+    if (!items.length) {
+      clearUploadStatus();
+      return;
+    }
+    let done = 0;
+    const failures = [];
+    setUploadStatus(`Uploading 0 / ${items.length}…`);
+    await runWithConcurrency(items, 4, async (item) => {
+      const result = await uploadOne(item, basePath);
+      done += 1;
+      if (!result.ok) failures.push(result.msg);
+      setUploadStatus(
+        `Uploaded ${done - failures.length} / ${items.length}` +
+          (failures.length ? `, ${failures.length} failed` : '')
+      );
+    });
+    if (failures.length) {
+      alert(`Some files failed to upload:\n\n${failures.join('\n')}`);
+    }
+    setUploadStatus(`Refreshing…`);
+    location.reload();
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

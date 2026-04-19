@@ -1,0 +1,156 @@
+{% extends "projects/_layout.html" %}
+{% block title %}{{ file.filename }} · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set file_url = project_url ~ '/files/' ~ file.id %}
+
+<nav class="mb-2 flex items-baseline gap-1.5 max-w-full text-sm text-ink-muted"
+     aria-label="File location">
+    <a href="{{ project_url }}/files" class="meta hover:text-rust shrink-0">Files</a>
+    {% if file.path %}
+        {% for segment in file.path.split('/') %}
+        <span class="shrink-0 text-ink-muted/70" aria-hidden="true">›</span>
+        <span class="shrink-0">{{ segment }}</span>
+        {% endfor %}
+    {% endif %}
+    <span class="shrink-0 text-ink-muted/70" aria-hidden="true">›</span>
+    <span class="min-w-0 overflow-x-auto whitespace-nowrap text-ink"
+          title="{{ file.filename }}">{{ file.filename }}</span>
+</nav>
+
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-2xl min-w-0 max-w-full overflow-x-auto whitespace-nowrap flex-1"
+        title="{{ file.filename }}">{{ file.filename }}</h2>
+    <div class="flex flex-wrap items-center gap-2 shrink-0">
+        <a href="{{ file_url }}/download" class="btn-primary text-sm">Download</a>
+        {% if is_owner %}
+        <a href="{{ file_url }}/edit" class="btn-ghost text-sm">Edit</a>
+        {% endif %}
+    </div>
+</div>
+
+{% if preview_kind == 'image' %}
+<div class="card mb-4 text-center">
+    <img src="{{ file_url }}/download" alt="{{ file.filename }}"
+         class="max-w-full mx-auto rounded-md">
+</div>
+{% elif preview_kind == 'video' %}
+<div class="card mb-4 text-center">
+    <video controls preload="metadata" class="max-w-full mx-auto rounded-md">
+        <source src="{{ file_url }}/download" type="{{ file.current_version.mime_type }}">
+        Your browser can't play this video inline — use Download above.
+    </video>
+</div>
+{% elif preview_kind == 'audio' %}
+<div class="card mb-4">
+    <audio controls preload="metadata" class="w-full">
+        <source src="{{ file_url }}/download" type="{{ file.current_version.mime_type }}">
+        Your browser can't play this audio inline — use Download above.
+    </audio>
+</div>
+{% elif preview_kind == 'pdf' %}
+<div class="card mb-4 p-0 overflow-hidden">
+    <object data="{{ file_url }}/download" type="application/pdf"
+            class="block w-full" style="height: 70vh;">
+        <p class="p-4 text-center text-ink-muted">
+            Your browser can't embed this PDF —
+            <a href="{{ file_url }}/download" class="underline">download it</a> instead.
+        </p>
+    </object>
+</div>
+{% elif preview_kind == 'text' and text_preview is not none %}
+<div class="card mb-4 p-0 overflow-hidden">
+    <pre class="m-0 p-4 text-xs overflow-auto max-h-[60vh] whitespace-pre-wrap break-words"><code>{{ text_preview }}</code></pre>
+    {% if text_truncated %}
+    <p class="meta px-4 py-2 border-t border-edge">
+        Preview truncated.
+        <a href="{{ file_url }}/download" class="underline hover:text-rust">Download the full file</a>.
+    </p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if file.description %}
+<div class="card mb-4">
+    <p class="whitespace-pre-line">{{ file.description }}</p>
+</div>
+{% endif %}
+
+{% if is_owner and file.current_version and file.current_version.is_image %}
+<div class="mb-4 flex flex-wrap items-center gap-2">
+    <form method="post" action="{{ file_url }}/cover">
+        {% include "components/_csrf.html" %}
+        <button type="submit" class="btn-ghost text-sm">
+            {% if project.cover_file_id == file.id %}
+                Remove as cover image
+            {% else %}
+                Set as cover image
+            {% endif %}
+        </button>
+    </form>
+    <form method="post" action="{{ file_url }}/gallery-visibility">
+        {% include "components/_csrf.html" %}
+        <button type="submit" class="btn-ghost text-sm">
+            {% if file.show_in_gallery %}
+                Hide from gallery
+            {% else %}
+                Show in gallery
+            {% endif %}
+        </button>
+    </form>
+    {% if not file.show_in_gallery %}
+    <span class="meta">
+        <i data-lucide="eye-off" class="inline w-3.5 h-3.5 align-text-top"></i>
+        Hidden from gallery
+    </span>
+    {% endif %}
+</div>
+{% endif %}
+
+<section class="mb-6">
+    <h3 class="text-lg mb-2">Versions</h3>
+    <ul class="space-y-2 list-none p-0">
+        {% for v in file.versions %}
+        <li class="card flex flex-wrap items-baseline justify-between gap-2">
+            <div class="min-w-0">
+                <div>
+                    <span class="font-medium">v{{ v.version_number }}</span>
+                    <span class="meta ml-2">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                    <span class="meta ml-2">{{ (v.size_bytes / 1024) | round(1) }} KB</span>
+                    {% if file.current_version_id == v.id %}
+                    <span class="meta ml-2 text-rust">current</span>
+                    {% endif %}
+                </div>
+                {% if v.changelog %}
+                <p class="text-sm mt-1 text-ink-muted whitespace-pre-line">{{ v.changelog }}</p>
+                {% endif %}
+                <div class="meta mt-1 break-all"><code class="text-xs">sha256:{{ v.checksum }}</code></div>
+            </div>
+            <a href="{{ file_url }}/download?v={{ v.version_number }}" class="btn-ghost text-xs">Download v{{ v.version_number }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+
+{% if is_owner %}
+<section class="mb-4">
+    <h3 class="text-lg mb-2">Upload new version</h3>
+    <form method="post" action="{{ file_url }}/version"
+          enctype="multipart/form-data" class="card max-w-2xl space-y-4">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="upload">Replacement file</label>
+            <input id="upload" name="upload" type="file" required>
+        </div>
+        <div>
+            <label for="changelog">What changed? <span class="meta ml-2">optional</span></label>
+            <textarea id="changelog" name="changelog" rows="2" maxlength="2000"
+                      placeholder="e.g. fixed the mounting hole offset"></textarea>
+        </div>
+        <div class="pt-2">
+            <button type="submit" class="btn-primary text-sm">Upload version</button>
+        </div>
+    </form>
+</section>
+{% endif %}
+{% endblock %}

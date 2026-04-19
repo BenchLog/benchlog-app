@@ -5,6 +5,7 @@ from benchlog.routes import (
     admin,
     auth,
     explore,
+    files,
     home,
     links,
     oidc,
@@ -23,5 +24,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(projects.router)
     app.include_router(updates.router)
     app.include_router(links.router)
+    app.include_router(files.router)
     app.include_router(explore.router)
     app.include_router(home.router)

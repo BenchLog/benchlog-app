@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Sign in · {{ site.site_name }}{% endblock %}
+{% block content %}
+<script src="{{ url_for('static', path='js/passkeys.js') }}"></script>
+<div class="max-w-sm mx-auto">
+    <h1 class="text-3xl mb-1">{{ site.site_name }}</h1>
+    <p class="meta mb-6">Sign in to your account</p>
+
+    {% if first_run %}
+    <div class="card mb-4">
+        <p class="text-sm">No accounts yet — <a href="/signup" class="underline">create the first one</a>. It becomes the site admin.</p>
+    </div>
+    {% endif %}
+
+    <div id="passkey-status" style="display:none"></div>
+
+    <div class="space-y-2 mb-5">
+        <button type="button" data-passkey-signin class="btn-ghost w-full">Sign in with a passkey</button>
+        {% for p in providers %}
+        <a href="/auth/oidc/{{ p.slug }}/login" class="btn-ghost w-full">Continue with {{ p.display_name }}</a>
+        {% endfor %}
+    </div>
+    <div class="flex items-center gap-3 my-5">
+        <div class="h-px bg-edge flex-1"></div>
+        <span class="meta">or password</span>
+        <div class="h-px bg-edge flex-1"></div>
+    </div>
+
+    <form method="post" action="/login" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="identifier">Email or username</label>
+            <input id="identifier" name="identifier" type="text" autocomplete="username" required>
+        </div>
+        <div>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn-primary w-full">Sign in</button>
+    </form>
+
+    {% if show_resend %}
+    <div class="card mt-4 text-sm">
+        Didn't get the verification email? <a href="/auth/resend" class="underline">Send a new link</a>.
+    </div>
+    {% endif %}
+
+    <div class="flex justify-between mt-4 text-sm">
+        {% if email_enabled %}<a href="/auth/forgot">Forgot password?</a>{% else %}<span></span>{% endif %}
+        {% if allow_signup %}<a href="/signup">Create account</a>{% endif %}
+    </div>
+</div>
+{% endblock %}

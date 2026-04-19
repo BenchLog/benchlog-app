@@ -1,0 +1,63 @@
+{% extends "admin/_layout.html" %}
+{% block title %}SMTP · Admin{% endblock %}
+{% block admin_content %}
+<h2 class="text-xl mb-4">SMTP</h2>
+
+<form method="post" action="/admin/smtp/save" class="card space-y-4 mb-6">
+    {% include "components/_csrf.html" %}
+    <div class="grid sm:grid-cols-[2fr,1fr] gap-4">
+        <div>
+            <label for="host">Host</label>
+            <input id="host" name="host" value="{{ config.host if config else '' }}" placeholder="smtp.example.com">
+        </div>
+        <div>
+            <label for="port">Port</label>
+            <input id="port" name="port" type="number" value="{{ config.port if config else 587 }}">
+        </div>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+            <label for="username">Username</label>
+            <input id="username" name="username" value="{{ config.username if config else '' }}">
+        </div>
+        <div>
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" placeholder="{{ '(unchanged)' if config and config.password else '' }}">
+        </div>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+            <label for="from_address">From address</label>
+            <input id="from_address" name="from_address" type="email" value="{{ config.from_address if config else '' }}">
+        </div>
+        <div>
+            <label for="from_name">From name</label>
+            <input id="from_name" name="from_name" value="{{ config.from_name if config else 'BenchLog' }}">
+        </div>
+    </div>
+    <div class="space-y-2">
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="use_starttls" {% if not config or config.use_starttls %}checked{% endif %}> STARTTLS (upgrade plain connection, common on port 587)
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="use_tls" {% if config and config.use_tls and not config.use_starttls %}checked{% endif %}> Implicit TLS (port 465 style)
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="enabled" {% if config and config.enabled %}checked{% endif %}> Enabled (required before emails will send)
+        </label>
+    </div>
+    <div class="flex gap-2">
+        <button type="submit" class="btn-primary">Save</button>
+    </div>
+</form>
+
+<form method="post" action="/admin/smtp/test" class="card space-y-3">
+    {% include "components/_csrf.html" %}
+    <h3 class="text-lg">Send test email</h3>
+    <div>
+        <label for="to">Send to</label>
+        <input id="to" name="to" type="email" required>
+    </div>
+    <button type="submit" class="btn-ghost">Send test</button>
+</form>
+{% endblock %}

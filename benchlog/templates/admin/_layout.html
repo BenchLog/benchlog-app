@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="mb-4">
+    <h1 class="text-3xl">Admin</h1>
+</div>
+
+{% set admin_nav = [
+    ('/admin/users',    'Users',    'Accounts & access'),
+    ('/admin/oidc',     'OIDC',     'SSO providers'),
+    ('/admin/smtp',     'SMTP',     'Email delivery'),
+    ('/admin/settings', 'Settings', 'Site configuration'),
+    ('/admin/audit',    'Audit',    'Activity log'),
+] %}
+<nav class="mb-8 border-b border-edge" aria-label="Admin sections">
+    <ul class="flex flex-wrap -mb-px">
+        {% for href, label, desc in admin_nav %}
+            {% set active = request.url.path == href or request.url.path.startswith(href + '/') %}
+            <li>
+                <a href="{{ href }}"
+                   {% if active %}aria-current="page"{% endif %}
+                   class="group flex flex-col px-4 py-2 border-b-2 transition-colors
+                          {% if active %}border-rust{% else %}border-transparent hover:border-edge hover:bg-paper-surface{% endif %}">
+                    <span class="text-sm font-medium leading-tight {% if active %}text-ink{% else %}text-ink-muted group-hover:text-ink{% endif %}">{{ label }}</span>
+                    <span class="font-mono text-[10px] tracking-wide uppercase text-ink-muted leading-tight">{{ desc }}</span>
+                </a>
+            </li>
+        {% endfor %}
+    </ul>
+</nav>
+
+{% block admin_content %}{% endblock %}
+{% endblock %}

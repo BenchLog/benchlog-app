@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ status_code }} {{ heading }} · BenchLog{% endblock %}
+{% block content %}
+<div class="max-w-md mx-auto text-center py-16">
+    <p class="meta mb-2">Error {{ status_code }}</p>
+    <h1 class="text-4xl mb-3">{{ heading }}</h1>
+    <p class="text-ink-muted mb-8">{{ message }}</p>
+    <a href="{{ home_href }}" class="btn-ghost">{{ home_label }}</a>
+</div>
+{% endblock %}

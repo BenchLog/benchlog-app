@@ -1,0 +1,192 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Audit · Admin{% endblock %}
+{% block admin_content %}
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Activity log</h2>
+    <span class="meta">page {{ page }}</span>
+</div>
+
+<form method="get" action="/admin/audit" class="flex flex-wrap items-center gap-2 mb-4">
+    <label for="audit-domain" class="meta">Domain</label>
+    <select id="audit-domain" name="domain" style="width: auto">
+        {% set options = [('', 'All'), ('auth.', 'Auth'), ('account.', 'Account'), ('admin.', 'Admin')] %}
+        {% for value, label in options %}
+            <option value="{{ value }}" {% if domain == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+    </select>
+
+    <span class="meta">Action</span>
+    <details class="relative" data-action-combo>
+        <summary class="btn-ghost text-sm cursor-pointer list-none inline-flex items-center gap-2 select-none [&::-webkit-details-marker]:hidden">
+            <span data-combo-label>
+                {% if selected_actions %}{{ selected_actions|length }} selected{% else %}Any{% endif %}
+            </span>
+            <span aria-hidden="true" class="text-xs">▾</span>
+        </summary>
+        <div class="absolute left-0 top-full mt-1 z-20 w-80 p-3 bg-paper-surface border border-edge rounded shadow-lg"
+             data-combo-panel
+             role="listbox"
+             aria-label="Filter by action">
+            <input type="search"
+                   placeholder="Search actions…"
+                   class="text-sm mb-2"
+                   data-combo-search
+                   aria-label="Search actions">
+            <div class="max-h-64 overflow-y-auto mb-2" data-combo-list>
+                {% for group_label, group_actions in actions_by_domain %}
+                    <div class="meta py-1 sticky top-0 bg-paper-surface" data-combo-group>{{ group_label }}</div>
+                    {% for action in group_actions %}
+                        <label class="flex items-center gap-2 py-1 px-1 font-mono text-xs cursor-pointer rounded hover:bg-paper"
+                               data-combo-item>
+                            <input type="checkbox" name="action" value="{{ action }}"
+                                   {% if action in selected_actions %}checked{% endif %}>
+                            <span>{{ action }}</span>
+                        </label>
+                    {% endfor %}
+                {% endfor %}
+                <div class="meta py-2 hidden text-center" data-combo-empty>No matches</div>
+            </div>
+            <div class="flex items-center justify-between pt-2 border-t border-edge">
+                <button type="button" class="btn-ghost text-xs" data-combo-clear>Clear</button>
+                <button type="submit" class="btn-primary text-xs">Apply</button>
+            </div>
+        </div>
+    </details>
+
+    <button type="submit" class="btn-ghost text-xs">Filter</button>
+</form>
+
+<script>
+(() => {
+  const combo = document.querySelector('[data-action-combo]');
+  if (!combo) return;
+  const summary = combo.querySelector('summary');
+  const search = combo.querySelector('[data-combo-search]');
+  const list = combo.querySelector('[data-combo-list]');
+  const label = combo.querySelector('[data-combo-label]');
+  const empty = combo.querySelector('[data-combo-empty]');
+  const clearBtn = combo.querySelector('[data-combo-clear]');
+  const checkboxes = Array.from(combo.querySelectorAll('input[type=checkbox][name=action]'));
+
+  const updateLabel = () => {
+    const count = checkboxes.filter(c => c.checked).length;
+    label.textContent = count > 0 ? `${count} selected` : 'Any';
+  };
+
+  const filter = () => {
+    const q = (search.value || '').trim().toLowerCase();
+    let visibleTotal = 0;
+    list.querySelectorAll('[data-combo-item]').forEach(item => {
+      const value = item.querySelector('input').value.toLowerCase();
+      const match = !q || value.includes(q);
+      item.style.display = match ? '' : 'none';
+      if (match) visibleTotal++;
+    });
+    // Hide section headers whose items are all filtered out.
+    list.querySelectorAll('[data-combo-group]').forEach(group => {
+      let next = group.nextElementSibling;
+      let anyVisible = false;
+      while (next && !next.hasAttribute('data-combo-group') && !next.hasAttribute('data-combo-empty')) {
+        if (next.style.display !== 'none') { anyVisible = true; break; }
+        next = next.nextElementSibling;
+      }
+      group.style.display = anyVisible ? '' : 'none';
+    });
+    empty.classList.toggle('hidden', visibleTotal > 0);
+  };
+
+  checkboxes.forEach(c => c.addEventListener('change', updateLabel));
+  search.addEventListener('input', filter);
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); combo.removeAttribute('open'); summary.focus(); }
+  });
+  clearBtn.addEventListener('click', () => {
+    checkboxes.forEach(c => { c.checked = false; });
+    updateLabel();
+  });
+  // Close when clicking outside the combo.
+  document.addEventListener('click', (e) => {
+    if (combo.hasAttribute('open') && !combo.contains(e.target)) {
+      combo.removeAttribute('open');
+    }
+  });
+  // Focus search when the dropdown opens.
+  combo.addEventListener('toggle', () => {
+    if (combo.open) { search.focus(); }
+    else { search.value = ''; filter(); }
+  });
+  updateLabel();
+})();
+</script>
+
+<div class="overflow-x-auto">
+<table class="w-full text-sm">
+    <thead class="text-left">
+        <tr>
+            <th class="py-2 meta">When</th>
+            <th class="py-2 meta">Action</th>
+            <th class="py-2 meta">Actor</th>
+            <th class="py-2 meta">Target</th>
+            <th class="py-2 meta">IP</th>
+            <th class="py-2 meta">Details</th>
+        </tr>
+    </thead>
+    <tbody class="divide-y divide-edge">
+        {% for ev in events %}
+        <tr data-event-action="{{ ev.action }}">
+            <td class="py-3 meta whitespace-nowrap" title="{{ ev.created_at.isoformat() }}">
+                {{ ev.created_at.strftime('%Y-%m-%d %H:%M:%S') }}
+            </td>
+            <td class="py-3 font-mono text-xs">
+                {{ ev.action }}
+                {% if ev.outcome != 'success' %}
+                    <span class="ml-1 inline-flex items-center rounded-full border border-edge text-ink-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">{{ ev.outcome }}</span>
+                {% endif %}
+            </td>
+            <td class="py-3">
+                {% if ev.actor_label %}
+                    <span class="meta">{{ ev.actor_label }}</span>
+                {% else %}
+                    <span class="meta">—</span>
+                {% endif %}
+            </td>
+            <td class="py-3">
+                {% if ev.target_label or ev.target_type %}
+                    <div class="text-xs">{{ ev.target_label or '' }}</div>
+                    {% if ev.target_type %}
+                        <div class="meta text-[10px] uppercase tracking-wide">{{ ev.target_type }}</div>
+                    {% endif %}
+                {% else %}
+                    <span class="meta">—</span>
+                {% endif %}
+            </td>
+            <td class="py-3 meta font-mono text-xs">{{ ev.ip or '—' }}</td>
+            <td class="py-3">
+                {% if ev.event_metadata %}
+                    <details>
+                        <summary class="meta cursor-pointer text-xs">show</summary>
+                        <pre class="mt-1 text-[11px] whitespace-pre-wrap">{{ ev.event_metadata|tojson(indent=2) }}</pre>
+                    </details>
+                {% else %}
+                    <span class="meta">—</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="6" class="py-6 text-center meta">No events recorded yet.</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+{% set action_qs = '' %}
+{% for a in selected_actions %}{% set action_qs = action_qs + '&action=' + (a|urlencode) %}{% endfor %}
+<div class="flex items-center justify-between mt-4">
+    <a class="btn-ghost text-xs {% if not has_prev %}invisible{% endif %}"
+       href="/admin/audit?domain={{ domain|urlencode }}{{ action_qs }}&page={{ page - 1 }}">Newer</a>
+    <a class="btn-ghost text-xs {% if not has_next %}invisible{% endif %}"
+       href="/admin/audit?domain={{ domain|urlencode }}{{ action_qs }}&page={{ page + 1 }}">Older</a>
+</div>
+{% endblock %}

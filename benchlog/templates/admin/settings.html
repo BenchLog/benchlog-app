@@ -1,0 +1,25 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Site settings · Admin{% endblock %}
+{% block admin_content %}
+<h2 class="text-xl mb-4">Site settings</h2>
+
+<form method="post" action="/admin/settings/save" class="card space-y-4">
+    {% include "components/_csrf.html" %}
+    <div>
+        <label for="site_name">Site name</label>
+        <input id="site_name" name="site_name" value="{{ site.site_name }}">
+    </div>
+    <div class="space-y-2 pt-2">
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="allow_local_signup" {% if site.allow_local_signup %}checked{% endif %}> Allow local signup
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="require_email_verification" {% if site.require_email_verification %}checked{% endif %}> Require email verification before first sign-in
+        </label>
+        <p class="meta">Email verification requires SMTP to be configured and enabled.</p>
+    </div>
+    <div class="flex gap-2">
+        <button type="submit" class="btn-primary">Save</button>
+    </div>
+</form>
+{% endblock %}

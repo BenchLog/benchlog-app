@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+data/
+tailwindcss
+*.egg-info/
+dist/
+.ruff_cache/
+.pytest_cache/

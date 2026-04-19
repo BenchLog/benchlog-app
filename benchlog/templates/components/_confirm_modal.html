@@ -1,0 +1,81 @@
+{#
+    Reusable confirmation modal. Mounted once (from base.html) and driven by
+    forms with a `data-confirm` attribute. Supported per-form attributes:
+
+      data-confirm             required; presence enables interception
+      data-confirm-title       heading text (default: "Are you sure?")
+      data-confirm-body        body text
+      data-confirm-ok          confirm button label (default: "Remove")
+      data-confirm-variant     "danger" (default) or "primary"
+#}
+<dialog id="confirm-modal" class="modal" data-confirm-modal aria-labelledby="confirm-modal-title">
+    <h3 id="confirm-modal-title" class="text-lg mb-1" data-confirm-title>Are you sure?</h3>
+    <p class="text-sm text-ink-muted mb-5" data-confirm-body>This action cannot be undone.</p>
+    <div class="flex justify-end gap-2">
+        <button type="button" class="btn-ghost text-sm" data-confirm-cancel>Cancel</button>
+        <button type="button" class="btn-danger text-sm" data-confirm-ok>Remove</button>
+    </div>
+</dialog>
+
+<script>
+  (() => {
+    const modal = document.querySelector("[data-confirm-modal]");
+    if (!modal) return;
+    const titleEl = modal.querySelector("[data-confirm-title]");
+    const bodyEl = modal.querySelector("[data-confirm-body]");
+    const okBtn = modal.querySelector("[data-confirm-ok]");
+    const cancelBtn = modal.querySelector("[data-confirm-cancel]");
+    let pending = null;
+
+    const variantClass = (variant) =>
+      variant === "primary" ? "btn-primary text-sm" : "btn-danger text-sm";
+
+    const close = () => {
+      pending = null;
+      modal.close();
+    };
+
+    // Canceling a confirm returns the form to a clean pre-submit state so the
+    // user isn't left staring at edits they just chose not to apply.
+    const cancel = () => {
+      const form = pending;
+      close();
+      if (form) form.reset();
+    };
+
+    okBtn.addEventListener("click", () => {
+      const form = pending;
+      close();
+      if (form) {
+        form.dataset.confirmed = "true";
+        form.requestSubmit();
+      }
+    });
+    cancelBtn.addEventListener("click", cancel);
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) cancel();
+    });
+    modal.addEventListener("cancel", (e) => {
+      // Native dialog cancel (Esc key) — browsers fire this and then close the
+      // dialog. Preempt the default close so our cancel() path runs the reset.
+      e.preventDefault();
+      cancel();
+    });
+
+    document.addEventListener("submit", (e) => {
+      const form = e.target.closest("form[data-confirm]");
+      if (!form) return;
+      if (form.dataset.confirmed === "true") {
+        delete form.dataset.confirmed;
+        return;
+      }
+      e.preventDefault();
+      pending = form;
+      titleEl.textContent = form.dataset.confirmTitle || "Are you sure?";
+      bodyEl.textContent = form.dataset.confirmBody || "This action cannot be undone.";
+      okBtn.textContent = form.dataset.confirmOk || "Remove";
+      okBtn.className = variantClass(form.dataset.confirmVariant);
+      modal.showModal();
+    });
+  })();
+</script>

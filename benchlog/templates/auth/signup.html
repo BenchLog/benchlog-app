@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Create account · {{ site.site_name }}{% endblock %}
+{% block content %}
+<script src="{{ url_for('static', path='js/passkeys.js') }}"></script>
+<div class="max-w-sm mx-auto">
+    <h1 class="text-3xl mb-1">Create account</h1>
+    <p class="meta mb-6">
+        {% if first_run %}First user — you'll be the site admin{% else %}Join {{ site.site_name }}{% endif %}
+    </p>
+
+    <div id="passkey-status" style="display:none"></div>
+
+    <form id="signup-form" method="post" action="/signup" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required>
+        </div>
+        <div>
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" autocomplete="username"
+                   minlength="2" maxlength="32" pattern="[a-z0-9]([a-z0-9_-]*[a-z0-9])?"
+                   required>
+            <p class="meta mt-1">2-32 chars, lowercase letters, numbers, <code>-</code>, <code>_</code>. Can't be changed later.</p>
+        </div>
+        <div>
+            <label for="display_name">Display name</label>
+            <input id="display_name" name="display_name" type="text" required>
+        </div>
+
+        <button type="button" data-passkey-signup class="btn-primary w-full">Sign up with a passkey</button>
+
+        <div class="flex items-center gap-3 my-4">
+            <div class="h-px bg-edge flex-1"></div>
+            <span class="meta">or with a password</span>
+            <div class="h-px bg-edge flex-1"></div>
+        </div>
+
+        <div>
+            <label for="password">Password (8+ chars)</label>
+            <input id="password" name="password" type="password" autocomplete="new-password">
+        </div>
+        <div>
+            <label for="password_confirm">Confirm password</label>
+            <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-ghost w-full">Create account with password</button>
+    </form>
+
+    <div class="mt-4 text-sm">
+        <a href="/login">Back to sign in</a>
+    </div>
+</div>
+{% endblock %}

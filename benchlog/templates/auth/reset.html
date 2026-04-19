@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Choose new password{% endblock %}
+{% block content %}
+<div class="max-w-sm mx-auto">
+    <h1 class="text-3xl mb-6">Choose new password</h1>
+
+    <form method="post" action="/auth/reset/{{ token }}" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="password">New password (8+ chars)</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required>
+        </div>
+        <div>
+            <label for="password_confirm">Confirm password</label>
+            <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn-primary w-full">Update password</button>
+    </form>
+</div>
+{% endblock %}

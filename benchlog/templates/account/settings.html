@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Account settings{% endblock %}
+{% block content %}
+<script src="{{ url_for('static', path='js/passkeys.js') }}"></script>
+<h1 class="text-3xl mb-1">Account</h1>
+<p class="meta mb-6">{{ user.email }}</p>
+
+<div id="passkey-status" style="display:none"></div>
+
+<section class="card mb-6">
+    <h2 class="text-xl mb-1">Profile</h2>
+    <p class="meta mb-4">
+        Email is {% if user.email_verified %}<strong>verified</strong>{% else %}<strong>not verified</strong>{% endif %}.
+    </p>
+    {% if user.pending_email %}
+    <p class="meta mb-4">
+        A change to <strong>{{ user.pending_email }}</strong> is pending — check that inbox
+        for a verification link. Your account keeps using <strong>{{ user.email }}</strong>
+        until the new address is confirmed. To cancel, save the form with your current email.
+    </p>
+    {% endif %}
+    <form id="profile-form"
+          method="post"
+          action="/account/profile"
+          class="space-y-3"
+          data-original-email="{{ user.email }}"
+          data-pending-email="{{ user.pending_email or '' }}"
+          data-confirm-title="Change your email?"
+          data-confirm-ok="Change email"
+          data-confirm-variant="primary">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="display_name">Display name</label>
+            <input id="display_name" name="display_name" type="text" value="{{ user.display_name }}">
+        </div>
+        <div>
+            <label for="username">Username</label>
+            <input id="username" type="text" value="{{ user.username }}" disabled>
+        </div>
+        <div>
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" value="{{ user.email }}" required>
+        </div>
+        <button type="submit" class="btn-primary">Save profile</button>
+    </form>
+    <script>
+      (() => {
+        const form = document.getElementById('profile-form');
+        if (!form) return;
+        const emailInput = form.querySelector('[name=email]');
+        const original = (form.dataset.originalEmail || '').trim().toLowerCase();
+        const pending = (form.dataset.pendingEmail || '').trim().toLowerCase();
+        const sync = () => {
+          const current = emailInput.value.trim();
+          if (current.toLowerCase() === original) {
+            if (pending && current.toLowerCase() !== pending) {
+              form.setAttribute('data-confirm', '');
+              form.setAttribute(
+                'data-confirm-body',
+                `Cancel the pending change to "${form.dataset.pendingEmail}" and keep using "${current}"?`
+              );
+              return;
+            }
+            form.removeAttribute('data-confirm');
+            form.removeAttribute('data-confirm-body');
+            return;
+          }
+          form.setAttribute('data-confirm', '');
+          form.setAttribute(
+            'data-confirm-body',
+            `A verification link will be sent to "${current}". Your account will keep using your current email until you click that link.`
+          );
+        };
+        emailInput.addEventListener('input', sync);
+        // form.reset() is fired by the confirm modal when the user backs out;
+        // resync so the confirm attrs reflect the restored (unchanged) inputs.
+        form.addEventListener('reset', () => queueMicrotask(sync));
+        sync();
+      })();
+    </script>
+</section>
+
+<section class="card mb-6">
+    <h2 class="text-xl mb-1">Password</h2>
+    <p class="meta mb-4">
+        {% if has_password %}
+            Password sign-in is <strong>enabled</strong>.
+        {% else %}
+            No password set — sign in with a linked provider or passkey.
+        {% endif %}
+    </p>
+    <form method="post" action="/account/password" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        {% if has_password %}
+        <div>
+            <label for="current_password">Current password</label>
+            <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+        </div>
+        {% endif %}
+        <div>
+            <label for="password">New password (8+ chars)</label>
+            <input id="password" name="password" type="password" autocomplete="new-password" required>
+        </div>
+        <div>
+            <label for="password_confirm">Confirm</label>
+            <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn-primary">{{ "Update password" if has_password else "Set password" }}</button>
+    </form>
+    {% if has_password %}
+    <form method="post" action="/account/password/delete" class="mt-4 pt-4 border-t border-edge"
+          data-confirm
+          data-confirm-title="Remove password?"
+          data-confirm-body="You will only be able to sign in via a linked provider or passkey."
+          data-confirm-ok="Remove password">
+        {% include "components/_csrf.html" %}
+        <button type="submit" class="btn-ghost text-sm">Remove password</button>
+    </form>
+    {% endif %}
+</section>
+
+<section class="card mb-6">
+    <h2 class="text-xl mb-1">Connected sign-in methods</h2>
+    <p class="meta mb-4">Link OIDC providers to sign in without a password</p>
+
+    {% if identities %}
+    <ul class="divide-y divide-edge mb-4">
+        {% for i in identities %}
+        <li class="flex items-center justify-between py-3">
+            <div>
+                <div class="text-sm font-medium">{{ i.provider.display_name }}</div>
+                <div class="meta">{{ i.email or i.subject }}</div>
+            </div>
+            <form method="post" action="/account/oidc/{{ i.id }}/unlink"
+                  data-confirm
+                  data-confirm-title="Unlink {{ i.provider.display_name }}?"
+                  data-confirm-body="You will no longer be able to sign in with {{ i.provider.display_name }}. Make sure you still have another way to sign in."
+                  data-confirm-ok="Unlink">
+                {% include "components/_csrf.html" %}
+                <button type="submit" class="btn-ghost text-sm">Unlink</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-ink-muted mb-4">No providers linked.</p>
+    {% endif %}
+
+    {% if unlinked_providers %}
+    <div class="space-y-2">
+        {% for p in unlinked_providers %}
+        <a href="/auth/oidc/{{ p.slug }}/login?link=true" class="btn-ghost w-full">Link {{ p.display_name }}</a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="meta">No other providers available.</p>
+    {% endif %}
+</section>
+
+<section class="card">
+    <h2 class="text-xl mb-1">Passkeys</h2>
+    <p class="meta mb-4">Sign in without a password using your phone, YubiKey, or platform authenticator</p>
+
+    {% if passkeys %}
+    <ul class="divide-y divide-edge mb-4" data-passkey-list>
+        {% for k in passkeys %}
+        <li class="py-3" data-passkey-item>
+            <div class="flex items-center justify-between gap-3" data-passkey-view>
+                <div class="min-w-0">
+                    <div class="text-sm font-medium truncate">{{ k.friendly_name }}</div>
+                    <div class="meta">added {{ k.created_at.strftime('%Y-%m-%d') }}{% if k.transports %} · {{ k.transports }}{% endif %}</div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button type="button" class="btn-ghost text-sm" data-passkey-rename-toggle>Rename</button>
+                    <form method="post" action="/account/passkeys/{{ k.id }}/delete"
+                          data-confirm
+                          data-confirm-title="Remove passkey?"
+                          data-confirm-body="“{{ k.friendly_name }}” will no longer be able to sign you in. You can add a new passkey at any time."
+                          data-confirm-ok="Remove passkey">
+                        {% include "components/_csrf.html" %}
+                        <button type="submit" class="btn-ghost text-sm">Remove</button>
+                    </form>
+                </div>
+            </div>
+            <form method="post" action="/account/passkeys/{{ k.id }}/rename"
+                  class="hidden items-center gap-2"
+                  data-passkey-rename-form>
+                {% include "components/_csrf.html" %}
+                <label for="passkey-name-{{ k.id }}" class="sr-only">Passkey name</label>
+                <input id="passkey-name-{{ k.id }}"
+                       name="friendly_name"
+                       type="text"
+                       maxlength="128"
+                       value="{{ k.friendly_name }}"
+                       class="flex-1 min-w-0"
+                       required>
+                <button type="submit" class="btn-primary text-sm">Save</button>
+                <button type="button" class="btn-ghost text-sm" data-passkey-rename-cancel>Cancel</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    <script>
+      (() => {
+        const list = document.querySelector('[data-passkey-list]');
+        if (!list) return;
+        list.addEventListener('click', (e) => {
+          const toggle = e.target.closest('[data-passkey-rename-toggle]');
+          const cancel = e.target.closest('[data-passkey-rename-cancel]');
+          if (!toggle && !cancel) return;
+          const item = e.target.closest('[data-passkey-item]');
+          if (!item) return;
+          const view = item.querySelector('[data-passkey-view]');
+          const form = item.querySelector('[data-passkey-rename-form]');
+          if (toggle) {
+            view.classList.add('hidden');
+            form.classList.remove('hidden');
+            form.classList.add('flex');
+            const input = form.querySelector('input[name=friendly_name]');
+            input.focus();
+            input.select();
+          } else {
+            form.classList.add('hidden');
+            form.classList.remove('flex');
+            view.classList.remove('hidden');
+            const input = form.querySelector('input[name=friendly_name]');
+            input.value = input.defaultValue;
+          }
+        });
+      })();
+    </script>
+    {% else %}
+    <p class="text-sm text-ink-muted mb-4">No passkeys registered yet.</p>
+    {% endif %}
+
+    <button type="button" data-passkey-register class="btn-ghost w-full">Add a passkey</button>
+</section>
+
+<section class="card mt-6 border-rust">
+    <h2 class="text-xl mb-1">Delete account</h2>
+    <p class="meta mb-4">
+        Permanently delete your account and all associated data. This cannot be undone.
+    </p>
+    <form method="post" action="/account/delete" class="space-y-3"
+          data-confirm
+          data-confirm-title="Delete your account?"
+          data-confirm-body="This will permanently remove your account, sign-in methods, and all associated data. This cannot be undone."
+          data-confirm-ok="Delete my account"
+          data-confirm-variant="danger">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="confirm_username">Type your username (<strong>{{ user.username }}</strong>) to confirm</label>
+            <input id="confirm_username" name="confirm_username" type="text" autocomplete="off" required>
+        </div>
+        {% if has_password %}
+        <div>
+            <label for="delete_current_password">Current password</label>
+            <input id="delete_current_password" name="current_password" type="password" autocomplete="current-password" required>
+        </div>
+        {% endif %}
+        <button type="submit" class="btn-danger">Delete my account</button>
+    </form>
+</section>
+{% endblock %}

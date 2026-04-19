@@ -1,0 +1,80 @@
+{% extends "admin/_layout.html" %}
+{% block title %}{{ "Edit provider" if provider else "New provider" }} · Admin{% endblock %}
+{% block admin_content %}
+<h2 class="text-xl mb-4">{{ "Edit provider" if provider else "New provider" }}</h2>
+
+<form method="post" action="/admin/oidc/save" class="card space-y-4">
+    {% include "components/_csrf.html" %}
+    {% if provider %}<input type="hidden" name="id" value="{{ provider.id }}">{% endif %}
+    <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+            <label for="slug">Slug</label>
+            <input id="slug" name="slug" value="{{ provider.slug if provider else '' }}" required>
+            <p class="meta mt-1">Used in redirect URL</p>
+        </div>
+        <div>
+            <label for="display_name">Display name</label>
+            <input id="display_name" name="display_name" value="{{ provider.display_name if provider else '' }}" required>
+        </div>
+    </div>
+    <div>
+        <label for="discovery_url">Discovery URL</label>
+        <input id="discovery_url" name="discovery_url" value="{{ provider.discovery_url if provider else '' }}" placeholder="https://issuer/.well-known/openid-configuration" required>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+            <label for="client_id">Client ID</label>
+            <input id="client_id" name="client_id" value="{{ provider.client_id if provider else '' }}" required>
+        </div>
+        <div>
+            <label for="client_secret">Client secret</label>
+            <input id="client_secret" name="client_secret" type="password" placeholder="{{ '(unchanged)' if provider else '' }}" {% if not provider %}required{% endif %}>
+        </div>
+    </div>
+    <div>
+        <label for="scopes">Scopes</label>
+        <input id="scopes" name="scopes" value="{{ provider.scopes if provider else 'openid email profile' }}">
+    </div>
+
+    <div class="space-y-2 pt-2">
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="enabled" {% if provider and provider.enabled %}checked{% endif %}> Enabled
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="auto_create_users" {% if provider and provider.auto_create_users %}checked{% endif %}> Auto-create users on first sign-in
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="auto_link_verified_email" {% if provider and provider.auto_link_verified_email %}checked{% endif %}> Auto-link when email matches and both sides are verified
+        </label>
+        <label class="flex items-center gap-2">
+            <input type="checkbox" name="allow_private_network" {% if provider and provider.allow_private_network %}checked{% endif %}>
+            Allow private network (LAN / loopback IdP)
+        </label>
+        <p class="meta pl-6">Only enable for self-hosted IdPs on your LAN. Disables SSRF protections on this provider's URLs.</p>
+    </div>
+
+    <div class="meta">Redirect URI: {{ request.base_url }}auth/oidc/{{ provider.slug if provider else '{slug}' }}/callback</div>
+
+    <div class="flex items-center justify-between pt-2 gap-2 flex-wrap">
+        <div class="flex gap-2">
+            <button type="submit" class="btn-primary">Save</button>
+            <a href="/admin/oidc" class="btn-ghost">Cancel</a>
+        </div>
+        {% if provider %}
+        <div class="flex gap-2">
+            <button type="submit" form="test-form" class="btn-ghost">Test discovery</button>
+            <button type="submit" form="delete-form" class="btn-danger">Delete</button>
+        </div>
+        {% endif %}
+    </div>
+</form>
+
+{% if provider %}
+<form id="test-form" method="post" action="/admin/oidc/{{ provider.id }}/test" class="hidden">{% include "components/_csrf.html" %}</form>
+<form id="delete-form" method="post" action="/admin/oidc/{{ provider.id }}/delete" class="hidden"
+      data-confirm
+      data-confirm-title="Delete this provider?"
+      data-confirm-body="Linked identities will be removed. This action cannot be undone."
+      data-confirm-ok="Delete">{% include "components/_csrf.html" %}</form>
+{% endif %}
+{% endblock %}

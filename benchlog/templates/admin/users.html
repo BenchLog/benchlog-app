@@ -1,0 +1,262 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Users · Admin{% endblock %}
+{% block admin_content %}
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Users</h2>
+    <span id="users-count" class="meta"></span>
+</div>
+
+<div class="flex flex-wrap items-center gap-2 mb-4">
+    <input type="search" id="users-search" placeholder="Search name, username, or email" class="flex-1 min-w-[200px] sm:max-w-xs">
+    <select id="users-status-filter" style="width: auto">
+        <option value="">All statuses</option>
+        <option value="active">Active</option>
+        <option value="disabled">Disabled</option>
+    </select>
+    <select id="users-role-filter" style="width: auto">
+        <option value="">All roles</option>
+        <option value="admin">Admin</option>
+        <option value="user">User</option>
+    </select>
+</div>
+
+<div class="overflow-x-auto">
+<table id="users-table" class="w-full text-sm">
+    <thead class="text-left">
+        <tr>
+            {% set headers = [('user', 'User'), ('email', 'Email'), ('verified', 'Verified'), ('auth', 'Auth'), ('status', 'Status'), ('role', 'Role'), ('joined', 'Joined')] %}
+            {% for key, label in headers %}
+            <th class="py-2">
+                <button type="button" data-sort-key="{{ key }}" class="meta inline-flex items-center gap-1 hover:text-ink">
+                    {{ label }}<span data-sort-indicator class="text-ink-muted"></span>
+                </button>
+            </th>
+            {% endfor %}
+            <th class="py-2"></th>
+        </tr>
+    </thead>
+    <tbody id="users-tbody" class="divide-y divide-edge">
+        {% for u in users %}
+        {% set auth_labels = [] %}
+        {% if u.password_hash %}{% set _ = auth_labels.append('Password') %}{% endif %}
+        {% for identity in u.oidc_identities %}{% set _ = auth_labels.append(identity.provider.display_name) %}{% endfor %}
+        {% if u.passkeys %}{% set _ = auth_labels.append('Passkey') %}{% endif %}
+        <tr data-user-row
+            data-search="{{ (u.display_name ~ ' ' ~ u.username ~ ' ' ~ u.email ~ ' ' ~ (auth_labels|join(' ')))|lower }}"
+            data-status="{{ 'active' if u.is_active else 'disabled' }}"
+            data-role="{{ 'admin' if u.is_site_admin else 'user' }}"
+            data-verified="{{ 'yes' if u.email_verified else 'no' }}"
+            data-sort-user="{{ u.display_name|lower }}"
+            data-sort-email="{{ u.email|lower }}"
+            data-sort-verified="{{ 'yes' if u.email_verified else 'no' }}"
+            data-sort-auth="{{ auth_labels|join(',')|lower }}"
+            data-sort-status="{{ 'active' if u.is_active else 'disabled' }}"
+            data-sort-role="{{ 'admin' if u.is_site_admin else 'user' }}"
+            data-sort-joined="{{ u.created_at.isoformat() }}">
+            <td class="py-3">
+                <div class="font-medium">{{ u.display_name }}</div>
+                <div class="meta">{{ u.username }}</div>
+            </td>
+            <td class="py-3">{{ u.email }}</td>
+            <td class="py-3">
+                {% if u.email_verified %}
+                    <span class="inline-flex items-center rounded-full border border-rust bg-rust/10 text-rust-deep px-2 py-0.5 text-xs font-medium uppercase tracking-wide">Yes</span>
+                {% else %}
+                    <span class="inline-flex items-center rounded-full border border-edge text-ink-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide">No</span>
+                {% endif %}
+            </td>
+            <td class="py-3">
+                {% if auth_labels %}
+                    <div class="flex flex-wrap gap-1">
+                    {% for label in auth_labels %}
+                        <span class="inline-flex items-center rounded-full border border-edge bg-paper-surface text-ink-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide">{{ label }}</span>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <span class="meta">—</span>
+                {% endif %}
+            </td>
+            <td class="py-3">
+                {% if u.is_active %}
+                    <span class="inline-flex items-center rounded-full border border-rust bg-rust/10 text-rust-deep px-2 py-0.5 text-xs font-medium uppercase tracking-wide">Active</span>
+                {% else %}
+                    <span class="inline-flex items-center rounded-full border border-edge bg-paper-surface text-ink-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide">Disabled</span>
+                {% endif %}
+            </td>
+            <td class="py-3">
+                {% if u.is_site_admin %}
+                    <span class="inline-flex items-center rounded-full border border-rust bg-rust text-paper px-2 py-0.5 text-xs font-medium uppercase tracking-wide">Admin</span>
+                {% else %}
+                    <span class="inline-flex items-center rounded-full border border-edge text-ink-muted px-2 py-0.5 text-xs font-medium uppercase tracking-wide">User</span>
+                {% endif %}
+            </td>
+            <td class="py-3 meta">{{ u.created_at.strftime("%Y-%m-%d") }}</td>
+            <td class="py-3 text-right">
+                {% if u.id == user.id %}
+                    <span class="meta">you</span>
+                {% else %}
+                    <button type="button"
+                            class="btn-ghost text-xs"
+                            data-manage-user
+                            data-user-id="{{ u.id }}"
+                            data-user-label="{{ u.display_name }} · {{ u.username }}"
+                            data-is-active="{{ 'true' if u.is_active else 'false' }}"
+                            data-is-admin="{{ 'true' if u.is_site_admin else 'false' }}">
+                        Manage
+                    </button>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        <tr data-users-empty hidden>
+            <td colspan="8" class="py-6 text-center meta">No users match your filters.</td>
+        </tr>
+    </tbody>
+</table>
+</div>
+
+<dialog id="user-manage-dialog" class="modal">
+    <div class="flex items-start justify-between gap-4 mb-4">
+        <div class="min-w-0">
+            <h3 class="text-lg">Manage user</h3>
+            <p id="dialog-user-label" class="meta truncate"></p>
+        </div>
+        <button type="button" class="btn-ghost text-xs" data-dialog-close>Close</button>
+    </div>
+
+    <div class="space-y-2">
+        <form id="dialog-toggle-active" method="post">
+            {% include "components/_csrf.html" %}
+            <button class="btn-ghost w-full text-sm" type="submit"><span id="dialog-toggle-active-label">Disable</span></button>
+        </form>
+        <form id="dialog-toggle-admin" method="post">
+            {% include "components/_csrf.html" %}
+            <button class="btn-ghost w-full text-sm" type="submit"><span id="dialog-toggle-admin-label">Make admin</span></button>
+        </form>
+        <form id="dialog-reset-password" method="post" class="space-y-2">
+            {% include "components/_csrf.html" %}
+            <label class="text-xs meta" for="dialog-new-password">New password</label>
+            <input id="dialog-new-password" name="new_password" type="password" autocomplete="new-password">
+            <button class="btn-ghost w-full text-sm" type="submit">Reset password</button>
+        </form>
+        <form id="dialog-delete-user" method="post" onsubmit="return confirm('Delete user permanently?')">
+            {% include "components/_csrf.html" %}
+            <button class="btn-danger w-full text-sm" type="submit">Delete user</button>
+        </form>
+    </div>
+</dialog>
+
+<script>
+  (() => {
+    const dialog = document.getElementById("user-manage-dialog");
+    const labelEl = document.getElementById("dialog-user-label");
+    const toggleActiveForm = document.getElementById("dialog-toggle-active");
+    const toggleActiveLabel = document.getElementById("dialog-toggle-active-label");
+    const toggleAdminForm = document.getElementById("dialog-toggle-admin");
+    const toggleAdminLabel = document.getElementById("dialog-toggle-admin-label");
+    const resetForm = document.getElementById("dialog-reset-password");
+    const newPasswordInput = document.getElementById("dialog-new-password");
+    const deleteForm = document.getElementById("dialog-delete-user");
+
+    document.querySelectorAll("[data-manage-user]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const userId = btn.dataset.userId;
+        const isActive = btn.dataset.isActive === "true";
+        const isAdmin = btn.dataset.isAdmin === "true";
+
+        labelEl.textContent = btn.dataset.userLabel;
+        toggleActiveForm.action = `/admin/users/${userId}/toggle-active`;
+        toggleActiveLabel.textContent = isActive ? "Disable account" : "Enable account";
+        toggleAdminForm.action = `/admin/users/${userId}/toggle-admin`;
+        toggleAdminLabel.textContent = isAdmin ? "Remove admin" : "Make admin";
+        resetForm.action = `/admin/users/${userId}/reset-password`;
+        newPasswordInput.value = "";
+        deleteForm.action = `/admin/users/${userId}/delete`;
+
+        dialog.showModal();
+      });
+    });
+
+    dialog.querySelectorAll("[data-dialog-close]").forEach((el) => {
+      el.addEventListener("click", () => dialog.close());
+    });
+    dialog.addEventListener("click", (e) => {
+      if (e.target === dialog) dialog.close();
+    });
+  })();
+
+  (() => {
+    const tbody = document.getElementById("users-tbody");
+    const rows = Array.from(tbody.querySelectorAll("[data-user-row]"));
+    const emptyRow = tbody.querySelector("[data-users-empty]");
+    const countEl = document.getElementById("users-count");
+    const searchInput = document.getElementById("users-search");
+    const statusFilter = document.getElementById("users-status-filter");
+    const roleFilter = document.getElementById("users-role-filter");
+    const sortButtons = document.querySelectorAll("[data-sort-key]");
+
+    let sortKey = "joined";
+    let sortDir = "asc";
+
+    const apply = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      const status = statusFilter.value;
+      const role = roleFilter.value;
+
+      const sorted = rows.slice().sort((a, b) => {
+        const av = a.dataset[`sort${sortKey[0].toUpperCase()}${sortKey.slice(1)}`] || "";
+        const bv = b.dataset[`sort${sortKey[0].toUpperCase()}${sortKey.slice(1)}`] || "";
+        const cmp = av.localeCompare(bv, undefined, { numeric: true });
+        return sortDir === "asc" ? cmp : -cmp;
+      });
+
+      let visible = 0;
+      for (const row of sorted) {
+        const matches =
+          (!q || row.dataset.search.includes(q)) &&
+          (!status || row.dataset.status === status) &&
+          (!role || row.dataset.role === role);
+        row.hidden = !matches;
+        if (matches) visible += 1;
+        tbody.appendChild(row);
+      }
+      tbody.appendChild(emptyRow);
+      emptyRow.hidden = visible !== 0;
+      countEl.textContent = visible === rows.length
+        ? `${rows.length} user${rows.length === 1 ? "" : "s"}`
+        : `${visible} of ${rows.length} users`;
+
+      sortButtons.forEach((btn) => {
+        const indicator = btn.querySelector("[data-sort-indicator]");
+        if (btn.dataset.sortKey === sortKey) {
+          indicator.innerHTML = `<i data-lucide="${sortDir === "asc" ? "arrow-up" : "arrow-down"}" class="w-3.5 h-3.5"></i>`;
+          btn.classList.add("text-ink");
+        } else {
+          indicator.innerHTML = "";
+          btn.classList.remove("text-ink");
+        }
+      });
+      if (window.lucide) lucide.createIcons({ nodes: sortButtons });
+    };
+
+    sortButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.sortKey;
+        if (key === sortKey) {
+          sortDir = sortDir === "asc" ? "desc" : "asc";
+        } else {
+          sortKey = key;
+          sortDir = "asc";
+        }
+        apply();
+      });
+    });
+
+    [searchInput, statusFilter, roleFilter].forEach((el) => {
+      el.addEventListener("input", apply);
+    });
+
+    apply();
+  })();
+</script>
+{% endblock %}

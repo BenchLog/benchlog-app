@@ -1,0 +1,24 @@
+{% extends "admin/_layout.html" %}
+{% block title %}OIDC providers · Admin{% endblock %}
+{% block admin_content %}
+<div class="flex items-center justify-between mb-4">
+    <h2 class="text-xl">OIDC providers</h2>
+    <a href="/admin/oidc/new" class="btn-primary">Add provider</a>
+</div>
+
+{% if providers %}
+<ul class="divide-y divide-edge">
+    {% for p in providers %}
+    <li class="py-3 flex items-center justify-between">
+        <div>
+            <div class="font-medium">{{ p.display_name }}</div>
+            <div class="meta">{{ p.slug }} · {{ "enabled" if p.enabled else "disabled" }}</div>
+        </div>
+        <a href="/admin/oidc/{{ p.id }}" class="btn-ghost text-sm">Edit</a>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="card text-sm text-ink-muted">No OIDC providers configured yet.</p>
+{% endif %}
+{% endblock %}

@@ -87,6 +87,7 @@ async def get_project_by_username_and_slug(
             selectinload(Project.user),
             selectinload(Project.tags),
             selectinload(Project.updates),
+            selectinload(Project.links),
         )
         .join(Project.user)
         .where(

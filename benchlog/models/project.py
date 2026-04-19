@@ -47,3 +47,9 @@ class Project(TimestampMixin, Base):
         lazy="raise_on_sql",
         order_by="ProjectUpdate.created_at.desc()",
     )
+    links: Mapped[list["ProjectLink"]] = relationship(  # noqa: F821
+        back_populates="project",
+        cascade="all, delete-orphan",
+        lazy="raise_on_sql",
+        order_by="(ProjectLink.sort_order, ProjectLink.created_at)",
+    )

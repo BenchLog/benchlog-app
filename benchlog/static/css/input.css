@@ -249,6 +249,31 @@ html[data-theme="dark"] {
 }
 
 /*
+ * Drag handle for SortableJS-managed lists (links, and future BOM /
+ * files reorderings). The 6-dot grip is a Lucide icon; CSS here just
+ * handles cursor + hover affordance.
+ */
+@utility drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  color: var(--color-ink-muted);
+  cursor: grab;
+  &:hover { color: var(--color-ink); }
+  &:active { cursor: grabbing; }
+}
+.sortable-ghost {
+  /* The placeholder SortableJS drops in while dragging. Make it obvious
+   * without being loud. */
+  opacity: 0.35;
+  background-color: color-mix(in srgb, var(--color-rust) 6%, transparent);
+}
+.sortable-chosen .drag-handle {
+  cursor: grabbing;
+}
+
+/*
  * Rendered-markdown block styling — applied to the container wrapping
  * output from benchlog/markdown.py. Kept minimal on purpose: rely on
  * the site's base typography, only add per-element margins and a few

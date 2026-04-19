@@ -17,11 +17,12 @@ PUBLIC_PREFIXES = (
 
 
 def _is_public_project_view(method: str, path: str) -> bool:
-    """Allow guest GETs for canonical project + update permalinks.
+    """Allow guest GETs for canonical project + update + link tab URLs.
 
     - `/u/{username}/{slug}` — overview tab
     - `/u/{username}/{slug}/updates` — updates tab (full feed)
     - `/u/{username}/{slug}/updates/{id}` — single update permalink
+    - `/u/{username}/{slug}/links` — links tab
 
     Route-level visibility checks enforce private-project 404s. Anything
     with a mutation suffix (`/edit`, `/delete`, `/new`) stays auth-gated.
@@ -36,8 +37,8 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # /u/{username}/{slug}
     if len(parts) == 2:
         return True
-    # /u/{username}/{slug}/updates
-    if len(parts) == 3 and parts[2] == "updates":
+    # /u/{username}/{slug}/updates  or  /u/{username}/{slug}/links
+    if len(parts) == 3 and parts[2] in {"updates", "links"}:
         return True
     # /u/{username}/{slug}/updates/{id} — but not /updates/new, /edit, /delete
     if len(parts) == 4 and parts[2] == "updates" and parts[3] != "new":

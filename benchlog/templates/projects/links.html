@@ -1,0 +1,115 @@
+{% extends "projects/_layout.html" %}
+{% block title %}Links · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Links</h2>
+    {% if is_owner %}
+    <a href="{{ project_url }}/links/new" class="btn-primary text-sm">Add link</a>
+    {% endif %}
+</div>
+
+{% if project.links %}
+<ul class="space-y-2 list-none p-0"
+    {% if is_owner %}data-links-sortable data-reorder-url="{{ project_url }}/links/reorder"{% endif %}>
+    {% for link in project.links %}
+    <li data-link-id="{{ link.id }}">
+        <div class="card relative flex flex-wrap items-start gap-3">
+            {% if is_owner %}
+            <span class="drag-handle shrink-0 self-stretch items-center"
+                  aria-label="Drag to reorder" title="Drag to reorder">
+                <i data-lucide="grip-vertical" class="w-4 h-4"></i>
+            </span>
+            {% endif %}
+            <span class="inline-flex items-center justify-center w-9 h-9 rounded-md border border-edge bg-paper text-ink-muted shrink-0"
+                  aria-hidden="true">
+                <i data-lucide="{{ link.link_type.icon }}" class="w-4 h-4"></i>
+            </span>
+            <div class="min-w-0 flex-1">
+                <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer"
+                   class="text-ink hover:text-rust font-medium no-underline break-words">
+                    {{ link.title }}
+                    <i data-lucide="arrow-up-right" class="inline w-3.5 h-3.5 align-text-top text-ink-muted"></i>
+                </a>
+                <div class="meta mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span>{{ link.link_type.label }}</span>
+                    <span aria-hidden="true">·</span>
+                    <span class="truncate max-w-full break-all">{{ link.url }}</span>
+                </div>
+            </div>
+            {% if is_owner %}
+            <div class="flex items-center gap-2 shrink-0">
+                <a href="{{ project_url }}/links/{{ link.id }}/edit" class="btn-ghost text-xs">Edit</a>
+                <form method="post" action="{{ project_url }}/links/{{ link.id }}/delete"
+                      data-confirm
+                      data-confirm-title="Delete link?"
+                      data-confirm-body="{{ link.title }} will be removed from this project."
+                      data-confirm-ok="Delete link">
+                    {% include "components/_csrf.html" %}
+                    <button type="submit" class="btn-danger text-xs">Delete</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted mb-4">
+        {% if is_owner %}
+            No links yet. Add references to source code, videos, or docs.
+        {% else %}
+            No links on this project yet.
+        {% endif %}
+    </p>
+    {% if is_owner %}
+    <a href="{{ project_url }}/links/new" class="btn-primary text-sm">Add link</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if is_owner and project.links %}
+<script src="{{ url_for('static', path='js/sortable.min.js') }}"></script>
+<script>
+  (() => {
+    const list = document.querySelector("[data-links-sortable]");
+    if (!list || typeof Sortable === "undefined") return;
+
+    const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    const csrf = csrfMeta ? csrfMeta.content : "";
+    const reorderUrl = list.dataset.reorderUrl;
+
+    Sortable.create(list, {
+      handle: ".drag-handle",
+      animation: 150,
+      ghostClass: "sortable-ghost",
+      chosenClass: "sortable-chosen",
+      onEnd: async () => {
+        const ids = [...list.querySelectorAll("[data-link-id]")]
+          .map((el) => el.dataset.linkId);
+        const body = new URLSearchParams();
+        ids.forEach((id) => body.append("link_ids", id));
+        try {
+          const resp = await fetch(reorderUrl, {
+            method: "POST",
+            headers: {
+              "X-CSRF-Token": csrf,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: body.toString(),
+          });
+          if (!resp.ok) throw new Error("Reorder failed: " + resp.status);
+        } catch (err) {
+          // Something went wrong — reload so the displayed order matches
+          // what's actually stored, instead of lying to the user.
+          console.error(err);
+          location.reload();
+        }
+      },
+    });
+  })();
+</script>
+{% endif %}
+{% endblock %}

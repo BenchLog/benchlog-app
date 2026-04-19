@@ -1,6 +1,7 @@
 from benchlog.models.audit_event import AuditEvent
 from benchlog.models.base import Base
 from benchlog.models.email_token import EmailToken
+from benchlog.models.link import LinkType, ProjectLink
 from benchlog.models.oidc import OIDCIdentity, OIDCProvider
 from benchlog.models.project import Project, ProjectStatus
 from benchlog.models.site_settings import SiteSettings
@@ -14,9 +15,11 @@ __all__ = [
     "AuditEvent",
     "Base",
     "EmailToken",
+    "LinkType",
     "OIDCIdentity",
     "OIDCProvider",
     "Project",
+    "ProjectLink",
     "ProjectStatus",
     "ProjectTag",
     "ProjectUpdate",

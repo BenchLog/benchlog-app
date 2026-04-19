@@ -12,7 +12,24 @@ PUBLIC_PREFIXES = (
     "/auth/",
     "/static/",
     "/favicon.ico",
+    "/explore",
 )
+
+
+def _is_public_project_view(method: str, path: str) -> bool:
+    """Allow `GET /u/{username}/{slug}` through for guests.
+
+    The route itself enforces visibility — private projects still 404 for
+    non-owners and guests. We restrict to GET and to exactly two non-empty
+    path segments so `/u/{username}/{slug}/edit` etc. stay gated.
+    """
+    if method != "GET":
+        return False
+    if not path.startswith("/u/"):
+        return False
+    tail = path[len("/u/"):].rstrip("/")
+    parts = tail.split("/")
+    return len(parts) == 2 and all(parts)
 
 CSP_POLICY = (
     "default-src 'self'; "
@@ -115,6 +132,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         if any(path.startswith(p) for p in PUBLIC_PREFIXES):
+            return await call_next(request)
+        if _is_public_project_view(request.method, path):
             return await call_next(request)
         if not request.session.get("user"):
             return RedirectResponse("/login", status_code=302)

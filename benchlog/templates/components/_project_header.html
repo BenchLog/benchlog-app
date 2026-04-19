@@ -1,0 +1,31 @@
+{# Project detail header.
+   Args:
+     project   — required (with eager-loaded `user`)
+     is_owner  — boolean; hides Edit/management when the viewer is not the owner #}
+<header class="mb-6">
+    <div class="meta mb-2">
+        {% if is_owner %}
+            <a href="/projects" class="hover:text-rust">My Projects</a>
+        {% else %}
+            <a href="/explore" class="hover:text-rust">Explore</a>
+        {% endif %}
+        / {{ project.status.value.replace('_', ' ') }}
+        {% if not project.is_public %} · <span class="text-ink-muted">Private</span>{% endif %}
+    </div>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <h1 class="text-4xl leading-tight">
+            {% if project.pinned and is_owner %}<i data-lucide="pin" class="inline w-6 h-6 -mt-2 text-rust" aria-label="Pinned"></i> {% endif %}
+            {{ project.title }}
+        </h1>
+        {% if is_owner %}
+        <div class="flex gap-2 shrink-0">
+            <a href="/u/{{ project.user.username }}/{{ project.slug }}/edit" class="btn-ghost text-sm">Edit</a>
+        </div>
+        {% endif %}
+    </div>
+    <div class="meta mt-2">
+        {% if not is_owner %}by {{ project.user.display_name }} · {% endif %}
+        Created {{ project.created_at.strftime("%Y-%m-%d") }} ·
+        Updated {{ project.updated_at.strftime("%Y-%m-%d") }}
+    </div>
+</header>

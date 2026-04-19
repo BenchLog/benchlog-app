@@ -30,9 +30,9 @@ async def test_first_signup_becomes_admin_and_logs_in(client, signup_payload, db
     assert user.email_verified is True  # first user bypasses verification
     assert user.password_hash is not None
 
-    # Cookie persisted: hitting / returns 200, not a redirect to /login
+    # Cookie persisted: hitting / redirects to /projects (logged in), not /login
     home = await client.get("/")
-    assert home.status_code == 200
+    assert home.headers["location"] == "/projects"
 
 
 async def test_second_signup_blocked_when_signup_disabled(client, db, signup_payload):
@@ -205,9 +205,9 @@ async def test_login_with_oidc_only_user_rejected(client, db):
 
 async def test_logout_clears_session(client, db, signup_payload):
     await _signup(client, signup_payload)
-    assert (await client.get("/")).status_code == 200
+    assert (await client.get("/")).headers["location"] == "/projects"
 
-    token = await csrf_token(client, "/")
+    token = await csrf_token(client, "/projects")
     resp = await client.post("/logout", data={"_csrf": token})
     assert resp.status_code == 302
     assert resp.headers["location"] == "/login"

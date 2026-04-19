@@ -36,3 +36,6 @@ class User(TimestampMixin, Base):
     passkeys: Mapped[list["WebAuthnCredential"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan", lazy="raise_on_sql"
     )
+    projects: Mapped[list["Project"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan", lazy="raise_on_sql"
+    )

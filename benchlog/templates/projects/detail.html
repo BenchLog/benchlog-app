@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} · BenchLog{% endblock %}
+{% block content %}
+{% include "components/_project_header.html" %}
+
+{% if project.description %}
+<section class="card mb-6">
+    <h2 class="text-lg mb-3">Description</h2>
+    <p class="text-ink whitespace-pre-wrap">{{ project.description }}</p>
+</section>
+{% endif %}
+
+{% if is_owner %}
+<section class="card">
+    <h2 class="text-lg mb-2">Next up</h2>
+    <p class="text-sm text-ink-muted">
+        Updates, BOM, links, files, and images will appear here as we bring each feature back.
+    </p>
+</section>
+{% endif %}
+{% endblock %}

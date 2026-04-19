@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}My Projects · BenchLog{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-6">
+    <h1 class="text-3xl">My Projects</h1>
+    <a href="/projects/new" class="btn-primary text-sm">New project</a>
+</div>
+
+<nav class="mb-6 flex flex-wrap items-center gap-2" aria-label="Filter by status">
+    {% set filter_items = [(none, 'Active')] %}
+    {% for s in statuses %}{% set _ = filter_items.append((s, s.replace('_', ' '))) %}{% endfor %}
+    {% for value, label in filter_items %}
+        {% set active = current_status == value %}
+        <a href="{% if value %}/projects?status={{ value }}{% else %}/projects{% endif %}"
+           class="meta px-3 py-1 rounded-full border {% if active %}bg-rust text-paper border-rust{% else %}border-edge text-ink-muted hover:border-rust hover:text-rust{% endif %}"
+           {% if active %}aria-current="page"{% endif %}>
+            {{ label }}
+        </a>
+    {% endfor %}
+</nav>
+
+{% if projects %}
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+    {% for project in projects %}
+    <li>
+        {% include "components/project_card.html" %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted mb-4">
+        {% if current_status %}
+            No {{ current_status.replace('_', ' ') }} projects yet.
+        {% else %}
+            You haven't started any projects yet.
+        {% endif %}
+    </p>
+    <a href="/projects/new" class="btn-primary text-sm">Start your first project</a>
+</div>
+{% endif %}
+{% endblock %}

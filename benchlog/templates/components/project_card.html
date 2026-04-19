@@ -1,0 +1,27 @@
+{# Compact card used on project lists.
+   Args:
+     project    — required
+     show_owner — if truthy, render `project.user.display_name` as a byline. #}
+<a href="/u/{{ project.user.username }}/{{ project.slug }}" class="card block hover:border-rust transition-colors no-underline">
+    <div class="flex items-start justify-between gap-3 mb-2">
+        <h3 class="text-lg leading-tight text-ink">
+            {% if project.pinned %}<i data-lucide="pin" class="inline w-4 h-4 -mt-1 text-rust" aria-label="Pinned"></i> {% endif %}
+            {{ project.title }}
+        </h3>
+        <div class="flex items-center gap-1.5 shrink-0">
+            {% if not project.is_public %}
+                <span class="meta border border-edge rounded-full px-2 py-0.5" title="Private — only you can see this">Private</span>
+            {% endif %}
+            <span class="meta border border-edge rounded-full px-2 py-0.5">{{ project.status.value.replace('_', ' ') }}</span>
+        </div>
+    </div>
+    {% if show_owner %}
+    <div class="meta mb-2">by {{ project.user.display_name }}</div>
+    {% endif %}
+    {% if project.description %}
+    <p class="text-sm text-ink-muted line-clamp-3">{{ project.description }}</p>
+    {% else %}
+    <p class="text-sm text-ink-muted italic">No description yet.</p>
+    {% endif %}
+    <div class="mt-3 meta">Updated {{ project.updated_at.strftime("%Y-%m-%d") }}</div>
+</a>

@@ -1,12 +1,11 @@
-from fastapi import APIRouter, Depends, Request
-
-from benchlog.dependencies import require_user
-from benchlog.models import User
-from benchlog.templating import templates
+from fastapi import APIRouter
+from fastapi.responses import RedirectResponse
 
 router = APIRouter()
 
 
 @router.get("/")
-async def home(request: Request, user: User = Depends(require_user)):
-    return templates.TemplateResponse(request, "home.html", {"user": user})
+async def home():
+    # AuthMiddleware already gates this path; unauthenticated requests are
+    # redirected to /login before reaching here.
+    return RedirectResponse("/projects", status_code=302)

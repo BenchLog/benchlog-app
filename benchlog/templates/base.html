@@ -26,11 +26,22 @@
     {% if user %}
     <nav class="bg-paper-surface border-b border-edge">
         <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
-            <div class="flex h-14 items-center justify-between">
+            <div class="flex h-14 items-center justify-between gap-6">
                 <a href="/" class="font-display text-xl text-ink shrink-0 inline-flex items-center gap-2" style='font-variation-settings: "opsz" 60; letter-spacing: -0.015em;'>
                     <img src="{{ url_for('static', path='favicon.svg') }}" alt="" width="40" height="40" class="shrink-0">
                     <span><span class="font-normal">Bench</span><span class="font-bold text-rust">Log</span></span>
                 </a>
+                {% set nav_links = [('/projects', 'My Projects'), ('/explore', 'Explore')] %}
+                <div class="flex items-center gap-1 mr-auto text-sm">
+                    {% for href, label in nav_links %}
+                        {% set active = request.url.path == href or request.url.path.startswith(href + '/') %}
+                        <a href="{{ href }}"
+                           {% if active %}aria-current="page"{% endif %}
+                           class="px-2 py-1 rounded {% if active %}text-rust font-medium{% else %}text-ink-muted hover:text-rust{% endif %}">
+                            {{ label }}
+                        </a>
+                    {% endfor %}
+                </div>
                 <details class="relative" data-user-menu>
                     <summary class="list-none cursor-pointer flex items-center gap-2 rounded-full hover:bg-edge/60 pl-2 py-1">
                         <span class="meta hidden sm:inline">{{ user.display_name }}</span>
@@ -62,22 +73,41 @@
         </div>
     </nav>
     {% else %}
-    <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 pt-4 flex justify-end">
-        <details class="relative" data-menu>
-            <summary class="list-none cursor-pointer inline-flex h-9 w-9 items-center justify-center rounded-full border border-edge text-ink-muted hover:bg-edge/60 hover:text-ink">
-                <i data-lucide="sun-moon" class="w-[18px] h-[18px]"></i>
-                <span class="sr-only">Change theme</span>
-            </summary>
-            <div class="absolute right-0 mt-2 min-w-56 rounded-md border border-edge bg-paper-surface shadow-md p-3 z-10">
-                <div class="meta mb-1.5">Theme</div>
-                <div class="theme-switch w-full" role="radiogroup" aria-label="Theme" data-theme-switch>
-                    <button type="button" class="theme-switch-btn" role="radio" data-theme-option="system">System</button>
-                    <button type="button" class="theme-switch-btn" role="radio" data-theme-option="light">Light</button>
-                    <button type="button" class="theme-switch-btn" role="radio" data-theme-option="dark">Dark</button>
+    <nav class="bg-paper-surface border-b border-edge">
+        <div class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8">
+            <div class="flex h-14 items-center justify-between gap-6">
+                <a href="/explore" class="font-display text-xl text-ink shrink-0 inline-flex items-center gap-2" style='font-variation-settings: "opsz" 60; letter-spacing: -0.015em;'>
+                    <img src="{{ url_for('static', path='favicon.svg') }}" alt="" width="40" height="40" class="shrink-0">
+                    <span><span class="font-normal">Bench</span><span class="font-bold text-rust">Log</span></span>
+                </a>
+                <div class="flex items-center gap-1 mr-auto text-sm">
+                    {% set explore_active = request.url.path == '/explore' or request.url.path.startswith('/explore/') %}
+                    <a href="/explore"
+                       {% if explore_active %}aria-current="page"{% endif %}
+                       class="px-2 py-1 rounded {% if explore_active %}text-rust font-medium{% else %}text-ink-muted hover:text-rust{% endif %}">
+                        Explore
+                    </a>
+                </div>
+                <div class="flex items-center gap-2">
+                    <a href="/login" class="btn-ghost text-sm">Sign in</a>
+                    <details class="relative" data-menu>
+                        <summary class="list-none cursor-pointer inline-flex h-9 w-9 items-center justify-center rounded-full border border-edge text-ink-muted hover:bg-edge/60 hover:text-ink">
+                            <i data-lucide="sun-moon" class="w-[18px] h-[18px]"></i>
+                            <span class="sr-only">Change theme</span>
+                        </summary>
+                        <div class="absolute right-0 mt-2 min-w-56 rounded-md border border-edge bg-paper-surface shadow-md p-3 z-10">
+                            <div class="meta mb-1.5">Theme</div>
+                            <div class="theme-switch w-full" role="radiogroup" aria-label="Theme" data-theme-switch>
+                                <button type="button" class="theme-switch-btn" role="radio" data-theme-option="system">System</button>
+                                <button type="button" class="theme-switch-btn" role="radio" data-theme-option="light">Light</button>
+                                <button type="button" class="theme-switch-btn" role="radio" data-theme-option="dark">Dark</button>
+                            </div>
+                        </div>
+                    </details>
                 </div>
             </div>
-        </details>
-    </div>
+        </div>
+    </nav>
     {% endif %}
     <script>
       (() => {

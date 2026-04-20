@@ -30,11 +30,17 @@
     </div>
     <div class="flex flex-wrap items-start justify-between gap-3">
         <h1 class="text-4xl leading-tight">{{ project.title }}</h1>
-        {% if is_owner %}
         <div class="flex gap-2 shrink-0">
+            <a href="/u/{{ project.user.username }}/{{ project.slug }}/export"
+               class="btn-ghost text-sm"
+               title="Download a zip with every file, all metadata, and a README">
+                <i data-lucide="package" class="inline w-3.5 h-3.5 mr-1"></i>
+                Export
+            </a>
+            {% if is_owner %}
             <a href="/u/{{ project.user.username }}/{{ project.slug }}/edit" class="btn-ghost text-sm">Edit</a>
+            {% endif %}
         </div>
-        {% endif %}
     </div>
     <div class="meta mt-2">
         {% if not is_owner %}by {{ project.user.display_name }} · {% endif %}

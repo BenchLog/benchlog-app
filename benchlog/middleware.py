@@ -42,8 +42,10 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # /u/{username}/{slug}
     if len(parts) == 2:
         return True
-    # /u/{username}/{slug}/{updates|links|files|gallery}
-    if len(parts) == 3 and parts[2] in {"updates", "links", "files", "gallery"}:
+    # /u/{username}/{slug}/{updates|links|files|gallery|export}
+    if len(parts) == 3 and parts[2] in {
+        "updates", "links", "files", "gallery", "export"
+    }:
         return True
     # /u/{username}/{slug}/updates/{id} — but not /updates/new
     if len(parts) == 4 and parts[2] == "updates" and parts[3] != "new":

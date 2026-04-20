@@ -36,8 +36,10 @@
 </header>
 
 {% if profile_user.bio %}
-<section class="prose max-w-none mb-8">
-    {{ profile_user.bio|markdown }}
+<section class="mb-8">
+    <div class="markdown-body text-ink">
+        {{ profile_user.bio|markdown }}
+    </div>
 </section>
 {% endif %}
 

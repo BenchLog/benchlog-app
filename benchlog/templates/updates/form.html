@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{% if update %}Edit update{% else %}Post update{% endif %} · {{ project.title }}{% endblock %}
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 {% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug %}
 {% set action_url = project_url ~ '/updates/' ~ update.id if update else project_url ~ '/updates' %}
@@ -28,9 +33,10 @@
     </div>
 
     <div>
-        <label for="content">Content</label>
-        <textarea id="content" name="content" rows="12" required autofocus>{{ form_values.content }}</textarea>
-        <p class="meta mt-1">Markdown supported — headings, lists, task lists, tables, and footnotes.</p>
+        <label for="toastui-source-update-body">Content</label>
+        {% with name="content", value=form_values.content, id_suffix="update-body", min_height="420px", placeholder="What happened this session?" %}
+            {% include "components/_toastui_editor.html" %}
+        {% endwith %}
     </div>
 
     <label class="inline-flex items-center gap-2 text-sm">

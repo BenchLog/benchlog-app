@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{% if project %}Edit {{ project.title }}{% else %}New project{% endif %} · BenchLog{% endblock %}
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 {% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug if project else None %}
 <div class="meta mb-2">
@@ -45,9 +50,11 @@
     </div>
 
     <div>
-        <label for="description">Description</label>
-        <textarea id="description" name="description" rows="5">{{ form_values.description }}</textarea>
-        <p class="meta mt-1">Markdown is supported.</p>
+        <label for="toastui-source-description">Description</label>
+        {% with name="description", value=form_values.description, id_suffix="description", min_height="420px", placeholder="A few notes on what this project is…" %}
+            {% include "components/_toastui_editor.html" %}
+        {% endwith %}
+        <p class="meta mt-1">Markdown is supported — switch to WYSIWYG at the bottom if you prefer.</p>
     </div>
 
     <div>

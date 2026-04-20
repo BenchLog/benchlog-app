@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Account settings{% endblock %}
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+{% endblock %}
 {% block content %}
 <script src="{{ url_for('static', path='js/passkeys.js') }}"></script>
 <h1 class="text-3xl mb-1">Account</h1>
@@ -88,14 +93,13 @@
     <h2 class="text-xl mb-1">Bio</h2>
     <p class="meta mb-4">
         Shown on your public profile at <a href="/u/{{ user.username }}" class="hover:text-rust">/u/{{ user.username }}</a>.
-        Markdown supported.
     </p>
     <form method="post" action="/account/bio" class="space-y-3">
         {% include "components/_csrf.html" %}
         <div>
-            <label for="bio" class="sr-only">Bio</label>
-            <textarea id="bio" name="bio" rows="6" maxlength="2000"
-                      placeholder="A sentence or two about you and what you make.">{{ user.bio or '' }}</textarea>
+            {% with name="bio", value=user.bio or '', id_suffix="bio", min_height="240px", placeholder="A sentence or two about you and what you make." %}
+                {% include "components/_toastui_editor.html" %}
+            {% endwith %}
             <p class="meta mt-1">Up to 2000 characters.</p>
         </div>
         <button type="submit" class="btn-primary">Save bio</button>

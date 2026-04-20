@@ -1,0 +1,38 @@
+{#
+  Toast UI editor mount point.
+
+  Parameters (via {% with %}):
+    - name        (str) the hidden textarea's `name` so form submit carries
+                  the current markdown.
+    - value       (str) initial markdown; Jinja escaping applies inside the
+                  textarea body.
+    - id_suffix   (str) unique per-page suffix so multiple editors can
+                  coexist (e.g. "description", "update-body").
+    - min_height  (str, default "240px") editor body min-height.
+    - placeholder (str, optional) placeholder shown when empty.
+
+  The <textarea> stays in the DOM (hidden) so form submits pick up its
+  value — `toastui-init.js` keeps it synced on every change and on form
+  submit. Page templates load the vendored JS/CSS; the mount attaches
+  itself at DOMContentLoaded via the initializer.
+#}
+{# Outer `.toastui-editor-resizer` owns the native vertical-resize handle so
+   the user's drag expands the wrapper in normal document flow — the parent
+   card/section grows with it. The editor itself fills 100% of the wrapper
+   (via `height: "100%"` in the toastui config). Putting `resize` on the
+   editor DOM directly didn't expand the enclosing card because toastui
+   sets its own internal heights via JS and the outer flow didn't track. #}
+<div class="toastui-editor-wrap">
+  <textarea name="{{ name }}"
+            class="hidden"
+            data-toastui-source
+            id="toastui-source-{{ id_suffix }}">{{ value or '' }}</textarea>
+  <div class="toastui-editor-resizer"
+       style="height: {{ min_height or '240px' }}; min-height: {{ min_height or '240px' }};">
+    <div data-toastui-mount
+         data-toastui-source-id="toastui-source-{{ id_suffix }}"
+         {% if placeholder %}data-toastui-placeholder="{{ placeholder }}"{% endif %}
+         id="toastui-mount-{{ id_suffix }}"
+         class="h-full"></div>
+  </div>
+</div>

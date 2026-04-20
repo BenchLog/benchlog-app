@@ -1,21 +1,58 @@
 {% extends "projects/_layout.html" %}
 {% block title %}{{ project.title }} · BenchLog{% endblock %}
+{% block head_extra %}
+    {# Only owners actually need the editor assets — but they'll also be the
+       people visiting their own project pages most often, so conditional
+       loading on `is_owner` keeps the public view lean. #}
+    {% if is_owner %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/description-edit.js') }}" defer></script>
+    {% endif %}
+{% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
-{% if project.description %}
-<section class="card">
-    <h2 class="text-lg mb-3">Description</h2>
-    <p class="text-ink whitespace-pre-wrap">{{ project.description }}</p>
+{% if project.description or is_owner %}
+<section class="card" data-description-section>
+    <div class="flex items-baseline justify-between mb-3">
+        <h2 class="text-lg m-0">Description</h2>
+        {% if is_owner %}
+        <button type="button" class="btn-ghost text-xs" data-description-edit>
+            <i data-lucide="pencil" class="w-3.5 h-3.5 inline mr-1"></i>
+            Edit
+        </button>
+        {% endif %}
+    </div>
+
+    {# Rendered view — visible by default. #}
+    <div class="markdown-body" data-description-rendered>
+        {% if project.description %}{{ project.description|markdown }}{% else %}
+        <p class="text-ink-muted italic m-0">No description yet.</p>
+        {% endif %}
+    </div>
+
+    {# Editor view — hidden by default; revealed on Edit click. Posts JSON
+       to the description endpoint for the AJAX swap; degrades to a normal
+       POST + redirect if JS is off. #}
+    {% if is_owner %}
+    <form class="hidden mt-3" data-description-edit-form
+          action="{{ project_url }}/description"
+          method="post"
+          data-raw-description="{{ project.description or '' }}">
+        {% include "components/_csrf.html" %}
+        {# Mount slot — description-edit.js injects a hidden source textarea
+           + toastui mount here on first Edit click, so the editor only
+           initializes when someone actually starts editing. #}
+        <div data-description-editor-slot></div>
+        <div class="flex items-center gap-2 mt-3">
+            <button type="submit" class="btn-primary text-sm" data-description-save>Save</button>
+            <button type="button" class="btn-ghost text-sm" data-description-cancel>Cancel</button>
+            <span class="text-sm text-rust-deep hidden ml-1" data-description-error role="alert"></span>
+        </div>
+    </form>
+    {% endif %}
 </section>
-{% elif is_owner %}
-<div class="card text-center py-8">
-    <p class="text-ink-muted mb-3">No description yet.</p>
-    <a href="{{ project_url }}/edit" class="btn-ghost text-sm">Add a description</a>
-</div>
-{% else %}
-<div class="card text-center py-8">
-    <p class="text-ink-muted">No description yet.</p>
-</div>
 {% endif %}
 {% endblock %}

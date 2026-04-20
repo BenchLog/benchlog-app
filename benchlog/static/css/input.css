@@ -1502,3 +1502,192 @@ dialog.modal[open] {
     background-color: color-mix(in srgb, var(--color-rust) 12%, transparent);
   }
 }
+
+/*
+ * === toastui-editor theme overrides ===
+ *
+ * toastui-editor (v3.2.x) ships a light theme with hardcoded `#fff`, `#222`,
+ * `#aaa` etc. that clash with Field Notebook and are unreadable in dark mode.
+ * These rules retint the editor via our design tokens so light + dark both
+ * follow automatically.
+ *
+ * `!important` is used liberally below because the vendored stylesheet wins
+ * on source order otherwise (toastui's CSS is loaded after output.css on the
+ * pages that use it, and its rules are similarly-specific to ours).
+ *
+ * Contrast targets — all text on `--color-paper` / `--color-paper-surface`:
+ *   body text uses --color-ink (≈13:1 in both themes → AAA)
+ *   secondary UI (list markers, placeholders) uses --color-ink so list
+ *     numbers stay legible (was #aaa on white → only 2.5:1)
+ *   disabled / hint accents use --color-ink-muted (≈7:1 → AAA normal text)
+ */
+@layer components {
+  /* Resizable wrapper — this is the element that owns the drag handle.
+     The editor fills 100% of it (via toastui's `height: "100%"` option)
+     so when the user drags, both the wrapper and the editor grow in
+     normal document flow, and the enclosing card/section follows. */
+  .toastui-editor-resizer {
+    resize: vertical;
+    overflow: hidden;
+    width: 100%;
+  }
+  .toastui-editor-defaultUI {
+    border: 1px solid var(--color-edge) !important;
+    border-radius: 5px;
+    background-color: var(--color-paper) !important;
+    color: var(--color-ink) !important;
+  }
+  /* Toolbar at the top */
+  .toastui-editor-defaultUI .toastui-editor-toolbar,
+  .toastui-editor-defaultUI .toastui-editor-defaultUI-toolbar {
+    background-color: var(--color-paper-surface) !important;
+    border-bottom: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-toolbar-icons {
+    color: var(--color-ink-muted) !important;
+    border: 1px solid transparent !important;
+    background-color: transparent !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-toolbar-icons:not(:disabled):hover {
+    color: var(--color-ink) !important;
+    background-color: color-mix(in srgb, var(--color-edge) 40%, transparent) !important;
+    border-color: var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-toolbar-divider {
+    background-color: var(--color-edge) !important;
+  }
+
+  /* Writer surfaces: markdown textarea + wysiwyg contenteditable. */
+  .toastui-editor-defaultUI .toastui-editor-main,
+  .toastui-editor-defaultUI .toastui-editor-main-container,
+  .toastui-editor-defaultUI .toastui-editor-md-container,
+  .toastui-editor-defaultUI .toastui-editor-ww-container {
+    background-color: var(--color-paper) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-contents,
+  .toastui-editor-defaultUI .toastui-editor-contents *,
+  .toastui-editor-defaultUI .ProseMirror,
+  .toastui-editor-defaultUI .ProseMirror * {
+    color: var(--color-ink) !important;
+  }
+  /* Placeholder text — should be dimmer than body but still AAA (7:1+). */
+  .toastui-editor-defaultUI .toastui-editor-contents-placeholder,
+  .toastui-editor-defaultUI .ProseMirror p.is-editor-empty:first-child::before {
+    color: var(--color-ink-muted) !important;
+  }
+
+  /* List markers: numbered + bulleted. Toastui hardcodes `#aaa` / `#ccc`
+     which fall below 3:1 on both our surfaces — replace with full ink. */
+  .toastui-editor-defaultUI .toastui-editor-contents ol > li::before,
+  .toastui-editor-defaultUI .toastui-editor-contents ul > li::before {
+    color: var(--color-ink) !important;
+  }
+  /* Markdown-mode list-item numbering (odd/even alternating colors that
+     look like syntax highlighting). Map both to muted so they're legible
+     without fighting the actual content for attention. */
+  .toastui-editor-defaultUI .toastui-editor-md-list-item-style.toastui-editor-md-list-item-odd,
+  .toastui-editor-defaultUI .toastui-editor-md-list-item-style.toastui-editor-md-list-item-even {
+    color: var(--color-ink-muted) !important;
+  }
+
+  /* Inline code / code blocks — keep contrast AAA against the token bg. */
+  .toastui-editor-defaultUI .toastui-editor-contents code,
+  .toastui-editor-defaultUI .toastui-editor-contents pre {
+    background-color: color-mix(in srgb, var(--color-edge) 30%, transparent) !important;
+    color: var(--color-ink) !important;
+  }
+  /* Markdown-mode syntax highlighting for inline `code` and fenced
+     ```code blocks```. Toastui hardcodes rgba(243,229,233,.5) for inline
+     and #f5f7f8 for the block line background — both read as pink/white
+     in dark mode and clash in light mode. */
+  .toastui-editor-defaultUI .toastui-editor-md-code {
+    background-color: color-mix(in srgb, var(--color-edge) 30%, transparent) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-md-code-block,
+  .toastui-editor-defaultUI .toastui-editor-md-code-block-line-background {
+    background-color: color-mix(in srgb, var(--color-edge) 30%, transparent) !important;
+    color: var(--color-ink) !important;
+  }
+  /* WYSIWYG code block — the `:after` pseudo shows the language pill
+     in the top-right of the block; clicking it reveals the language
+     <input> popup. Toastui hardcodes #e5e9ea / #fff / #333 which clash
+     in dark mode. */
+  .toastui-editor-defaultUI .toastui-editor-ww-code-block::after {
+    background-color: color-mix(in srgb, var(--color-edge) 40%, transparent) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-ww-code-block-language {
+    background-color: var(--color-paper-surface) !important;
+    border: 1px solid var(--color-edge) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-ww-code-block-language input {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-contents blockquote {
+    border-left: 3px solid var(--color-edge) !important;
+    color: var(--color-ink-muted) !important;
+  }
+
+  /* Write / Preview tabs at the top of markdown mode. Separate DOM from
+     the bottom mode-switch — this container sits above the writer pane
+     and shows only in markdown mode with tabbed preview style. */
+  .toastui-editor-defaultUI .toastui-editor-md-tab-container {
+    background-color: var(--color-paper-surface) !important;
+    border-bottom: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-md-tab-container .tab-item {
+    color: var(--color-ink-muted) !important;
+    background-color: transparent !important;
+    border: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-md-tab-container .tab-item:hover {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-md-tab-container .tab-item.active {
+    color: var(--color-ink) !important;
+    background-color: var(--color-paper) !important;
+    border: 1px solid var(--color-edge) !important;
+    border-bottom-color: var(--color-paper) !important;
+  }
+
+  /* Mode switch tabs at the bottom (Markdown / WYSIWYG). Toastui hardcodes
+     #fff on the strip and #f7f9fc on the inactive tab; those bleed through
+     every theme. Both the strip and the tabs need explicit recolor. */
+  .toastui-editor-defaultUI .toastui-editor-mode-switch {
+    background-color: var(--color-paper-surface) !important;
+    border-top: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-mode-switch .tab-item {
+    color: var(--color-ink-muted) !important;
+    background-color: transparent !important;
+    border: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-mode-switch .tab-item:hover {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-mode-switch .tab-item.active {
+    color: var(--color-ink) !important;
+    background-color: var(--color-paper) !important;
+    border: 1px solid var(--color-edge) !important;
+    border-bottom-color: var(--color-paper) !important;
+  }
+
+  /* Popup surfaces (link/image dialogs) — keep the cream palette. */
+  .toastui-editor-popup {
+    background-color: var(--color-paper-surface) !important;
+    border: 1px solid var(--color-edge) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-popup .toastui-editor-close-button {
+    color: var(--color-ink-muted) !important;
+  }
+  .toastui-editor-popup-body input[type="text"],
+  .toastui-editor-popup-body input[type="url"],
+  .toastui-editor-popup-body textarea {
+    background-color: var(--color-paper) !important;
+    border-color: var(--color-edge) !important;
+    color: var(--color-ink) !important;
+  }
+}

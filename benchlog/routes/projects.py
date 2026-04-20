@@ -2,13 +2,14 @@ import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
+from benchlog.markdown import render as render_markdown
 from benchlog.models import Project, ProjectFile, ProjectStatus, ProjectTag, Tag, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
@@ -540,6 +541,52 @@ async def update_project(
     project.is_public = values["is_public"]
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
     await db.commit()
+    return RedirectResponse(
+        f"/u/{user.username}/{project.slug}", status_code=302
+    )
+
+
+@router.post("/u/{username}/{slug}/description")
+async def update_description(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Inline description edit — owner-only, accepts JSON or form.
+
+    JSON callers (the detail-page inline editor) get rendered HTML back so
+    the client can swap it in without a reload. Form callers (no-JS
+    fallback) get redirected to the detail page like the main edit flow.
+    """
+    if username.lower() != user.username.lower():
+        raise HTTPException(status_code=404)
+    project = await get_user_project_by_slug(db, user.id, slug)
+    if project is None:
+        raise HTTPException(status_code=404)
+
+    content_type = request.headers.get("content-type", "")
+    is_json = content_type.startswith("application/json")
+    if is_json:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+        description = str(payload.get("description") or "").strip()
+    else:
+        form = await request.form()
+        description = str(form.get("description") or "").strip()
+
+    # Matches the main edit path: empty → NULL; no upper-bound enforced.
+    project.description = description or None
+    await db.commit()
+
+    if is_json:
+        rendered = render_markdown(description) if description else ""
+        return JSONResponse({"html": rendered})
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}", status_code=302
     )

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
+from benchlog.files import get_project_file_index
 from benchlog.models import Project, ProjectUpdate, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
@@ -98,6 +99,7 @@ async def new_update_form(
     db: AsyncSession = Depends(get_db),
 ):
     project = await _require_owned_project(db, user, username, slug)
+    file_index = await get_project_file_index(db, project.id)
     return templates.TemplateResponse(
         request,
         "updates/form.html",
@@ -107,6 +109,7 @@ async def new_update_form(
             "update": None,
             "form_values": {"title": "", "content": "", "is_public": False},
             "error": None,
+            "file_index": file_index,
         },
     )
 
@@ -128,6 +131,7 @@ async def create_update(
     public_flag = bool(is_public)
 
     if not content:
+        file_index = await get_project_file_index(db, project.id)
         return templates.TemplateResponse(
             request,
             "updates/form.html",
@@ -141,6 +145,7 @@ async def create_update(
                     "is_public": public_flag,
                 },
                 "error": "Content is required.",
+                "file_index": file_index,
             },
             status_code=400,
         )
@@ -212,6 +217,7 @@ async def edit_update_form(
     update = await get_update_by_id(db, project.id, update_id)
     if update is None:
         raise HTTPException(status_code=404)
+    file_index = await get_project_file_index(db, project.id)
     return templates.TemplateResponse(
         request,
         "updates/form.html",
@@ -225,6 +231,7 @@ async def edit_update_form(
                 "is_public": update.is_public,
             },
             "error": None,
+            "file_index": file_index,
         },
     )
 
@@ -251,6 +258,7 @@ async def update_update(
     public_flag = bool(is_public)
 
     if not content:
+        file_index = await get_project_file_index(db, project.id)
         return templates.TemplateResponse(
             request,
             "updates/form.html",
@@ -264,6 +272,7 @@ async def update_update(
                     "is_public": public_flag,
                 },
                 "error": "Content is required.",
+                "file_index": file_index,
             },
             status_code=400,
         )

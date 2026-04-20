@@ -74,8 +74,10 @@ def rewrite_project_file_links(
     """Rewrite `href="files/..."` anchors to canonical project file URLs.
 
     If a `file_lookup` is provided and matches, the link points at the
-    file's download URL (`/u/{username}/{slug}/files/{id}/download`).
-    Otherwise it falls back to the file browser at the referenced path.
+    file's detail page (`/u/{username}/{slug}/files/{id}`) — more useful
+    than a direct download since it shows description, versions, and a
+    preview. Otherwise it falls back to the file browser at the
+    referenced path so a renamed/missing file still lands somewhere useful.
     """
 
     base = f"/u/{username}/{slug}/files"
@@ -90,7 +92,7 @@ def rewrite_project_file_links(
 
         file_id = file_lookup(path, filename) if file_lookup else None
         if file_id:
-            href = f"{base}/{file_id}/download"
+            href = f"{base}/{file_id}"
         else:
             href = f"{base}?path={quote(path)}" if path else base
         return f'{prefix}href="{href}"'
@@ -105,3 +107,16 @@ def render_for_project(
     file_lookup: FileLookup | None = None,
 ) -> str:
     return rewrite_project_file_links(render(text), username, slug, file_lookup)
+
+
+def build_file_lookup_from_files(files) -> FileLookup:
+    """Build a FileLookup callable from an eager-loaded ProjectFile list.
+
+    Used by routes that already have `project.files` loaded (the detail
+    page, updates tab, etc. via `get_project_by_username_and_slug`). For
+    routes that don't eager-load, see `benchlog.files.get_project_file_lookup`.
+    """
+    index: dict[tuple[str, str], str] = {}
+    for f in files:
+        index[(f.path or "", f.filename)] = str(f.id)
+    return lambda path, filename: index.get((path, filename))

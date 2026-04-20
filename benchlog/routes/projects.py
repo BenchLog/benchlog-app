@@ -9,7 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
-from benchlog.markdown import render as render_markdown
+from benchlog.files import get_project_file_index, get_project_file_lookup
+from benchlog.markdown import render_for_project
 from benchlog.models import Project, ProjectFile, ProjectStatus, ProjectTag, Tag, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
@@ -248,6 +249,12 @@ async def _render_form(
     status_code: int = 200,
 ):
     known_tags = await get_user_tag_slugs(db, user.id)
+    # Editors scoped to a project expose a `files/…` typeahead sourced from
+    # this index. New projects have no files yet, so send an empty list —
+    # the client-side code treats that as "enable typeahead but no matches".
+    file_index = (
+        await get_project_file_index(db, project.id) if project is not None else []
+    )
     return templates.TemplateResponse(
         request,
         "projects/form.html",
@@ -258,6 +265,7 @@ async def _render_form(
             "statuses": STATUS_VALUES,
             "error": error,
             "known_tags": known_tags,
+            "file_index": file_index,
         },
         status_code=status_code,
     )
@@ -436,6 +444,9 @@ async def project_detail(
     # Owner sees their own; everyone else (guests included) only sees public.
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
+    # File index only matters for the inline description editor (owner-only),
+    # so skip the query entirely for guests / non-owners.
+    file_index = await get_project_file_index(db, project.id) if is_owner else None
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -445,6 +456,7 @@ async def project_detail(
             "project": project,
             "is_owner": is_owner,
             "tag_href_prefix": "/explore",
+            "file_index": file_index,
         },
     )
 
@@ -585,7 +597,17 @@ async def update_description(
     await db.commit()
 
     if is_json:
-        rendered = render_markdown(description) if description else ""
+        if description:
+            # Same pipeline the detail page uses so the HTML we swap in has
+            # canonical `/u/{user}/{slug}/files/{id}` URLs, not relative
+            # `files/…` that would resolve differently depending on where
+            # the user is viewing from.
+            lookup = await get_project_file_lookup(db, project.id)
+            rendered = render_for_project(
+                description, user.username, project.slug, lookup
+            )
+        else:
+            rendered = ""
         return JSONResponse({"html": rendered})
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}", status_code=302

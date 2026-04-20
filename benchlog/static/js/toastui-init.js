@@ -42,6 +42,25 @@
     });
     mount.__toastuiEditor = editor;
 
+    // Project-scoped editors carry a JSON file index so the `files/…`
+    // typeahead module can offer completions. Parse once and cache on the
+    // mount; absent attribute → typeahead stays disabled for this editor
+    // (bio editor, anything outside a project context).
+    if (mount.dataset.toastuiFileIndex) {
+      try {
+        mount.__fileLinkIndex = JSON.parse(mount.dataset.toastuiFileIndex);
+      } catch (_) {
+        mount.__fileLinkIndex = [];
+      }
+      // Loose coupling: the autocomplete module registers itself on window
+      // after this file loads (both tags use `defer`, so load order is
+      // preserved). If the module isn't present for any reason, the editor
+      // still works — the typeahead just doesn't attach.
+      if (typeof window.initFileLinkAutocomplete === "function") {
+        window.initFileLinkAutocomplete(mount);
+      }
+    }
+
     // Sync on every change — cheap, and avoids races with fast submits.
     editor.on("change", () => {
       source.value = editor.getMarkdown();

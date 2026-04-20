@@ -253,6 +253,67 @@ def safe_filename(raw: str) -> str:
 # ---------- lookup ---------- #
 
 
+# Hard cap for the editor autocomplete payload. Makers rarely cross this in
+# practice; silently truncate so a pathological project doesn't balloon the
+# form HTML (or the client-side filter loop).
+_FILE_INDEX_MAX = 500
+
+
+async def get_project_file_index(
+    db: AsyncSession, project_id: uuid.UUID
+) -> list[dict]:
+    """Serialize a project's files for the editor `files/…` autocomplete.
+
+    Returns `[{"path": str, "filename": str, "is_image": bool}, …]` sorted
+    by `(path, filename)` and capped at ``_FILE_INDEX_MAX`` entries. Files
+    without a current version are skipped — they can't be downloaded, so
+    linking to them from markdown would be a dead end.
+
+    Eager-loads ``current_version`` so ``raise_on_sql`` doesn't bite when
+    we read ``mime_type`` to derive ``is_image``.
+    """
+    result = await db.execute(
+        select(ProjectFile)
+        .options(selectinload(ProjectFile.current_version))
+        .where(
+            ProjectFile.project_id == project_id,
+            ProjectFile.current_version_id.is_not(None),
+        )
+        .order_by(ProjectFile.path.asc(), ProjectFile.filename.asc())
+        .limit(_FILE_INDEX_MAX)
+    )
+    out: list[dict] = []
+    for f in result.scalars().all():
+        mime = (f.current_version.mime_type if f.current_version else "") or ""
+        out.append(
+            {
+                "path": f.path or "",
+                "filename": f.filename,
+                "is_image": mime.startswith("image/"),
+            }
+        )
+    return out
+
+
+async def get_project_file_lookup(db: AsyncSession, project_id: uuid.UUID):
+    """Return a `(path, filename) -> file_id_str` callable for markdown
+    `files/…` link rewriting. Use from routes that don't eager-load files
+    (e.g. the description AJAX endpoint). Routes that already load
+    ``project.files`` should use ``benchlog.markdown.build_file_lookup_from_files``
+    instead to avoid an extra DB round-trip.
+    """
+    result = await db.execute(
+        select(ProjectFile.id, ProjectFile.path, ProjectFile.filename).where(
+            ProjectFile.project_id == project_id,
+            ProjectFile.current_version_id.is_not(None),
+        )
+    )
+    index: dict[tuple[str, str], str] = {}
+    for row in result.all():
+        index[(row.path or "", row.filename)] = str(row.id)
+    return lambda path, filename: index.get((path, filename))
+
+
 async def get_file_by_id(
     db: AsyncSession, project_id: uuid.UUID, file_id: uuid.UUID
 ) -> ProjectFile | None:

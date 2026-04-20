@@ -42,6 +42,50 @@ async def test_description_renders_as_markdown(client, db):
     assert "**bold**" not in resp.text
 
 
+async def test_description_rewrites_file_links_to_canonical_url(client, db):
+    # `files/<path>/<filename>` links must resolve to the file detail page
+    # using the UUID — not the filename (which would 422 on the UUID-typed
+    # path param) and not a relative `files/...` (which would resolve
+    # against the current URL and produce different links on different
+    # pages). Regression guard for a bug we hit in the wild.
+    import uuid as _uuid
+    from benchlog.models import FileVersion, ProjectFile
+
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    project = await _seed_project(
+        db, alice, description="See [the spool](files/3d-files/spool.stl)."
+    )
+    pf = ProjectFile(
+        id=_uuid.uuid4(),
+        project_id=project.id,
+        path="3d-files",
+        filename="spool.stl",
+    )
+    db.add(pf)
+    await db.flush()
+    fv = FileVersion(
+        file_id=pf.id,
+        version_number=1,
+        storage_path=f"files/{pf.id}/1.stl",
+        original_name="spool.stl",
+        size_bytes=100,
+        mime_type="model/stl",
+        checksum="abc",
+    )
+    db.add(fv)
+    await db.flush()
+    pf.current_version_id = fv.id
+    await db.commit()
+
+    resp = await client.get("/u/alice/bench")
+    assert resp.status_code == 200
+    # Canonical: absolute path + slug + file UUID (detail page, not /download).
+    assert f'href="/u/alice/bench/files/{pf.id}"' in resp.text
+    # Must NOT contain the relative filename-based href that was breaking
+    # the click-through.
+    assert 'href="files/3d-files/spool.stl"' not in resp.text
+
+
 async def test_description_inline_edit_button_visible_to_owner_only(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     await make_user(db, email="bob@test.com", username="bob")

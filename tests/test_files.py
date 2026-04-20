@@ -3168,7 +3168,9 @@ def test_markdown_rewriter_resolves_known_file_to_canonical_url():
         return "abc123" if (path, name) == ("models", "widget.stl") else None
 
     out = rewrite_project_file_links(html, "alice", "bench", lookup)
-    assert 'href="/u/alice/bench/files/abc123/download"' in out
+    # Links go to the file DETAIL page (not /download) so the reader gets
+    # metadata, versions, and preview instead of a forced download.
+    assert 'href="/u/alice/bench/files/abc123"' in out
 
 
 def test_markdown_rewriter_falls_back_to_browser_when_unknown():

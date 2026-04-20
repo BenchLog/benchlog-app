@@ -46,6 +46,6 @@
         {% endif %}
     </header>
     <div class="markdown-body text-ink">
-        {{ update.content|markdown }}
+        {{ update.content|project_markdown(project) }}
     </div>
 </article>

@@ -10,6 +10,11 @@
                   coexist (e.g. "description", "update-body").
     - min_height  (str, default "240px") editor body min-height.
     - placeholder (str, optional) placeholder shown when empty.
+    - file_index  (list[dict]|None, optional) list of project files for the
+                  `files/…` typeahead. Each dict: {path, filename, is_image}.
+                  Set on project-scoped editors (project/update forms +
+                  inline description edit); omit / pass None on the bio
+                  editor so typeahead stays disabled there.
 
   The <textarea> stays in the DOM (hidden) so form submits pick up its
   value — `toastui-init.js` keeps it synced on every change and on form
@@ -31,6 +36,7 @@
        style="height: {{ min_height or '240px' }}; min-height: {{ min_height or '240px' }};">
     <div data-toastui-mount
          data-toastui-source-id="toastui-source-{{ id_suffix }}"
+         {% if file_index is defined and file_index is not none %}data-toastui-file-index='{{ file_index|tojson }}'{% endif %}
          {% if placeholder %}data-toastui-placeholder="{{ placeholder }}"{% endif %}
          id="toastui-mount-{{ id_suffix }}"
          class="h-full"></div>

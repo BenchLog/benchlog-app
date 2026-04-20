@@ -69,6 +69,13 @@
       mount.id = mountId;
       mount.dataset.toastuiMount = "";
       mount.dataset.toastuiSourceId = sourceId;
+      // Carry the per-project file index through so the typeahead
+      // attaches to the inline editor too — the form already received
+      // the JSON from the server via `data-file-index`, so we don't
+      // need to refetch.
+      if (form.dataset.fileIndex) {
+        mount.dataset.toastuiFileIndex = form.dataset.fileIndex;
+      }
       mount.className = "h-full";
       resizer.appendChild(mount);
       window.initToastuiEditors?.(slot);

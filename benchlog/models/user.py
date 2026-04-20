@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Index, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from benchlog.models.base import Base, TimestampMixin, new_uuid
@@ -8,10 +8,17 @@ from benchlog.models.base import Base, TimestampMixin, new_uuid
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
+    # Functional unique indexes on lower(col) enforce case-insensitive
+    # uniqueness at the DB level. The app already lowercases on signup, so
+    # these are belt-and-braces for any future code path that forgets.
+    __table_args__ = (
+        Index("ix_users_email_lower", text("lower(email)"), unique=True),
+        Index("ix_users_username_lower", text("lower(username)"), unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=new_uuid)
-    email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
-    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(256))
+    username: Mapped[str] = mapped_column(String(64))
     display_name: Mapped[str] = mapped_column(String(128))
     password_hash: Mapped[str | None] = mapped_column(String(256))
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)

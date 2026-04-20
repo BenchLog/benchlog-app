@@ -201,19 +201,29 @@ def generate_nonce() -> str:
 
 @dataclass
 class CallbackResult:
-    """Result of OIDC callback. Exactly one of user_id / error_message is set."""
-    kind: str  # "linked" | "logged_in" | "created" | "error"
+    """Result of OIDC callback. Exactly one of user_id / error_message is set.
+
+    `needs_profile` is returned in place of auto-creating a user when a new
+    OIDC identity arrives. Usernames are immutable after signup, so we show
+    the user a completion form rather than silently auto-assigning a slug
+    derived from their provider profile. `profile_data` carries the prefill
+    values and the verified provider claims the completion route needs.
+    """
+    kind: str  # "linked" | "logged_in" | "needs_profile" | "error"
     user_id: uuid.UUID | None = None
     message: str | None = None
     redirect: str = "/"
+    profile_data: dict | None = None
 
 
 def _clean_username_from_email(email: str) -> str:
-    """Derive a slug-safe username from an email local-part for OIDC auto-signup.
+    """Derive a slug-safe username prefill from an email local-part.
 
     Must produce output that passes benchlog.auth.signup.validate_username:
     lowercase [a-z0-9_-], 2-32 chars, starts and ends with alphanumeric.
-    Shorter results are padded; empty input falls back to "user".
+    Shorter results are padded; empty input falls back to "user". Only a
+    prefill — the user confirms or edits it on the completion page, so
+    collisions and reserved names aren't checked here.
     """
     base = email.split("@", 1)[0].lower()
     cleaned = "".join(ch for ch in base if ch.isalnum() or ch in "-_")
@@ -221,17 +231,6 @@ def _clean_username_from_email(email: str) -> str:
     if len(cleaned) < 2:
         cleaned = (cleaned + "user")[:32]
     return cleaned
-
-
-async def _unique_username(db: AsyncSession, base: str) -> str:
-    from benchlog.auth import users as user_svc
-
-    candidate = base
-    suffix = 1
-    while await user_svc.get_user_by_username(db, candidate):
-        suffix += 1
-        candidate = f"{base}-{suffix}"
-    return candidate
 
 
 async def handle_callback(
@@ -398,27 +397,17 @@ async def handle_callback(
             redirect="/login",
         )
 
-    base_username = _clean_username_from_email(preferred_username or email)
-    username = await _unique_username(db, base_username)
-    first_run = await user_svc.user_count(db) == 0
-    new_user = User(
-        email=email,
-        username=username,
-        display_name=display_name,
-        password_hash=None,
-        email_verified=email_verified_claim,
-        is_site_admin=first_run,
-        is_active=True,
+    # Hand off to the completion page so the user picks their own username.
+    # Usernames are immutable, so we must not silently auto-assign a slug
+    # derived from the provider's preferred_username or email local-part.
+    return CallbackResult(
+        kind="needs_profile",
+        profile_data={
+            "provider_id": str(provider.id),
+            "subject": subject,
+            "email": email,
+            "email_verified": email_verified_claim,
+            "display_name_prefill": display_name,
+            "username_prefill": _clean_username_from_email(preferred_username or email),
+        },
     )
-    db.add(new_user)
-    await db.flush()
-    db.add(
-        OIDCIdentity(
-            user_id=new_user.id,
-            provider_id=provider.id,
-            subject=subject,
-            email=email,
-        )
-    )
-    await db.commit()
-    return CallbackResult(kind="created", user_id=new_user.id)

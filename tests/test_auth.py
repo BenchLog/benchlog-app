@@ -133,6 +133,58 @@ async def test_validate_username_normalizes_valid_slugs():
     assert validate_username("a1") == "a1"
 
 
+async def test_validate_username_rejects_reserved():
+    """Reserved names are blocked even after normalization (case/whitespace)."""
+    import pytest
+
+    from benchlog.auth.signup import SignupValidationError, validate_username
+
+    for reserved in ["admin", "ADMIN", "  Root  ", "support", "benchlog"]:
+        with pytest.raises(SignupValidationError):
+            validate_username(reserved)
+
+
+async def test_db_enforces_case_insensitive_username_uniqueness(db):
+    """Direct ORM insert bypassing validate_username must still be rejected."""
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from benchlog.auth.passwords import hash_password
+
+    db.add(User(
+        email="a@test.com", username="alice", display_name="A",
+        password_hash=hash_password("testpass1234"),
+    ))
+    await db.commit()
+
+    db.add(User(
+        email="b@test.com", username="ALICE", display_name="B",
+        password_hash=hash_password("testpass1234"),
+    ))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+
+
+async def test_db_enforces_case_insensitive_email_uniqueness(db):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    from benchlog.auth.passwords import hash_password
+
+    db.add(User(
+        email="alice@test.com", username="alice", display_name="A",
+        password_hash=hash_password("testpass1234"),
+    ))
+    await db.commit()
+
+    db.add(User(
+        email="ALICE@test.com", username="bob", display_name="B",
+        password_hash=hash_password("testpass1234"),
+    ))
+    with pytest.raises(IntegrityError):
+        await db.commit()
+
+
 # ---------- login ----------
 
 

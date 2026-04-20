@@ -19,6 +19,28 @@ USERNAME_RULES_HINT = (
     "must start and end with a letter or number."
 )
 
+# Blocked to prevent impersonation of platform/staff identities and to keep a
+# small pool of names free for future system accounts. Usernames live under
+# /u/<username>/, so top-level routes (/login, /admin, /explore) don't need
+# reserving for URL-collision reasons — this list is impersonation-focused.
+RESERVED_USERNAMES = frozenset(
+    {
+        "admin",
+        "administrator",
+        "benchlog",
+        "help",
+        "mod",
+        "moderator",
+        "official",
+        "owner",
+        "root",
+        "staff",
+        "support",
+        "system",
+        "team",
+    }
+)
+
 
 class SignupValidationError(ValueError):
     pass
@@ -57,6 +79,8 @@ def validate_username(value: str) -> str:
         )
     if not USERNAME_RE.match(normalized):
         raise SignupValidationError(f"Invalid username. {USERNAME_RULES_HINT}")
+    if normalized in RESERVED_USERNAMES:
+        raise SignupValidationError("That username is reserved.")
     return normalized
 
 

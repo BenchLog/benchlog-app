@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Choose a username · {{ site.site_name }}{% endblock %}
+{% block content %}
+<div class="max-w-sm mx-auto">
+    <h1 class="text-3xl mb-1">Almost there</h1>
+    <p class="meta mb-6">Pick a username to finish setting up your account. Usernames can't be changed later.</p>
+
+    <form method="post" action="/auth/oidc/complete" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label>Email</label>
+            <input type="email" value="{{ email }}" disabled>
+            <p class="meta mt-1">From your sign-in provider.</p>
+        </div>
+        <div>
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" autocomplete="username"
+                   minlength="2" maxlength="32" pattern="[a-z0-9]([a-z0-9_-]*[a-z0-9])?"
+                   value="{{ username }}" required autofocus>
+            <p class="meta mt-1">2-32 chars, lowercase letters, numbers, <code>-</code>, <code>_</code>. Can't be changed later.</p>
+        </div>
+        <div>
+            <label for="display_name">Display name</label>
+            <input id="display_name" name="display_name" type="text" value="{{ display_name }}" required>
+        </div>
+        <button type="submit" class="btn-primary w-full">Create account</button>
+    </form>
+
+    <div class="mt-4 text-sm">
+        <a href="/login">Cancel</a>
+    </div>
+</div>
+{% endblock %}

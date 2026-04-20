@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -31,15 +31,19 @@ from benchlog.dependencies import current_user, require_user
 from benchlog.files import (
     StoredBlob,
     UploadTooLarge,
+    code_language,
+    copy_blob,
     delete_blob,
     delete_folder,
     get_existing_file,
     get_file_by_id,
+    highlight_code,
     list_files_in_folder,
     next_version_number,
     normalize_virtual_path,
     preview_kind,
     read_text_preview,
+    regenerate_thumbnail_from_storage,
     rename_folder,
     safe_filename,
     store_upload,
@@ -841,19 +845,44 @@ async def file_detail(
     file = await _load_file_with_versions(db, project.id, file_id)
     if file is None:
         raise HTTPException(status_code=404)
+    return await _render_file_detail(request, user, project, file, is_owner)
 
+
+async def _render_file_detail(
+    request: Request,
+    user: User | None,
+    project: Project,
+    file: ProjectFile,
+    is_owner: bool,
+    *,
+    error: str | None = None,
+    status_code: int = 200,
+):
+    """Factored out of `file_detail` so mutation routes can re-render with a
+    flash-style error on validation failure (matches form-fallback pattern
+    used by upload/edit routes)."""
     kind = "none"
     text_preview: str | None = None
     text_truncated = False
+    code_html: str | None = None
+    language: str | None = None
     if file.current_version is not None:
         kind = preview_kind(file.current_version.mime_type, file.filename)
-        if kind == "text":
+        if kind in {"text", "code"}:
             try:
                 text_preview, text_truncated = await read_text_preview(
                     get_storage(), file.current_version.storage_path
                 )
             except (FileNotFoundError, ValueError):
                 text_preview = None
+            if kind == "code" and text_preview is not None:
+                language = code_language(file.filename)
+                if language is not None:
+                    code_html = highlight_code(text_preview, language)
+                else:
+                    # Defensive: preview_kind said "code" but the lexer
+                    # lookup came back empty — treat as plain text.
+                    kind = "text"
 
     return templates.TemplateResponse(
         request,
@@ -866,7 +895,11 @@ async def file_detail(
             "preview_kind": kind,
             "text_preview": text_preview,
             "text_truncated": text_truncated,
+            "code_html": code_html,
+            "language": language,
+            "error": error,
         },
+        status_code=status_code,
     )
 
 
@@ -1009,6 +1042,170 @@ async def upload_new_version(
     file.current_version_id = version.id
     await db.commit()
 
+    return RedirectResponse(
+        f"/u/{user.username}/{project.slug}/files/{file.id}",
+        status_code=302,
+    )
+
+
+# ---------- delete / restore individual version (owner) ---------- #
+#
+# These are nested under `{file_id}/version/{version_number}/...`. `version`
+# is a literal segment here, so it never collides with `{file_id}` — but
+# it still has to live BEFORE the catch-all edit POST (`{file_id}`) since
+# FastAPI's router doesn't reorder.
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/delete")
+async def delete_file_version(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Hard-delete a single FileVersion row + its blob + thumbnail.
+
+    Cannot delete the current version while other versions exist — the
+    owner has to restore another version first (which promotes it to
+    current) before the previously-current one can go. Cannot delete the
+    only remaining version either — that's what "Delete file" is for.
+    """
+    await _require_owned_project(db, user, username, slug)
+    # Re-load through the public lookup so the detail-page re-render path
+    # gets every eager-load it needs (tags, updates, files, etc.) without
+    # a second owner check.
+    project = await get_project_by_username_and_slug(db, username, slug)
+    assert project is not None  # _require_owned_project guarantees existence
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+
+    target = next(
+        (v for v in file.versions if v.version_number == version_number), None
+    )
+    if target is None:
+        raise HTTPException(status_code=404)
+
+    json_mode = _wants_json(request)
+
+    async def fail(msg: str, *, status: int = 400):
+        if json_mode:
+            return JSONResponse({"detail": msg}, status_code=status)
+        return await _render_file_detail(
+            request, user, project, file, True, error=msg, status_code=status
+        )
+
+    if len(file.versions) <= 1:
+        return await fail(
+            "This is the only version. Use Delete File to remove the entire file."
+        )
+    if file.current_version_id == target.id:
+        return await fail(
+            "Can't delete the current version while other versions exist. "
+            "Restore another version first to make it current, then delete this one."
+        )
+
+    storage = get_storage()
+    await db.delete(target)
+    await db.commit()
+
+    # Best-effort blob cleanup. Matches the pattern in delete_file — the DB
+    # is the source of truth; a missing blob on disk never fails the request.
+    await delete_blob(storage, target)
+
+    if json_mode:
+        return Response(status_code=204)
+    return RedirectResponse(
+        f"/u/{user.username}/{project.slug}/files/{file.id}",
+        status_code=302,
+    )
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/restore")
+async def restore_file_version(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Promote an older version to current by creating a new version whose
+    blob is a fresh copy of the source. The original row stays intact —
+    only `current_version_id` moves. Version numbers never renumber, so a
+    gap left by a prior delete is preserved.
+    """
+    await _require_owned_project(db, user, username, slug)
+    project = await get_project_by_username_and_slug(db, username, slug)
+    assert project is not None
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+
+    source = next(
+        (v for v in file.versions if v.version_number == version_number), None
+    )
+    if source is None:
+        raise HTTPException(status_code=404)
+
+    json_mode = _wants_json(request)
+
+    async def fail(msg: str, *, status: int = 400):
+        if json_mode:
+            return JSONResponse({"detail": msg}, status_code=status)
+        return await _render_file_detail(
+            request, user, project, file, True, error=msg, status_code=status
+        )
+
+    if file.current_version_id == source.id:
+        return await fail("This version is already the latest.")
+
+    storage = get_storage()
+    new_version_number = await next_version_number(db, file.id)
+    new_storage_path = f"files/{file.id}/{new_version_number}"
+
+    await copy_blob(storage, source.storage_path, new_storage_path)
+
+    new_width: int | None = None
+    new_height: int | None = None
+    new_thumbnail_path: str | None = None
+    # Only regenerate thumbnails for versions that actually had one —
+    # otherwise a non-image source would decode-fail and cost us an IO
+    # round trip on every restore.
+    if source.thumbnail_path or source.is_image:
+        new_width, new_height, new_thumbnail_path = (
+            await regenerate_thumbnail_from_storage(
+                storage,
+                file_id=file.id,
+                version_number=new_version_number,
+                storage_path=new_storage_path,
+            )
+        )
+
+    new_version = FileVersion(
+        file_id=file.id,
+        version_number=new_version_number,
+        storage_path=new_storage_path,
+        original_name=source.original_name,
+        size_bytes=source.size_bytes,
+        mime_type=source.mime_type,
+        checksum=source.checksum,
+        changelog=f"Restored from v{source.version_number}",
+        width=new_width,
+        height=new_height,
+        thumbnail_path=new_thumbnail_path,
+    )
+    db.add(new_version)
+    await db.flush()
+    file.current_version_id = new_version.id
+    await db.commit()
+
+    if json_mode:
+        return Response(status_code=204)
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files/{file.id}",
         status_code=302,
@@ -1165,6 +1362,7 @@ async def toggle_gallery_visibility(
     file.show_in_gallery = not file.show_in_gallery
     if not file.show_in_gallery and project.cover_file_id == file.id:
         project.cover_file_id = None
+        _apply_crop(project, None)
     await db.commit()
     fallback = f"/u/{user.username}/{project.slug}/files/{file.id}"
     return RedirectResponse(
@@ -1175,12 +1373,139 @@ async def toggle_gallery_visibility(
 
 # ---------- cover image (owner) ---------- #
 
+# Accept ratios within 1% of 16:9 — JS math introduces rounding, and we'd
+# rather be forgiving about a 0.56 vs 0.5625 mismatch than surface a false
+# "wrong aspect" 400 to the user. Clients that care can clamp tighter.
+_COVER_ASPECT = 16.0 / 9.0
+_COVER_ASPECT_TOLERANCE = 0.01
+
+
+def _parse_crop_field(raw: str | None) -> float | None:
+    """Parse a single crop-coord form value. Returns None for empty/missing
+    so the four-together rule below can distinguish "not submitted" from
+    "submitted as 0"."""
+    if raw is None:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid crop coordinate.")
+
+
+def _validate_crop(
+    x: float | None,
+    y: float | None,
+    w: float | None,
+    h: float | None,
+    image_width: int | None = None,
+    image_height: int | None = None,
+) -> tuple[float, float, float, float] | None:
+    """Enforce the crop contract. Returns the four floats when all four are
+    present and valid; None when all four are absent (no crop submitted);
+    raises 400 on partial or out-of-bounds input.
+
+    `w` and `h` are normalized to image dimensions, so the *image-pixel*
+    aspect of the crop is `(w * W) / (h * H)`, not `w / h`. Aspect is only
+    enforced when image dims are known (otherwise we trust the cropper JS).
+    """
+    provided = [v is not None for v in (x, y, w, h)]
+    if not any(provided):
+        return None
+    if not all(provided):
+        raise HTTPException(
+            status_code=400,
+            detail="Cover crop requires all four of x, y, width, height.",
+        )
+    # All four present by now — narrow for the type checker.
+    assert x is not None and y is not None and w is not None and h is not None
+    # Each coord in [0, 1]; width + height strictly positive.
+    for val in (x, y, w, h):
+        if not (0.0 <= val <= 1.0):
+            raise HTTPException(
+                status_code=400, detail="Crop coordinates must be in [0, 1]."
+            )
+    if w <= 0.0 or h <= 0.0:
+        raise HTTPException(
+            status_code=400, detail="Crop width and height must be positive."
+        )
+    if x + w > 1.0 + 1e-6 or y + h > 1.0 + 1e-6:
+        raise HTTPException(
+            status_code=400, detail="Crop rectangle extends past the image edge."
+        )
+    if image_width and image_height:
+        image_aspect = (w * image_width) / (h * image_height)
+        if abs(image_aspect - _COVER_ASPECT) > _COVER_ASPECT_TOLERANCE:
+            raise HTTPException(
+                status_code=400,
+                detail="Cover crop must be 16:9.",
+            )
+    return x, y, w, h
+
+
+def _apply_crop(project: Project, crop: tuple[float, float, float, float] | None) -> None:
+    if crop is None:
+        project.cover_crop_x = None
+        project.cover_crop_y = None
+        project.cover_crop_width = None
+        project.cover_crop_height = None
+    else:
+        x, y, w, h = crop
+        project.cover_crop_x = x
+        project.cover_crop_y = y
+        project.cover_crop_width = w
+        project.cover_crop_height = h
+
+
+async def _read_crop_from_request(
+    request: Request,
+) -> tuple[float | None, float | None, float | None, float | None]:
+    """Pull crop coords from either a form body or a JSON body.
+
+    The /cover and /cover-crop routes both accept either form or JSON —
+    fetch-from-JS sends `application/json`, the plain HTML form path sends
+    `application/x-www-form-urlencoded`. Missing fields stay None.
+    """
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Invalid JSON body.")
+
+        def _coerce(v) -> float | None:
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Invalid crop coordinate.")
+
+        return (
+            _coerce(payload.get("crop_x")),
+            _coerce(payload.get("crop_y")),
+            _coerce(payload.get("crop_width")),
+            _coerce(payload.get("crop_height")),
+        )
+    form = await request.form()
+    return (
+        _parse_crop_field(form.get("crop_x")),
+        _parse_crop_field(form.get("crop_y")),
+        _parse_crop_field(form.get("crop_width")),
+        _parse_crop_field(form.get("crop_height")),
+    )
+
 
 @router.post("/u/{username}/{slug}/files/{file_id}/cover")
 async def set_cover_image(
     username: str,
     slug: str,
     file_id: uuid.UUID,
+    request: Request,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1188,16 +1513,76 @@ async def set_cover_image(
     file = await get_file_by_id(db, project.id, file_id)
     if file is None:
         raise HTTPException(status_code=404)
-    # Toggle: if this file is already the cover, clear it instead.
-    if project.cover_file_id == file.id:
+
+    # Always attempt to parse the body so stale forms can't skip validation.
+    crop_raw = await _read_crop_from_request(request)
+    cv = file.current_version
+    crop = _validate_crop(
+        *crop_raw,
+        image_width=cv.width if cv else None,
+        image_height=cv.height if cv else None,
+    )
+    json_mode = _wants_json(request)
+
+    # Toggle: if this file is already the cover and no crop was supplied,
+    # clear it (and any stored crop). A crop in the request means the user
+    # is re-cropping, not toggling — preserve the cover and update the crop.
+    if project.cover_file_id == file.id and crop is None:
         project.cover_file_id = None
+        _apply_crop(project, None)
     else:
         if file.current_version is None or not file.current_version.is_image:
             raise HTTPException(
                 status_code=400, detail="Only image files can be set as cover."
             )
+        # Setting or changing cover writes the submitted crop (None for the
+        # bare toggle path, the validated tuple for the modal path). Either
+        # way the previous crop is discarded cleanly.
         project.cover_file_id = file.id
+        _apply_crop(project, crop)
     await db.commit()
+
+    if json_mode:
+        return Response(status_code=204)
+    return RedirectResponse(
+        f"/u/{user.username}/{project.slug}/files/{file.id}",
+        status_code=302,
+    )
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/cover-crop")
+async def set_cover_crop(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Adjust the crop on the already-selected cover image.
+
+    404s if `file_id` isn't the current cover — this route is crop-only,
+    not a way to sneak past the cover-image check in /cover.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    if project.cover_file_id != file_id:
+        raise HTTPException(status_code=404)
+    file = await get_file_by_id(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+
+    crop_raw = await _read_crop_from_request(request)
+    cv = file.current_version
+    crop = _validate_crop(
+        *crop_raw,
+        image_width=cv.width if cv else None,
+        image_height=cv.height if cv else None,
+    )
+    _apply_crop(project, crop)
+    await db.commit()
+
+    if _wants_json(request):
+        return Response(status_code=204)
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files/{file.id}",
         status_code=302,
@@ -1224,9 +1609,11 @@ async def delete_file(
     versions = list(file.versions)
 
     # Drop the cover-image FK first if needed; the SET NULL handles the DB
-    # side, but doing it explicitly avoids a deferred-FK round-trip.
+    # side, but doing it explicitly avoids a deferred-FK round-trip. Crop
+    # coordinates are meaningless without the cover so clear them too.
     if project.cover_file_id == file.id:
         project.cover_file_id = None
+        _apply_crop(project, None)
     # Null out current_version_id so SQLAlchemy doesn't trip over the
     # circular FK during the cascade delete.
     file.current_version_id = None

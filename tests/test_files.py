@@ -11,7 +11,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from benchlog.config import settings
-from benchlog.files import normalize_virtual_path, preview_kind, safe_filename
+from benchlog.files import (
+    code_language,
+    highlight_code,
+    normalize_virtual_path,
+    preview_kind,
+    safe_filename,
+)
 from benchlog.markdown import rewrite_project_file_links
 from benchlog.models import FileVersion, Project, ProjectFile, ProjectStatus
 from benchlog.storage import get_storage
@@ -785,9 +791,12 @@ def test_preview_kind_dispatches_by_mime_and_extension():
     assert preview_kind("video/mp4", "a.mp4") == "video"
     assert preview_kind("audio/mpeg", "a.mp3") == "audio"
     assert preview_kind("application/pdf", "a.pdf") == "pdf"
-    assert preview_kind("text/markdown", "a.md") == "text"
+    # Markdown has a Pygments lexer, so it renders via the "code" path now.
+    assert preview_kind("text/markdown", "a.md") == "code"
     # Extension fallback when server sends octet-stream.
-    assert preview_kind("application/octet-stream", "README.md") == "text"
+    assert preview_kind("application/octet-stream", "README.md") == "code"
+    # Textual but no lexer -> plain "text" fallback.
+    assert preview_kind("text/plain", "server.log") == "text"
     assert preview_kind("application/octet-stream", "model.stl") == "none"
 
 
@@ -823,6 +832,129 @@ async def test_detail_renders_text_preview_for_markdown(client, db):
     assert resp.status_code == 200
     assert "<pre" in resp.text
     assert "preview-marker-alpha" in resp.text
+
+
+# ---------- Pygments code highlighting ---------- #
+
+
+def test_code_language_resolves_known_extensions():
+    assert code_language("script.py") == "python"
+    assert code_language("app.js") == "javascript"
+    assert code_language("main.rs") == "rust"
+    assert code_language("part.scad") == "openscad"
+    # Extensions Pygments doesn't know about -> None.
+    assert code_language("notes.weird-ext") is None
+    # Plain text maps to TextLexer which we treat as "no lexer".
+    assert code_language("log.txt") is None
+
+
+def test_highlight_code_emits_line_numbers_and_token_spans():
+    html = highlight_code("def hello():\n    return 1\n", "python")
+    # linenos="table" wraps the whole block in a <table class="highlighttable">.
+    assert "highlighttable" in html
+    # Line numbers are rendered as anchored spans inside the linenos cell.
+    assert 'class="linenos"' in html
+    # `def` is a Python keyword -> <span class="k">def</span>.
+    assert '<span class="k">def</span>' in html
+    # Wrapper div with the cssclass we configured.
+    assert '<div class="highlight">' in html
+
+
+async def test_python_code_file_renders_with_pygments_highlighting(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="script.py",
+        content=b"def hello():\n    return 1\n",
+        mime="text/x-python",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    body = resp.text
+    # Pygments wrapper + keyword token proves highlighting ran.
+    assert '<div class="highlight">' in body
+    assert '<span class="k">def</span>' in body
+    # linenos="table" renders a dedicated line-numbers cell.
+    assert 'class="linenos"' in body
+    # Language label is surfaced to the reader.
+    assert "python" in body
+
+
+async def test_unknown_extension_falls_back_to_plain_text(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    # A `.log` is textual but has no Pygments lexer -> plain <pre><code>.
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="server.log",
+        content=b"plain-text-marker-zeta\n",
+        mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "plain-text-marker-zeta" in body
+    # Should NOT have been routed through Pygments.
+    assert '<div class="highlight">' not in body
+    assert "<pre" in body
+
+
+async def test_javascript_code_file_uses_pygments(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="app.js",
+        content=b"const x = 1;\n",
+        mime="application/javascript",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    body = resp.text
+    assert '<div class="highlight">' in body
+    # `const` is a JS keyword/declaration token.
+    assert 'class="kd"' in body or 'class="k"' in body
+    assert "javascript" in body
+
+
+async def test_code_preview_truncates_at_size_limit(client, db):
+    """Files over 256 KB are truncated and the template shows the warning."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    # Generate > 256 KB of valid-ish Python so the lexer doesn't choke.
+    lines = [f"x_{i} = {i}\n" for i in range(40000)]
+    payload = "".join(lines).encode("utf-8")
+    assert len(payload) > 256 * 1024
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="big.py", content=payload,
+        mime="text/x-python", csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Preview truncated" in body
+    # Response size is bounded: Pygments expands each source byte into
+    # many HTML bytes (spans, anchors, table rows), but we cap the source
+    # at 256 KB, so the HTML can't balloon past a few MB — the full
+    # ~700 KB payload highlighted without the cap would be much larger.
+    assert len(body) < 6 * 1024 * 1024
 
 
 # ---------- file tree ---------- #
@@ -1396,6 +1528,135 @@ async def test_gallery_toggle_requires_owner(client, db):
     assert resp.status_code == 404
 
 
+# ---------- gallery lightbox ---------- #
+
+
+async def test_gallery_page_includes_lightbox_data_block(client, db):
+    """The gallery page emits a JSON <script> block listing every visible
+    image — gallery-lightbox.js parses it on load."""
+    import json
+    import re
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="alpha.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="bravo.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    files = (await db.execute(select(ProjectFile))).scalars().all()
+    expected_ids = {str(f.id) for f in files}
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    assert 'id="gallery-lightbox-data"' in resp.text
+
+    match = re.search(
+        r'<script type="application/json" id="gallery-lightbox-data">(.*?)</script>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert match, "lightbox data block not found"
+    data = json.loads(match.group(1))
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert {entry["id"] for entry in data} == expected_ids
+    for entry in data:
+        assert entry["full_url"].endswith(f"/files/{entry['id']}/download")
+        assert entry["thumb_url"].endswith(f"/files/{entry['id']}/thumb")
+        assert "filename" in entry
+        assert "description" in entry
+
+
+async def test_gallery_page_includes_lightbox_dialog_markup(client, db):
+    """The lightbox <dialog> markup ships with the gallery page so the JS
+    has something to attach to."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    assert '<dialog class="gallery-lightbox"' in resp.text
+    assert "data-lightbox-trigger" in resp.text
+    assert "gallery-lightbox.js" in resp.text
+
+
+async def test_hidden_images_excluded_from_lightbox_data(client, db):
+    """Images marked show_in_gallery=False shouldn't appear in the JSON
+    data the lightbox iterates over."""
+    import json
+    import re
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(
+        user_id=user.id, title="Bench", slug="bench",
+        status=ProjectStatus.in_progress, is_public=True,
+    ))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="visible-alpha.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hidden-bravo.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    files = (await db.execute(select(ProjectFile))).scalars().all()
+    visible = next(f for f in files if f.filename == "visible-alpha.png")
+    hidden = next(f for f in files if f.filename == "hidden-bravo.png")
+    token = await csrf_token(client, f"/u/alice/bench/files/{hidden.id}")
+    await client.post(
+        f"/u/alice/bench/files/{hidden.id}/gallery-visibility",
+        data={"_csrf": token},
+    )
+
+    # Guest sees only the visible image in the lightbox data.
+    client.cookies.clear()
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    match = re.search(
+        r'<script type="application/json" id="gallery-lightbox-data">(.*?)</script>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert match
+    data = json.loads(match.group(1))
+    ids = {entry["id"] for entry in data}
+    assert str(visible.id) in ids
+    assert str(hidden.id) not in ids
+
+
+async def test_lightbox_data_omitted_when_gallery_empty(client, db):
+    """No visible images → no lightbox JSON / dialog (the empty-state card
+    renders instead, no point shipping inert markup)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    assert 'id="gallery-lightbox-data"' not in resp.text
+    assert '<dialog class="gallery-lightbox"' not in resp.text
+
+
 # ---------- cover image on cards ---------- #
 
 
@@ -1474,6 +1735,255 @@ async def test_deleting_cover_image_clears_project_cover_fk(client, db):
 
     project = (await db.execute(select(Project))).scalar_one()
     assert project.cover_file_id is None
+
+
+# ---------- cover crop ---------- #
+#
+# Four normalized floats on Project: (cover_crop_x, cover_crop_y,
+# cover_crop_width, cover_crop_height). Stored only when the owner picks a
+# specific 16:9 region via the cropper; NULL means "render the full image
+# with object-fit: cover" (legacy behaviour). See routes/files.py.
+
+
+# Valid 16:9 crop for the test helpers. The test image is 32x24 (4:3), so a
+# 16:9 image-pixel region needs cw/ch = (16/9) * (24/32) = 4/3, NOT 16/9.
+# (Normalized cw/ch = 16/9 only when the image itself is square; for any
+# non-square image the saved coords have a different normalized ratio.)
+_CROP_16_9 = {
+    "crop_x": "0.1",
+    "crop_y": "0.1",
+    "crop_width": "0.6",
+    "crop_height": "0.45",  # (0.6*32) / (0.45*24) = 19.2/10.8 = 16/9
+}
+
+
+async def _setup_alice_with_image(client, db, filename="hero.png"):
+    """Shared scaffold: Alice, project "bench", one uploaded PNG, logged in."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename=filename, content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(
+        select(ProjectFile).where(ProjectFile.filename == filename)
+    )).scalar_one()
+    return user, file
+
+
+async def test_set_cover_with_crop_persists_normalized_coordinates(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    assert resp.status_code == 302
+
+    project = (await db.execute(select(Project))).scalar_one()
+    assert project.cover_file_id == file.id
+    assert project.cover_crop_x == pytest.approx(0.1)
+    assert project.cover_crop_y == pytest.approx(0.1)
+    assert project.cover_crop_width == pytest.approx(0.6)
+    assert project.cover_crop_height == pytest.approx(0.45)
+
+
+async def test_set_cover_without_crop_leaves_columns_null(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover", data={"_csrf": token}
+    )
+    assert resp.status_code == 302
+
+    project = (await db.execute(select(Project))).scalar_one()
+    assert project.cover_file_id == file.id
+    assert project.cover_crop_x is None
+    assert project.cover_crop_y is None
+    assert project.cover_crop_width is None
+    assert project.cover_crop_height is None
+
+
+async def test_changing_cover_resets_crop_to_null(client, db):
+    user, file_a = await _setup_alice_with_image(client, db, filename="a.png")
+    # Upload a second image so we can change the cover to a different file.
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="b.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file_b = (await db.execute(
+        select(ProjectFile).where(ProjectFile.filename == "b.png")
+    )).scalar_one()
+
+    # Set cover to A with a crop.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file_a.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file_a.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    project = (await db.execute(select(Project))).scalar_one()
+    assert project.cover_file_id == file_a.id
+    assert project.cover_crop_width is not None
+
+    # Set cover to B with NO crop — should nuke the crop entirely.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file_b.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file_b.id}/cover", data={"_csrf": token}
+    )
+    assert resp.status_code == 302
+
+    await db.refresh(project)
+    assert project.cover_file_id == file_b.id
+    assert project.cover_crop_x is None
+    assert project.cover_crop_y is None
+    assert project.cover_crop_width is None
+    assert project.cover_crop_height is None
+
+
+async def test_clear_cover_resets_crop_to_null(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    # Set cover with crop first.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    project = (await db.execute(select(Project))).scalar_one()
+    assert project.cover_crop_width is not None
+
+    # Now toggle off — POST /cover with no fields on the current cover.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover", data={"_csrf": token}
+    )
+    assert resp.status_code == 302
+
+    await db.refresh(project)
+    assert project.cover_file_id is None
+    assert project.cover_crop_x is None
+    assert project.cover_crop_y is None
+    assert project.cover_crop_width is None
+    assert project.cover_crop_height is None
+
+
+async def test_cover_crop_validation_rejects_out_of_bounds(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={
+            "_csrf": token,
+            "crop_x": "1.5",  # outside [0, 1]
+            "crop_y": "0.1",
+            "crop_width": "0.6",
+            "crop_height": "0.3375",
+        },
+    )
+    assert resp.status_code == 400
+
+
+async def test_cover_crop_validation_rejects_wrong_aspect(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={
+            "_csrf": token,
+            "crop_x": "0.0",
+            "crop_y": "0.0",
+            "crop_width": "0.5",
+            "crop_height": "0.5",  # 1:1 — nowhere near 16:9
+        },
+    )
+    assert resp.status_code == 400
+
+
+async def test_cover_crop_route_adjusts_existing_crop(client, db):
+    _, file = await _setup_alice_with_image(client, db)
+    # First set cover with a crop.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+
+    # Then re-adjust via /cover-crop.
+    new_crop = {
+        "crop_x": "0.2",
+        "crop_y": "0.2",
+        "crop_width": "0.4",
+        "crop_height": "0.3",  # (0.4*32)/(0.3*24) = 16/9 for the 32x24 fixture
+    }
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover-crop",
+        data={"_csrf": token, **new_crop},
+    )
+    assert resp.status_code == 302
+
+    project = (await db.execute(select(Project))).scalar_one()
+    assert project.cover_crop_x == pytest.approx(0.2)
+    assert project.cover_crop_width == pytest.approx(0.4)
+
+
+async def test_cover_crop_route_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(Project(user_id=alice.id, title="Bench", slug="bench",
+                   status=ProjectStatus.in_progress, is_public=True))
+    await db.commit()
+
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+
+    # Bob logs in and tries to change alice's crop — 404 (owner-scoped).
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover-crop",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    assert resp.status_code == 404
+
+
+async def test_cover_crop_route_requires_file_to_be_current_cover(client, db):
+    # Upload two images, set cover to A, then POST /cover-crop for B — 404.
+    _, file_a = await _setup_alice_with_image(client, db, filename="a.png")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="b.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file_b = (await db.execute(
+        select(ProjectFile).where(ProjectFile.filename == "b.png")
+    )).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file_a.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file_a.id}/cover",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    # Now B isn't the cover.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file_b.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file_b.id}/cover-crop",
+        data={"_csrf": token, **_CROP_16_9},
+    )
+    assert resp.status_code == 404
 
 
 # ---------- folder rename + delete ---------- #
@@ -2677,3 +3187,301 @@ def test_markdown_rewriter_leaves_other_links_alone():
     html = '<p><a href="https://example.com">ext</a></p>'
     out = rewrite_project_file_links(html, "alice", "bench", lambda p, n: None)
     assert 'href="https://example.com"' in out
+
+
+# ---------- delete / restore individual version ---------- #
+
+
+async def _make_versioned_file(client, *, filenames_and_bodies, project_slug="bench"):
+    """Helper — upload each (filename, body) pair in order to the same path
+    so they collapse into a single file with sequential versions."""
+    for filename, body in filenames_and_bodies:
+        await _upload(
+            client,
+            f"/u/alice/{project_slug}/files",
+            filename=filename,
+            content=body,
+            mime="text/plain",
+            csrf_path=f"/u/alice/{project_slug}",
+        )
+
+
+async def test_delete_non_current_version_removes_row_and_blob(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    versions = (
+        await db.execute(
+            select(FileVersion)
+            .where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in versions] == [1, 2]
+    v1_blob = Path(get_storage().full_path(versions[0].storage_path))
+    assert v1_blob.exists()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/delete",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 302
+
+    remaining = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in remaining] == [2]
+    assert not v1_blob.exists()
+
+    # v2 still current + downloadable.
+    await db.refresh(file)
+    assert file.current_version_id == remaining[0].id
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/download")
+    assert resp.status_code == 200
+    assert resp.content == b"beta"
+
+
+async def test_delete_current_version_blocked_when_others_exist(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/2/delete",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 400
+    assert "Restore another version first" in resp.text
+
+    # v2 still exists.
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert {v.version_number for v in versions} == {1, 2}
+
+
+async def test_delete_only_remaining_version_blocked(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="solo.txt", content=b"alpha", mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/delete",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 400
+    assert "Delete File" in resp.text or "Delete file" in resp.text
+
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in versions] == [1]
+
+
+async def test_delete_version_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(Project(user_id=alice.id, title="Bench", slug="bench",
+                   status=ProjectStatus.in_progress, is_public=True))
+    await db.commit()
+
+    await login(client, "alice")
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/delete",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 404
+
+    # v1 still intact.
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in versions] == [1, 2]
+
+
+async def test_restore_version_creates_new_current_with_copied_blob(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/restore",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 302
+
+    versions = (
+        await db.execute(
+            select(FileVersion)
+            .where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in versions] == [1, 2, 3]
+
+    v1, v2, v3 = versions
+    await db.refresh(file)
+    assert file.current_version_id == v3.id
+    assert v3.changelog == "Restored from v1"
+    assert v3.size_bytes == v1.size_bytes
+    assert v3.checksum == v1.checksum
+    # Copied (not symlinked) — two distinct blobs on disk.
+    v1_blob = Path(get_storage().full_path(v1.storage_path))
+    v3_blob = Path(get_storage().full_path(v3.storage_path))
+    assert v1_blob.exists() and v3_blob.exists()
+    assert v1_blob != v3_blob
+
+    # Download returns the restored (v1's) content.
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/download")
+    assert resp.status_code == 200
+    assert resp.content == b"alpha"
+
+    # v1 row still intact and downloadable by explicit version.
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/download?v=1")
+    assert resp.status_code == 200
+    assert resp.content == b"alpha"
+
+
+async def test_restore_version_for_image_regenerates_thumbnail(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    # Two image versions at the same path.
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="photo.png", content=_png_bytes(100, 80), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="photo.png", content=_png_bytes(60, 40), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/restore",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 302
+
+    versions = (
+        await db.execute(
+            select(FileVersion)
+            .where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    v3 = versions[-1]
+    assert v3.version_number == 3
+    assert v3.width == 100
+    assert v3.height == 80
+    assert v3.thumbnail_path is not None
+    assert Path(get_storage().full_path(v3.thumbnail_path)).exists()
+
+
+async def test_restore_current_version_rejected(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/2/restore",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 400
+    assert "already the latest" in resp.text
+
+    # No new version row was created.
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert {v.version_number for v in versions} == {1, 2}
+
+
+async def test_restore_version_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(Project(user_id=alice.id, title="Bench", slug="bench",
+                   status=ProjectStatus.in_progress, is_public=True))
+    await db.commit()
+
+    await login(client, "alice")
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/restore",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 404
+
+    # No new version was created.
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalars().all()
+    assert {v.version_number for v in versions} == {1, 2}

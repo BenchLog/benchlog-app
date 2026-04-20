@@ -3,10 +3,14 @@
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
-{% macro render_tile(file) %}
+{% macro render_tile(file, lightbox_index=None) %}
     <div class="gallery-tile aspect-square overflow-hidden rounded-md border border-edge bg-paper hover:border-rust transition-colors">
         <a href="{{ project_url }}/files/{{ file.id }}"
-           class="stretched-link block w-full h-full no-underline">
+           class="stretched-link block w-full h-full no-underline"
+           {% if lightbox_index is not none %}
+           data-lightbox-trigger
+           data-index="{{ lightbox_index }}"
+           {% endif %}>
             <img src="{{ project_url }}/files/{{ file.id }}/thumb"
                  alt="{{ file.filename }}"
                  loading="lazy"
@@ -54,7 +58,7 @@
 {% if visible_images %}
 <ul class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 list-none p-0">
     {% for file in visible_images %}
-    <li>{{ render_tile(file) }}</li>
+    <li>{{ render_tile(file, lightbox_index=loop.index0) }}</li>
     {% endfor %}
 </ul>
 {% else %}
@@ -92,5 +96,49 @@
         </ul>
     </div>
 </details>
+{% endif %}
+
+{% if visible_images %}
+{# Lightbox: ordered list of visible images, consumed by gallery-lightbox.js. #}
+{% set lightbox_data = [] %}
+{% for file in visible_images %}
+{% set _ = lightbox_data.append({
+    "id": file.id|string,
+    "full_url": project_url ~ "/files/" ~ file.id|string ~ "/download",
+    "thumb_url": project_url ~ "/files/" ~ file.id|string ~ "/thumb",
+    "filename": file.filename,
+    "description": file.description or "",
+}) %}
+{% endfor %}
+<script type="application/json" id="gallery-lightbox-data">{{ lightbox_data|tojson }}</script>
+
+<dialog class="gallery-lightbox" aria-label="Image viewer" tabindex="-1">
+    <button type="button" class="gallery-lightbox-close" data-lightbox-close
+            aria-label="Close image viewer">
+        <i data-lucide="x"></i>
+    </button>
+    <button type="button" class="gallery-lightbox-nav gallery-lightbox-prev" data-lightbox-prev
+            aria-label="Previous image">
+        <i data-lucide="chevron-left"></i>
+    </button>
+    <button type="button" class="gallery-lightbox-nav gallery-lightbox-next" data-lightbox-next
+            aria-label="Next image">
+        <i data-lucide="chevron-right"></i>
+    </button>
+    <div class="gallery-lightbox-viewport" data-lightbox-viewport>
+        <img class="gallery-lightbox-image" data-lightbox-image alt="">
+    </div>
+    <div class="gallery-lightbox-caption" data-lightbox-caption>
+        <div class="gallery-lightbox-caption-text">
+            <span class="gallery-lightbox-filename" data-lightbox-filename></span>
+            <span class="gallery-lightbox-description" data-lightbox-description></span>
+        </div>
+        <span class="gallery-lightbox-counter" data-lightbox-counter></span>
+    </div>
+    <img class="gallery-lightbox-preload" data-lightbox-preload-prev alt="" aria-hidden="true">
+    <img class="gallery-lightbox-preload" data-lightbox-preload-next alt="" aria-hidden="true">
+</dialog>
+
+<script src="{{ url_for('static', path='js/gallery-lightbox.js') }}" defer></script>
 {% endif %}
 {% endblock %}

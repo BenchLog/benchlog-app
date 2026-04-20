@@ -1,0 +1,85 @@
+{#
+    Cover-image crop picker. Mounted from files/detail.html only when the
+    viewer is the owner and the current file is an image. The page exposes
+    a "Set as cover image" / "Adjust crop" button that calls
+    `window.openCoverCropper()` — the modal takes over from there.
+
+    All markup is `hidden` by default; the JS toggles the `[open]` attribute
+    on the outer dialog to show it. We use a plain <dialog> element so the
+    browser handles the backdrop, focus trap, and Esc-to-close.
+
+    The stage viewport is a fixed 16:9 frame. The source <img> lives inside,
+    positioned via `transform: translate3d(x, y, 0) scale(s)` with
+    `transform-origin: 0 0` so the JS math stays linear. The modal submits
+    via fetch with an X-CSRF-Token header — the hidden form below is only
+    there to expose the CSRF token cleanly.
+#}
+{% set crop_url = '/u/' ~ project.user.username ~ '/' ~ project.slug ~ '/files/' ~ file.id ~ '/cover' %}
+{% set has_existing_crop = project.cover_file_id == file.id and project.cover_crop_width is not none %}
+<dialog id="cover-crop-modal"
+        class="cover-crop-modal"
+        data-cover-crop-modal
+        data-cover-crop-url="{{ crop_url }}"
+        data-cover-crop-image-url="{{ '/u/' ~ project.user.username ~ '/' ~ project.slug ~ '/files/' ~ file.id ~ '/download' }}"
+        {% if project.cover_file_id == file.id %}data-cover-crop-is-current="true"{% endif %}
+        {% if has_existing_crop %}
+        data-cover-crop-x="{{ project.cover_crop_x }}"
+        data-cover-crop-y="{{ project.cover_crop_y }}"
+        data-cover-crop-width="{{ project.cover_crop_width }}"
+        data-cover-crop-height="{{ project.cover_crop_height }}"
+        {% endif %}
+        aria-labelledby="cover-crop-modal-title">
+    <form method="dialog" class="cover-crop-form" data-cover-crop-form>
+        <input type="hidden" name="_csrf" value="{{ request.session.csrf_token }}" data-cover-crop-csrf>
+        <header class="cover-crop-header">
+            <h3 id="cover-crop-modal-title" class="text-lg m-0">
+                {% if has_existing_crop %}Adjust cover crop{% else %}Set cover image{% endif %}
+            </h3>
+            <button type="button"
+                    class="cover-crop-close"
+                    data-cover-crop-cancel
+                    aria-label="Close">&times;</button>
+        </header>
+        <div class="cover-crop-body">
+            <div class="cover-crop-stage" data-cover-crop-stage>
+                <img alt=""
+                     class="cover-crop-image"
+                     data-cover-crop-image
+                     draggable="false">
+                <div class="cover-crop-grid" aria-hidden="true">
+                    <span></span><span></span>
+                    <span></span><span></span>
+                </div>
+            </div>
+            <p class="cover-crop-hint">
+                Drag to position. Scroll or pinch to zoom. The 16:9 frame is
+                what shows on project cards.
+            </p>
+            <div class="cover-crop-controls">
+                <label for="cover-crop-zoom" class="cover-crop-zoom-label meta">
+                    Zoom
+                </label>
+                <input type="range"
+                       id="cover-crop-zoom"
+                       data-cover-crop-zoom
+                       min="0" max="1" step="0.001" value="0"
+                       class="cover-crop-zoom-input">
+                <button type="button"
+                        class="btn-ghost text-xs"
+                        data-cover-crop-reset>Reset</button>
+            </div>
+            <p class="cover-crop-error" data-cover-crop-error role="alert" hidden></p>
+        </div>
+        <footer class="cover-crop-footer">
+            <button type="button"
+                    class="btn-ghost text-sm"
+                    data-cover-crop-cancel>Cancel</button>
+            <button type="submit"
+                    class="btn-primary text-sm"
+                    data-cover-crop-save>
+                {% if has_existing_crop %}Save crop{% else %}Save cover{% endif %}
+            </button>
+        </footer>
+    </form>
+</dialog>
+<script src="{{ url_for('static', path='js/cover-cropper.js') }}" defer></script>

@@ -29,6 +29,12 @@
     </div>
 </div>
 
+{% if error %}
+<div class="card mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
+    {{ error }}
+</div>
+{% endif %}
+
 {% if preview_kind == 'image' %}
 <div class="card mb-4 text-center">
     <img src="{{ file_url }}/download" alt="{{ file.filename }}"
@@ -58,6 +64,21 @@
         </p>
     </object>
 </div>
+{% elif preview_kind == 'code' and code_html %}
+<div class="card mb-4 p-0 overflow-hidden">
+    {% if language %}
+    <p class="meta px-4 py-2 border-b border-edge">{{ language }}</p>
+    {% endif %}
+    <div class="highlight-block">
+        {{ code_html|safe }}
+    </div>
+    {% if text_truncated %}
+    <p class="meta px-4 py-2 border-t border-edge">
+        Preview truncated.
+        <a href="{{ file_url }}/download" class="underline hover:text-rust">Download the full file</a>.
+    </p>
+    {% endif %}
+</div>
 {% elif preview_kind == 'text' and text_preview is not none %}
 <div class="card mb-4 p-0 overflow-hidden">
     <pre class="m-0 p-4 text-xs overflow-auto max-h-[60vh] whitespace-pre-wrap break-words"><code>{{ text_preview }}</code></pre>
@@ -77,17 +98,34 @@
 {% endif %}
 
 {% if is_owner and file.current_version and file.current_version.is_image %}
+{% set is_cover = project.cover_file_id == file.id %}
+{% set has_crop = is_cover and project.cover_crop_width is not none %}
 <div class="mb-4 flex flex-wrap items-center gap-2">
-    <form method="post" action="{{ file_url }}/cover">
+    {# Open the crop picker instead of submitting directly. The JS falls back
+       to the raw form post on load failure; without JS the button still
+       submits a bare /cover request and the server skips the crop fields. #}
+    <form method="post" action="{{ file_url }}/cover" data-cover-crop-trigger-form>
         {% include "components/_csrf.html" %}
-        <button type="submit" class="btn-ghost text-sm">
-            {% if project.cover_file_id == file.id %}
-                Remove as cover image
+        <button type="submit"
+                class="btn-ghost text-sm"
+                data-cover-crop-open>
+            {% if has_crop %}
+                Adjust crop
+            {% elif is_cover %}
+                Set crop region
             {% else %}
                 Set as cover image
             {% endif %}
         </button>
     </form>
+    {% if is_cover %}
+    {# Clearing the cover is a destructive-ish action, kept as its own form
+       so the "Adjust crop" button above stays unambiguously non-destructive. #}
+    <form method="post" action="{{ file_url }}/cover">
+        {% include "components/_csrf.html" %}
+        <button type="submit" class="btn-ghost text-sm">Remove as cover image</button>
+    </form>
+    {% endif %}
     <form method="post" action="{{ file_url }}/gallery-visibility">
         {% include "components/_csrf.html" %}
         <button type="submit" class="btn-ghost text-sm">
@@ -105,19 +143,39 @@
     </span>
     {% endif %}
 </div>
+{% include "components/_cover_crop_modal.html" %}
 {% endif %}
 
 <section class="mb-6">
     <h3 class="text-lg mb-2">Versions</h3>
     <ul class="space-y-2 list-none p-0">
+        {% set version_count = file.versions | length %}
         {% for v in file.versions %}
+        {% set is_current = file.current_version_id == v.id %}
+        {#
+            Delete is blocked in two cases that are enforced server-side too:
+            (1) only one version exists — use "Delete file" instead;
+            (2) this IS the current version AND there are others — restore
+                another first so it becomes current, then this one can go.
+            We disable the button and surface a tooltip so the owner
+            understands the workflow without guessing.
+        #}
+        {% set only_version = version_count <= 1 %}
+        {% set delete_blocked = only_version or (is_current and version_count > 1) %}
+        {% if only_version %}
+        {% set delete_reason = "This is the only version — use Delete file above to remove the whole file." %}
+        {% elif is_current %}
+        {% set delete_reason = "This is the current version — restore another version first to make it current, then delete this one." %}
+        {% else %}
+        {% set delete_reason = "" %}
+        {% endif %}
         <li class="card flex flex-wrap items-baseline justify-between gap-2">
             <div class="min-w-0">
                 <div>
                     <span class="font-medium">v{{ v.version_number }}</span>
                     <span class="meta ml-2">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
                     <span class="meta ml-2">{{ (v.size_bytes / 1024) | round(1) }} KB</span>
-                    {% if file.current_version_id == v.id %}
+                    {% if is_current %}
                     <span class="meta ml-2 text-rust">current</span>
                     {% endif %}
                 </div>
@@ -126,7 +184,42 @@
                 {% endif %}
                 <div class="meta mt-1 break-all"><code class="text-xs">sha256:{{ v.checksum }}</code></div>
             </div>
-            <a href="{{ file_url }}/download?v={{ v.version_number }}" class="btn-ghost text-xs">Download v{{ v.version_number }}</a>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+                <a href="{{ file_url }}/download?v={{ v.version_number }}" class="btn-ghost text-xs">Download v{{ v.version_number }}</a>
+                {% if is_owner %}
+                    {% if not is_current %}
+                    <form method="post"
+                          action="{{ file_url }}/version/{{ v.version_number }}/restore"
+                          class="inline"
+                          data-confirm
+                          data-confirm-title="Restore v{{ v.version_number }}?"
+                          data-confirm-body="Restore v{{ v.version_number }} as the new current version? A new version will be created with a copy of this version's content."
+                          data-confirm-ok="Restore"
+                          data-confirm-variant="primary">
+                        {% include "components/_csrf.html" %}
+                        <button type="submit" class="btn-ghost text-xs">Restore</button>
+                    </form>
+                    {% endif %}
+                    {% if delete_blocked %}
+                    <button type="button"
+                            class="btn-ghost text-xs opacity-50 cursor-not-allowed"
+                            aria-disabled="true"
+                            disabled
+                            title="{{ delete_reason }}">Delete</button>
+                    {% else %}
+                    <form method="post"
+                          action="{{ file_url }}/version/{{ v.version_number }}/delete"
+                          class="inline"
+                          data-confirm
+                          data-confirm-title="Delete v{{ v.version_number }}?"
+                          data-confirm-body="Permanently delete v{{ v.version_number }}? This cannot be undone."
+                          data-confirm-ok="Delete v{{ v.version_number }}">
+                        {% include "components/_csrf.html" %}
+                        <button type="submit" class="btn-ghost text-xs text-rust-deep">Delete</button>
+                    </form>
+                    {% endif %}
+                {% endif %}
+            </div>
         </li>
         {% endfor %}
     </ul>

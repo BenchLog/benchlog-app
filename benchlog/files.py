@@ -15,6 +15,11 @@ from dataclasses import dataclass
 from typing import BinaryIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pygments import highlight as _pygments_highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name, get_lexer_for_filename
+from pygments.lexers.special import TextLexer
+from pygments.util import ClassNotFound
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -70,8 +75,12 @@ def human_size(num_bytes: int | None) -> str:
 def preview_kind(mime_type: str | None, filename: str) -> str:
     """Which inline preview the detail page should render for this file.
 
-    Returns one of: "image", "video", "audio", "pdf", "text", "none".
+    Returns one of: "image", "video", "audio", "pdf", "code", "text", "none".
     The detail template dispatches on this to pick the right element.
+
+    "code" is a textual file whose extension Pygments knows a lexer for —
+    route layer will render it with server-side syntax highlighting. "text"
+    is the fallback for textual files without a lexer (logs, csv, etc.).
     """
     mime = (mime_type or "").lower()
     if mime.startswith("image/"):
@@ -82,12 +91,11 @@ def preview_kind(mime_type: str | None, filename: str) -> str:
         return "audio"
     if mime == "application/pdf" or filename.lower().endswith(".pdf"):
         return "pdf"
-    if mime.startswith("text/") or mime in {
+    is_textual = mime.startswith("text/") or mime in {
         "application/json",
         "application/xml",
         "application/x-yaml",
-    }:
-        return "text"
+    }
     # A handful of code/config extensions whose servers often return
     # application/octet-stream — trust the extension so README.md etc.
     # still previews.
@@ -96,11 +104,59 @@ def preview_kind(mime_type: str | None, filename: str) -> str:
         ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
         ".py", ".js", ".ts", ".html", ".css", ".scss", ".sh",
         ".c", ".h", ".cpp", ".hpp", ".rs", ".go", ".java", ".kt",
-        ".sql", ".dockerfile",
+        ".sql", ".dockerfile", ".scad",
     )
-    if filename.lower().endswith(text_ext):
+    if is_textual or filename.lower().endswith(text_ext):
+        # If Pygments recognises the extension we get a nicer preview; if
+        # not, keep the textual fallback.
+        if code_language(filename) is not None:
+            return "code"
         return "text"
     return "none"
+
+
+def code_language(filename: str) -> str | None:
+    """Return the Pygments lexer alias for `filename`, or None if unknown.
+
+    Uses the file extension only — `get_lexer_for_filename` is content-agnostic
+    when passed no `code` argument, which is what we want (we may not have
+    the bytes loaded yet when we call this).
+    """
+    try:
+        lexer = get_lexer_for_filename(filename)
+    except ClassNotFound:
+        return None
+    # Plain-text-ish lexers don't add highlighting value; treat them as
+    # "no lexer" so the route falls back to the simpler <pre> path.
+    if isinstance(lexer, TextLexer):
+        return None
+    aliases = getattr(lexer, "aliases", None)
+    if aliases:
+        return aliases[0]
+    return lexer.name.lower()
+
+
+# Line numbers render as a separate <td> column so copy/paste skips them.
+# `lineanchors="L"` produces `<span id="L42">` anchors for deep links.
+_HTML_FORMATTER = HtmlFormatter(
+    linenos="table",
+    lineanchors="L",
+    anchorlinenos=False,
+    cssclass="highlight",
+)
+
+
+def highlight_code(text: str, language: str) -> str:
+    """Render `text` as HTML with Pygments syntax highlighting + line numbers.
+
+    Falls back to the plain `TextLexer` if the language name isn't recognised
+    so a bad alias never raises up into the request.
+    """
+    try:
+        lexer = get_lexer_by_name(language, stripall=False)
+    except ClassNotFound:
+        lexer = TextLexer(stripall=False)
+    return _pygments_highlight(text, lexer, _HTML_FORMATTER)
 
 
 async def read_text_preview(
@@ -306,6 +362,8 @@ async def store_upload(
             width = height = None
             thumbnail_path = None
             detected_mime = None
+    # Note: `regenerate_thumbnail_from_storage` below reuses this same
+    # decode+thumbnail path for restored versions. Keep them in sync.
 
     return StoredBlob(
         storage_path=storage_path,
@@ -366,6 +424,49 @@ async def _save_thumbnail(
     thumbnail_path = f"thumbnails/{file_id}/{version_number}.webp"
     await storage.save(thumbnail_path, buf)
     return thumbnail_path
+
+
+async def regenerate_thumbnail_from_storage(
+    storage: LocalStorage,
+    *,
+    file_id: uuid.UUID,
+    version_number: int,
+    storage_path: str,
+) -> tuple[int | None, int | None, str | None]:
+    """Read the blob at `storage_path`, decode as image, write a thumbnail.
+
+    Returns (width, height, thumbnail_path) on success, or (None, None, None)
+    if the blob isn't a valid image. Mirrors the Pillow path in `store_upload`
+    so restored-version thumbnails match the initial-upload pipeline exactly.
+    """
+    try:
+        data = await storage.read(storage_path)
+        with Image.open(io.BytesIO(data)) as img:
+            img.load()
+            oriented = ImageOps.exif_transpose(img)
+            width, height = oriented.size
+            thumbnail_path = await _save_thumbnail(
+                storage, file_id, version_number, oriented
+            )
+            return width, height, thumbnail_path
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        return None, None, None
+
+
+async def copy_blob(
+    storage: LocalStorage, src_storage_path: str, dst_storage_path: str
+) -> None:
+    """Copy a stored blob from one path to another via the storage backend.
+
+    Both paths are storage-relative (not filesystem absolute). Streams through
+    the same `storage.save` path new uploads use, so path-traversal protection
+    stays intact on both ends.
+    """
+    stream = await storage.open(src_storage_path)
+    try:
+        await storage.save(dst_storage_path, stream)
+    finally:
+        stream.close()
 
 
 # ---------- delete-side cleanup ---------- #

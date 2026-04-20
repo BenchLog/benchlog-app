@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Enum, Float, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from benchlog.models.base import Base, TimestampMixin, new_uuid
@@ -48,6 +48,17 @@ class Project(TimestampMixin, Base):
         ),
         nullable=True,
     )
+
+    # Cover crop — four normalized floats in [0.0, 1.0] describing the visible
+    # 16:9 region on `cover_file`. NULL means "no crop chosen" — render the
+    # full image with `object-fit: cover` (original behaviour). Stored
+    # resolution-independent so the same values survive any future thumbnail
+    # regeneration. Always cleared together: either all four NULL, or all four
+    # set. The cover picker's modal writes these via the /cover-crop route.
+    cover_crop_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cover_crop_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cover_crop_width: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cover_crop_height: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="projects")  # noqa: F821
     tags: Mapped[list["Tag"]] = relationship(  # noqa: F821

@@ -1,7 +1,5 @@
 # BenchLog
 
-**WIP — auth foundation in place. POC features (projects, files, BOM, etc.) are archived in the `poc-v1` branch and will be migrated back as the rebuild proceeds.**
-
 A self-hosted project journal for makers. Document, archive, and organize your maker projects — 3D printing, electronics, CNC, woodworking, and everything in between.
 
 ## Tech Stack

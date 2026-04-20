@@ -18,6 +18,9 @@ os.environ.setdefault(
 )
 os.environ.setdefault("BENCHLOG_SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("BENCHLOG_BASE_URL", "http://testserver")
+# Fast-path bcrypt in tests — rounds=4 is the spec minimum and keeps hashes
+# valid, just ~60x cheaper than production default 12. Saves ~3 min per run.
+os.environ.setdefault("BENCHLOG_BCRYPT_ROUNDS", "4")
 
 import asyncpg  # noqa: E402
 import pytest  # noqa: E402

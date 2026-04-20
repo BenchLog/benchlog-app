@@ -37,6 +37,16 @@ class LocalStorage:
         async with await anyio.open_file(self._resolve(path), "rb") as f:
             return await f.read()
 
+    async def open(self, path: str) -> BinaryIO:
+        """Return a blocking binary stream over the stored blob.
+
+        Goes through `_resolve`, so path-traversal protection stays in place.
+        The caller is responsible for closing the returned stream. Used by
+        `copy_blob` to hand a sync-readable source to `save` without loading
+        the whole blob into memory.
+        """
+        return open(self._resolve(path), "rb")
+
     async def delete(self, path: str) -> None:
         target = anyio.Path(self._resolve(path))
         if await target.exists():

@@ -767,3 +767,456 @@ dialog.modal[open] {
   from { opacity: 1; transform: translateY(0) scale(1); }
   to   { opacity: 0; transform: translateY(-8px) scale(0.96); }
 }
+
+/*
+ * === Pygments code highlighting ===
+ *
+ * Server-side syntax highlighting for code files on the file detail page.
+ * HTML is produced by `benchlog/files.py::highlight_code()` with
+ * `HtmlFormatter(linenos="table", cssclass="highlight")`, which emits a
+ * two-column <table> (line numbers | code) wrapped in `<div class="highlight">`.
+ *
+ * The class rules below come from `HtmlFormatter(style='friendly').get_style_defs('.highlight')`
+ * — `friendly` is a warm, light palette that reads well on the cream
+ * paper background (monokai/dracula would be dark; tango/manni were
+ * heavier on color). We drop the `friendly` default gray `background`
+ * on `.highlight` in favour of the site's paper-surface token.
+ *
+ * Wrapped in `@layer components` so Tailwind v4's tree-shake keeps the
+ * rules even though the selectors never appear in template source.
+ */
+@layer components {
+  .highlight-block {
+    overflow-x: auto;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    background-color: var(--color-paper);
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .highlight-block .highlight {
+    background: transparent;
+    margin: 0;
+  }
+  .highlight-block pre {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    font-family: var(--font-mono);
+    white-space: pre;
+  }
+  /* `linenos="table"` layout: the whole listing is a <table> with two
+     cells per row — numbers on the left, code on the right. */
+  .highlight-block table.highlighttable {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0;
+  }
+  .highlight-block table.highlighttable td {
+    border: 0;
+    vertical-align: top;
+  }
+  .highlight-block table.highlighttable td.linenos {
+    width: 1%;
+    text-align: right;
+    padding: 0.75rem 1.25rem 0.75rem 1rem;
+    color: var(--color-ink-muted);
+    user-select: none;
+    border-right: 1px solid var(--color-edge);
+    font-family: var(--font-mono);
+    background-color: color-mix(in srgb, var(--color-edge) 20%, transparent);
+  }
+  .highlight-block td.linenos .linenodiv pre {
+    color: var(--color-ink-muted);
+  }
+  .highlight-block table.highlighttable td.code {
+    padding: 0.75rem 1.25rem;
+    width: 100%;
+  }
+  .highlight-block td.code .highlight {
+    padding: 0;
+  }
+
+  .highlight pre { line-height: 125%; }
+  .highlight .hll { background-color: #ffffcc }
+  .highlight .c { color: #60A0B0; font-style: italic } /* Comment */
+  .highlight .err { border: 1px solid #F00 } /* Error */
+  .highlight .k { color: #007020; font-weight: bold } /* Keyword */
+  .highlight .o { color: #666 } /* Operator */
+  .highlight .ch { color: #60A0B0; font-style: italic } /* Comment.Hashbang */
+  .highlight .cm { color: #60A0B0; font-style: italic } /* Comment.Multiline */
+  .highlight .cp { color: #007020 } /* Comment.Preproc */
+  .highlight .cpf { color: #60A0B0; font-style: italic } /* Comment.PreprocFile */
+  .highlight .c1 { color: #60A0B0; font-style: italic } /* Comment.Single */
+  .highlight .cs { color: #60A0B0; background-color: #FFF0F0 } /* Comment.Special */
+  .highlight .gd { color: #A00000 } /* Generic.Deleted */
+  .highlight .ge { font-style: italic } /* Generic.Emph */
+  .highlight .ges { font-weight: bold; font-style: italic } /* Generic.EmphStrong */
+  .highlight .gr { color: #F00 } /* Generic.Error */
+  .highlight .gh { color: #000080; font-weight: bold } /* Generic.Heading */
+  .highlight .gi { color: #00A000 } /* Generic.Inserted */
+  .highlight .go { color: #888 } /* Generic.Output */
+  .highlight .gp { color: #C65D09; font-weight: bold } /* Generic.Prompt */
+  .highlight .gs { font-weight: bold } /* Generic.Strong */
+  .highlight .gu { color: #800080; font-weight: bold } /* Generic.Subheading */
+  .highlight .gt { color: #04D } /* Generic.Traceback */
+  .highlight .kc { color: #007020; font-weight: bold } /* Keyword.Constant */
+  .highlight .kd { color: #007020; font-weight: bold } /* Keyword.Declaration */
+  .highlight .kn { color: #007020; font-weight: bold } /* Keyword.Namespace */
+  .highlight .kp { color: #007020 } /* Keyword.Pseudo */
+  .highlight .kr { color: #007020; font-weight: bold } /* Keyword.Reserved */
+  .highlight .kt { color: #902000 } /* Keyword.Type */
+  .highlight .m { color: #40A070 } /* Literal.Number */
+  .highlight .s { color: #4070A0 } /* Literal.String */
+  .highlight .na { color: #4070A0 } /* Name.Attribute */
+  .highlight .nb { color: #007020 } /* Name.Builtin */
+  .highlight .nc { color: #0E84B5; font-weight: bold } /* Name.Class */
+  .highlight .no { color: #60ADD5 } /* Name.Constant */
+  .highlight .nd { color: #555; font-weight: bold } /* Name.Decorator */
+  .highlight .ni { color: #D55537; font-weight: bold } /* Name.Entity */
+  .highlight .ne { color: #007020 } /* Name.Exception */
+  .highlight .nf { color: #06287E } /* Name.Function */
+  .highlight .nl { color: #002070; font-weight: bold } /* Name.Label */
+  .highlight .nn { color: #0E84B5; font-weight: bold } /* Name.Namespace */
+  .highlight .nt { color: #062873; font-weight: bold } /* Name.Tag */
+  .highlight .nv { color: #BB60D5 } /* Name.Variable */
+  .highlight .ow { color: #007020; font-weight: bold } /* Operator.Word */
+  .highlight .w { color: #BBB } /* Text.Whitespace */
+  .highlight .mb { color: #40A070 } /* Literal.Number.Bin */
+  .highlight .mf { color: #40A070 } /* Literal.Number.Float */
+  .highlight .mh { color: #40A070 } /* Literal.Number.Hex */
+  .highlight .mi { color: #40A070 } /* Literal.Number.Integer */
+  .highlight .mo { color: #40A070 } /* Literal.Number.Oct */
+  .highlight .sa { color: #4070A0 } /* Literal.String.Affix */
+  .highlight .sb { color: #4070A0 } /* Literal.String.Backtick */
+  .highlight .sc { color: #4070A0 } /* Literal.String.Char */
+  .highlight .dl { color: #4070A0 } /* Literal.String.Delimiter */
+  .highlight .sd { color: #4070A0; font-style: italic } /* Literal.String.Doc */
+  .highlight .s2 { color: #4070A0 } /* Literal.String.Double */
+  .highlight .se { color: #4070A0; font-weight: bold } /* Literal.String.Escape */
+  .highlight .sh { color: #4070A0 } /* Literal.String.Heredoc */
+  .highlight .si { color: #70A0D0; font-style: italic } /* Literal.String.Interpol */
+  .highlight .sx { color: #C65D09 } /* Literal.String.Other */
+  .highlight .sr { color: #235388 } /* Literal.String.Regex */
+  .highlight .s1 { color: #4070A0 } /* Literal.String.Single */
+  .highlight .ss { color: #517918 } /* Literal.String.Symbol */
+  .highlight .bp { color: #007020 } /* Name.Builtin.Pseudo */
+  .highlight .fm { color: #06287E } /* Name.Function.Magic */
+  .highlight .vc { color: #BB60D5 } /* Name.Variable.Class */
+  .highlight .vg { color: #BB60D5 } /* Name.Variable.Global */
+  .highlight .vi { color: #BB60D5 } /* Name.Variable.Instance */
+  .highlight .vm { color: #BB60D5 } /* Name.Variable.Magic */
+  .highlight .il { color: #40A070 } /* Literal.Number.Integer.Long */
+}
+
+/*
+ * === Cover crop modal ===
+ *
+ * Fixed 16:9 viewport over the source image. The source <img> is positioned
+ * absolutely within the stage and transformed from JS (cover-cropper.js).
+ * We override the generic `dialog.modal` sizing because the cropper needs
+ * to grow wide enough for a usable 16:9 preview, not the 28rem body-text
+ * width that confirm/edit modals want.
+ */
+@layer components {
+  dialog.cover-crop-modal {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    background-color: var(--color-paper-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-edge);
+    border-radius: 6px;
+    padding: 0;
+    max-width: min(44rem, calc(100% - 2rem));
+    width: 100%;
+    max-height: calc(100% - 2rem);
+    box-shadow: 0 12px 36px var(--color-shadow-lg);
+    overflow: hidden;
+  }
+  dialog.cover-crop-modal::backdrop {
+    background: var(--color-backdrop);
+  }
+  dialog.cover-crop-modal[open] {
+    animation: modal-fade-in 0.12s ease-out;
+  }
+
+  .cover-crop-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0;
+  }
+
+  .cover-crop-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--color-edge);
+  }
+  .cover-crop-close {
+    background: transparent;
+    border: 0;
+    color: var(--color-ink-muted);
+    font-size: 1.5rem;
+    line-height: 1;
+    padding: 0 0.25rem;
+    cursor: pointer;
+  }
+  .cover-crop-close:hover { color: var(--color-ink); }
+
+  .cover-crop-body {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  /* The stage IS the crop frame — a fixed-aspect viewport. The image moves
+     underneath it, so `overflow: hidden` is what crops the visible region.
+     `touch-action: none` keeps the browser from stealing pan/pinch so our
+     pointer-events handlers get the raw gestures. */
+  .cover-crop-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background-color: var(--color-ink);
+    border: 1px solid var(--color-edge);
+    border-radius: 5px;
+    overflow: hidden;
+    touch-action: none;
+    cursor: grab;
+    user-select: none;
+  }
+  .cover-crop-stage:active { cursor: grabbing; }
+  .cover-crop-image {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    pointer-events: none;
+    /* The pointer-events intercept lives on the stage, not the image itself
+       — the image transforms out from under the viewport, so handing events
+       up to the stationary stage gives consistent coordinates. */
+    max-width: none;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+
+  /* Rule-of-thirds overlay, purely decorative. Absolute over the viewport
+     so the lines don't move while the image pans. */
+  .cover-crop-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .cover-crop-grid span {
+    position: absolute;
+    background-color: rgba(244, 237, 224, 0.35);
+  }
+  .cover-crop-grid span:nth-child(1) { left: 33.333%; top: 0; bottom: 0; width: 1px; }
+  .cover-crop-grid span:nth-child(2) { left: 66.666%; top: 0; bottom: 0; width: 1px; }
+  .cover-crop-grid span:nth-child(3) { top: 33.333%; left: 0; right: 0; height: 1px; }
+  .cover-crop-grid span:nth-child(4) { top: 66.666%; left: 0; right: 0; height: 1px; }
+
+  .cover-crop-hint {
+    font-size: 0.75rem;
+    color: var(--color-ink-muted);
+    margin: 0;
+  }
+
+  .cover-crop-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .cover-crop-zoom-label {
+    flex-shrink: 0;
+  }
+  .cover-crop-zoom-input {
+    flex: 1 1 auto;
+    width: auto;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    accent-color: var(--color-rust);
+  }
+  .cover-crop-zoom-input:focus {
+    outline: 2px solid color-mix(in srgb, var(--color-rust) 40%, transparent);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  .cover-crop-error {
+    color: var(--color-rust-deep);
+    background-color: color-mix(in srgb, var(--color-rust) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color-rust-deep) 40%, transparent);
+    border-radius: 5px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8125rem;
+    margin: 0;
+  }
+
+  .cover-crop-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-top: 1px solid var(--color-edge);
+    background-color: color-mix(in srgb, var(--color-edge) 20%, transparent);
+  }
+}
+
+/*
+ * === Gallery lightbox ===
+ *
+ * Full-viewport <dialog> overlay used by gallery-lightbox.js. Image is
+ * centered with object-fit: contain so it never up-scales beyond natural
+ * size or crops. Prev/next buttons sit on the left/right edges; close button
+ * top-right; caption pinned to the bottom. Backdrop click closes (handled
+ * in JS — clicks on the dialog element itself, not its children).
+ */
+@layer components {
+  dialog.gallery-lightbox {
+    position: fixed;
+    inset: 0;
+    margin: 0;
+    width: 100vw;
+    max-width: none;
+    height: 100vh;
+    max-height: none;
+    padding: 0;
+    border: 0;
+    background: rgba(0, 0, 0, 0.92);
+    color: #fff;
+    overflow: hidden;
+  }
+  dialog.gallery-lightbox::backdrop {
+    background: transparent;
+  }
+  dialog.gallery-lightbox[open] {
+    display: flex;
+    flex-direction: column;
+    animation: modal-fade-in 0.12s ease-out;
+  }
+  dialog.gallery-lightbox:focus {
+    outline: none;
+  }
+
+  .gallery-lightbox-viewport {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+    padding: 3.5rem 4rem 1rem;
+    touch-action: pan-y;
+    user-select: none;
+  }
+  .gallery-lightbox-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    -webkit-user-drag: none;
+    pointer-events: auto;
+    transition: transform 0.15s ease-out;
+  }
+
+  .gallery-lightbox-nav,
+  .gallery-lightbox-close {
+    position: absolute;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border: 0;
+    border-radius: 9999px;
+    cursor: pointer;
+    transition: background-color 0.12s ease, opacity 0.12s ease;
+  }
+  .gallery-lightbox-nav {
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3rem;
+    height: 3rem;
+    opacity: 0;
+  }
+  .gallery-lightbox-prev { left: 1rem; }
+  .gallery-lightbox-next { right: 1rem; }
+  .gallery-lightbox-nav:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .gallery-lightbox-nav[hidden] {
+    display: none;
+  }
+  /* Reveal nav buttons on hover (pointer devices) and always show them on
+     touch — there's no hover affordance to discover them otherwise. */
+  dialog.gallery-lightbox:hover .gallery-lightbox-nav,
+  .gallery-lightbox-nav:focus-visible {
+    opacity: 1;
+  }
+  @media (hover: none) {
+    .gallery-lightbox-nav { opacity: 1; }
+  }
+
+  .gallery-lightbox-close {
+    top: 1rem;
+    right: 1rem;
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+  .gallery-lightbox-close:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  .gallery-lightbox-caption {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1.25rem 1.25rem;
+    color: #fff;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+    text-align: center;
+  }
+  .gallery-lightbox-caption-text {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    min-width: 0;
+  }
+  .gallery-lightbox-filename {
+    font-weight: 500;
+    font-size: 0.9375rem;
+  }
+  .gallery-lightbox-description {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.875rem;
+  }
+  .gallery-lightbox-description[hidden] {
+    display: none;
+  }
+  .gallery-lightbox-counter {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  .gallery-lightbox-preload {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    left: -9999px;
+  }
+}

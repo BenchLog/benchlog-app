@@ -14,17 +14,48 @@
    public by definition, so it would just be noise there). #}
 <article class="card relative hover:border-rust transition-colors">
     {% if project.pinned %}
-    <span class="absolute -top-2 -left-2 inline-flex items-center justify-center w-7 h-7 rounded-full bg-rust text-paper border border-rust shadow-sm z-10"
+    <span class="absolute -top-2 -left-2 inline-flex items-center justify-center w-7 h-7 rounded-full bg-paper text-rust border border-rust z-10"
           title="Pinned" aria-label="Pinned">
         <i data-lucide="pin" class="w-3.5 h-3.5"></i>
     </span>
     {% endif %}
     {% if project.cover_file and project.cover_file.current_version and project.cover_file.current_version.is_image %}
-    <div class="-mx-4 -mt-4 mb-3 aspect-video overflow-hidden border-b border-edge bg-paper">
-        <img src="/u/{{ project.user.username }}/{{ project.slug }}/files/{{ project.cover_file.id }}/thumb"
-             alt=""
-             loading="lazy"
-             class="w-full h-full object-cover">
+    <div class="-mx-4 -mt-4 mb-3 aspect-video overflow-hidden border-b border-edge bg-paper relative">
+        {% if project.cover_crop_width %}
+            {#
+                Saved 16:9 crop — render the image at its natural aspect
+                ratio, sized so the chosen region exactly fills this 16:9
+                wrapper. Mirrors the cropper modal's geometry (no
+                object-cover involved, since object-cover would auto-fit
+                the source first and stack on top of these transforms).
+
+                Math: width  = wrapper_w * (1 / cw)  →  100/cw % of wrapper
+                      height = wrapper_h * (1 / ch)  →  100/ch % of wrapper
+                      left   = -cx * displayed_image_w  →  -100*cx/cw % of wrapper
+                      top    = -cy * displayed_image_h  →  -100*cy/ch % of wrapper
+                Because the saved crop is 16:9 in image-pixel space, and the
+                wrapper is 16:9 in CSS pixels, the displayed image keeps its
+                natural aspect (no stretching).
+            #}
+            {% set cw = project.cover_crop_width %}
+            {% set ch = project.cover_crop_height %}
+            {% set cx = project.cover_crop_x %}
+            {% set cy = project.cover_crop_y %}
+            {# Use the full-resolution source (not /thumb) — when the crop
+               zooms in, the CSS scales the source up above 100% of the
+               wrapper, and the 600px thumbnail would stretch visibly.
+               Pairs with loading=lazy so off-screen cards don't pay. #}
+            <img src="/u/{{ project.user.username }}/{{ project.slug }}/files/{{ project.cover_file.id }}/download"
+                 alt=""
+                 loading="lazy"
+                 class="absolute max-w-none"
+                 style="left: {{ '%.4f'|format(-100 * cx / cw) }}%; top: {{ '%.4f'|format(-100 * cy / ch) }}%; width: {{ '%.4f'|format(100 / cw) }}%; height: {{ '%.4f'|format(100 / ch) }}%;">
+        {% else %}
+            <img src="/u/{{ project.user.username }}/{{ project.slug }}/files/{{ project.cover_file.id }}/thumb"
+                 alt=""
+                 loading="lazy"
+                 class="w-full h-full object-cover">
+        {% endif %}
     </div>
     {% endif %}
     <div class="flex items-start justify-between gap-3 mb-2">

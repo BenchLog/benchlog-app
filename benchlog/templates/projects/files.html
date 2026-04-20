@@ -247,6 +247,10 @@
             <label for="file-edit-description">Description <span class="meta ml-2">optional</span></label>
             <textarea id="file-edit-description" name="description" rows="3" maxlength="2000"></textarea>
         </div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="update_refs" value="1" checked data-file-edit-update-refs>
+            Also update markdown references in this project's description and updates
+        </label>
         <p class="text-rust-deep text-sm m-0" data-file-edit-error hidden></p>
         <div class="flex flex-wrap justify-end gap-2 pt-1">
             <button type="button" class="btn-ghost text-sm" data-file-edit-cancel>Cancel</button>
@@ -270,6 +274,10 @@
                    autocomplete="off" spellcheck="false" maxlength="1024">
             <p class="meta mt-1">Rename or move — every file inside moves with the folder.</p>
         </div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="update_refs" value="1" checked data-folder-edit-update-refs>
+            Also update markdown references in this project's description and updates
+        </label>
         <p class="text-rust-deep text-sm m-0" data-folder-edit-error hidden></p>
         <div class="flex flex-wrap justify-end gap-2 pt-1">
             <button type="button" class="btn-ghost text-sm" data-folder-edit-cancel>Cancel</button>
@@ -406,6 +414,9 @@
         fileEditSubmitUrl = trigger.dataset.fileSubmitUrl;
         fileEditForm.fullpath.value = trigger.dataset.fileFullpath || '';
         fileEditForm.description.value = trigger.dataset.fileDescription || '';
+        // Default the opt-out back on each open — a user's previous
+        // unchecked state shouldn't silently carry into the next rename.
+        if (fileEditForm.update_refs) fileEditForm.update_refs.checked = true;
         fileEditError.hidden = true;
         fileEditError.textContent = '';
         fileEditModal.showModal();
@@ -437,6 +448,13 @@
       body.set('path', path);
       body.set('filename', filename);
       body.set('description', fileEditForm.description.value);
+      // Mirrors the full-page form's opt-out: when the checkbox is ticked
+      // (default) send `update_refs=1` so the server rewrites markdown
+      // references alongside the rename. Unchecked → field absent → route
+      // treats as off.
+      if (fileEditForm.update_refs?.checked) {
+        body.set('update_refs', '1');
+      }
 
       await submitEdit(fileEditSubmitUrl, body, fileEditError);
     });
@@ -455,6 +473,7 @@
         folderEditSubmitUrl = trigger.dataset.folderSubmitUrl;
         folderEditOldPath = trigger.dataset.folderCurrentPath;
         folderEditForm.new_path.value = folderEditOldPath || '';
+        if (folderEditForm.update_refs) folderEditForm.update_refs.checked = true;
         folderEditError.hidden = true;
         folderEditError.textContent = '';
         folderEditModal.showModal();
@@ -481,6 +500,9 @@
       body.set('_csrf', csrfToken);
       body.set('old_path', folderEditOldPath);
       body.set('new_path', newPath);
+      if (folderEditForm.update_refs?.checked) {
+        body.set('update_refs', '1');
+      }
       await submitEdit(folderEditSubmitUrl, body, folderEditError);
     });
   }

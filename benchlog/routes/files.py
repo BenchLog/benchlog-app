@@ -31,6 +31,8 @@ from benchlog.dependencies import current_user, require_user
 from benchlog.files import (
     StoredBlob,
     UploadTooLarge,
+    apply_file_rename_to_project_markdown,
+    apply_folder_rename_to_project_markdown,
     code_language,
     copy_blob,
     delete_blob,
@@ -71,6 +73,26 @@ async def _require_owned_project(
     if project is None:
         raise HTTPException(status_code=404)
     return project
+
+
+async def _load_project_with_updates(
+    db: AsyncSession, project_id: uuid.UUID
+) -> Project | None:
+    """Reload a project with `updates` eager-loaded so rename-tracking
+    helpers don't trip `raise_on_sql` when they walk `project.updates`.
+
+    Kept local to this module — the file-rename markdown rewrite is the
+    only caller that needs updates eager-loaded without the full
+    tag/link/file bundle that `get_project_by_username_and_slug` pulls.
+    """
+    from sqlalchemy import select as _select
+
+    result = await db.execute(
+        _select(Project)
+        .options(selectinload(Project.updates))
+        .where(Project.id == project_id)
+    )
+    return result.scalar_one_or_none()
 
 
 def _form_values(*, path: str = "", description: str = "") -> dict:
@@ -322,6 +344,8 @@ async def files_tab(
             "has_folders": has_folders,
             "sort_column": sort_column,
             "sort_direction": sort_direction,
+            "notice": request.session.pop("flash_notice", None),
+            "error": request.session.pop("flash_error", None),
         },
     )
 
@@ -668,8 +692,21 @@ async def move_item(
                 status_code=409,
                 detail=f"'{file.filename}' already exists in that folder.",
             )
+        old_full_path = (
+            f"{file.path}/{file.filename}" if file.path else file.filename
+        )
+        new_full_path = (
+            f"{dest_path}/{file.filename}" if dest_path else file.filename
+        )
         file.path = dest_path
         await db.commit()
+        # DnD has no form, so there's no opt-out — moves always keep
+        # markdown refs pointing at the new location.
+        project_with_updates = await _load_project_with_updates(db, project.id)
+        if project_with_updates is not None:
+            await apply_file_rename_to_project_markdown(
+                db, project_with_updates, old_full_path, new_full_path
+            )
         return Response(status_code=204)
 
     if source_kind == "folder":
@@ -694,6 +731,11 @@ async def move_item(
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
         await db.commit()
+        project_with_updates = await _load_project_with_updates(db, project.id)
+        if project_with_updates is not None:
+            await apply_folder_rename_to_project_markdown(
+                db, project_with_updates, src_path, new_path
+            )
         return Response(status_code=204)
 
     raise HTTPException(status_code=400, detail="Invalid source kind.")
@@ -747,6 +789,7 @@ async def rename_folder_route(
     request: Request,
     old_path: str = Form(...),
     new_path: str = Form(""),
+    update_refs: str = Form(""),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -792,8 +835,24 @@ async def rename_folder_route(
     except ValueError as e:
         return await fail(str(e), status=409)
     await db.commit()
+
+    ref_count = 0
+    if update_refs == "1":
+        project_with_updates = await _load_project_with_updates(db, project.id)
+        if project_with_updates is not None:
+            ref_count = await apply_folder_rename_to_project_markdown(
+                db, project_with_updates, normalized_old, normalized_new
+            )
+
     if json_mode:
         return Response(status_code=204)
+    if update_refs == "1" and ref_count:
+        request.session["flash_notice"] = (
+            f"Folder renamed. Updated {ref_count} markdown "
+            f"reference{'s' if ref_count != 1 else ''}."
+        )
+    else:
+        request.session["flash_notice"] = "Folder renamed."
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files",
         status_code=302,
@@ -845,7 +904,15 @@ async def file_detail(
     file = await _load_file_with_versions(db, project.id, file_id)
     if file is None:
         raise HTTPException(status_code=404)
-    return await _render_file_detail(request, user, project, file, is_owner)
+    return await _render_file_detail(
+        request,
+        user,
+        project,
+        file,
+        is_owner,
+        notice=request.session.pop("flash_notice", None),
+        error=request.session.pop("flash_error", None),
+    )
 
 
 async def _render_file_detail(
@@ -857,6 +924,7 @@ async def _render_file_detail(
     *,
     error: str | None = None,
     status_code: int = 200,
+    notice: str | None = None,
 ):
     """Factored out of `file_detail` so mutation routes can re-render with a
     flash-style error on validation failure (matches form-fallback pattern
@@ -898,6 +966,7 @@ async def _render_file_detail(
             "code_html": code_html,
             "language": language,
             "error": error,
+            "notice": notice,
         },
         status_code=status_code,
     )
@@ -1255,6 +1324,7 @@ async def update_file_metadata(
     path: str = Form(""),
     filename: str = Form(""),
     description: str = Form(""),
+    update_refs: str = Form(""),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1296,6 +1366,14 @@ async def update_file_metadata(
     except ValueError as e:
         return fail(str(e))
 
+    # Snapshot the pre-rename virtual path before mutating so we can
+    # rewrite `files/<old>` references in the project markdown after the
+    # rename commits.
+    old_full_path = f"{file.path}/{file.filename}" if file.path else file.filename
+    new_full_path = (
+        f"{normalized_path}/{new_filename}" if normalized_path else new_filename
+    )
+
     # Block a rename onto another file in the same project.
     if (normalized_path, new_filename) != (file.path, file.filename):
         clash = await get_existing_file(db, project.id, normalized_path, new_filename)
@@ -1310,8 +1388,28 @@ async def update_file_metadata(
     file.description = description or None
     await db.commit()
 
+    # Rewrite markdown refs after the rename commits — default on, opt-out
+    # via the form checkbox. Only runs when the virtual path actually
+    # changed (pure description edits leave markdown alone).
+    ref_count = 0
+    path_changed = old_full_path != new_full_path
+    if path_changed and update_refs == "1":
+        project_with_updates = await _load_project_with_updates(db, project.id)
+        if project_with_updates is not None:
+            ref_count = await apply_file_rename_to_project_markdown(
+                db, project_with_updates, old_full_path, new_full_path
+            )
+
     if json_mode:
         return Response(status_code=204)
+    if path_changed:
+        if update_refs == "1" and ref_count:
+            request.session["flash_notice"] = (
+                f"File renamed. Updated {ref_count} markdown "
+                f"reference{'s' if ref_count != 1 else ''}."
+            )
+        else:
+            request.session["flash_notice"] = "File renamed."
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files/{file.id}",
         status_code=302,

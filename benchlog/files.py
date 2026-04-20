@@ -24,7 +24,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from benchlog.models import FileVersion, ProjectFile
+from benchlog.file_references import (
+    rewrite_file_references,
+    rewrite_folder_references,
+)
+from benchlog.models import FileVersion, Project, ProjectFile
 from benchlog.storage import LocalStorage
 
 # Cap decoded image pixels so a small crafted PNG can't balloon into
@@ -645,3 +649,91 @@ async def delete_blob(storage: LocalStorage, version: FileVersion) -> None:
             await storage.delete(version.thumbnail_path)
         except (FileNotFoundError, ValueError):
             pass
+
+
+# ---------- rename-tracking for markdown `files/…` references ---------- #
+#
+# When a file or folder moves, the link text in the project's description
+# and updates still points at the old path. The renderer falls back to
+# the files browser so the link doesn't 404, but the author's prose still
+# lies about where the file lives. These helpers patch the source markdown
+# so the reference itself stays truthful.
+#
+# Both helpers assume `project.updates` is already eager-loaded — the
+# `updates` relationship is `raise_on_sql`. Callers who don't already have
+# it loaded must `selectinload(Project.updates)` first.
+
+
+async def apply_file_rename_to_project_markdown(
+    db: AsyncSession,
+    project: Project,
+    old_full_path: str,
+    new_full_path: str,
+) -> int:
+    """Rewrite `files/<old_full_path>` refs in description + updates.
+
+    Returns the number of refs rewritten across everything. Commits. No-op
+    (returns 0) when old == new.
+    """
+    if old_full_path == new_full_path:
+        return 0
+
+    total = 0
+    if project.description:
+        result = rewrite_file_references(
+            project.description, old_full_path, new_full_path
+        )
+        if result.count:
+            project.description = result.text
+            total += result.count
+
+    for update in project.updates:
+        if not update.content:
+            continue
+        result = rewrite_file_references(
+            update.content, old_full_path, new_full_path
+        )
+        if result.count:
+            update.content = result.text
+            total += result.count
+
+    if total:
+        await db.commit()
+    return total
+
+
+async def apply_folder_rename_to_project_markdown(
+    db: AsyncSession,
+    project: Project,
+    old_folder: str,
+    new_folder: str,
+) -> int:
+    """Rewrite `files/<old_folder>/…` refs in description + updates.
+
+    Returns the total count. Commits. No-op when old == new.
+    """
+    if old_folder == new_folder:
+        return 0
+
+    total = 0
+    if project.description:
+        result = rewrite_folder_references(
+            project.description, old_folder, new_folder
+        )
+        if result.count:
+            project.description = result.text
+            total += result.count
+
+    for update in project.updates:
+        if not update.content:
+            continue
+        result = rewrite_folder_references(
+            update.content, old_folder, new_folder
+        )
+        if result.count:
+            update.content = result.text
+            total += result.count
+
+    if total:
+        await db.commit()
+    return total

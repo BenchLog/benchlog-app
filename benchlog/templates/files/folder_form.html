@@ -36,6 +36,11 @@
         </p>
     </div>
 
+    <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" name="update_refs" value="1" checked>
+        Also update markdown references in this project's description and updates
+    </label>
+
     <div class="flex flex-wrap items-center gap-2 pt-2">
         <button type="submit" class="btn-primary text-sm">Save changes</button>
         <a href="{{ project_url }}/files" class="btn-ghost text-sm">Cancel</a>

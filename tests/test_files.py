@@ -19,7 +19,13 @@ from benchlog.files import (
     safe_filename,
 )
 from benchlog.markdown import rewrite_project_file_links
-from benchlog.models import FileVersion, Project, ProjectFile, ProjectStatus
+from benchlog.models import (
+    FileVersion,
+    Project,
+    ProjectFile,
+    ProjectStatus,
+    ProjectUpdate,
+)
 from benchlog.storage import get_storage
 from tests.conftest import csrf_token, login, make_user
 
@@ -3487,3 +3493,229 @@ async def test_restore_version_owner_only(client, db):
         )
     ).scalars().all()
     assert {v.version_number for v in versions} == {1, 2}
+
+
+# ---------- markdown rename-tracking ---------- #
+#
+# When a file/folder is renamed or moved, the matching `files/<old>` links
+# in the project's description and updates get patched to the new path
+# (unless the opt-out checkbox is unchecked on the form surfaces — DnD
+# has no form and always rewrites).
+
+
+async def _seed_project_with_refs(
+    db,
+    *,
+    username: str = "alice",
+    email: str = "alice@test.com",
+    description: str,
+    update_content: str | None = None,
+    slug: str = "bench",
+) -> tuple[object, object]:
+    """Create a user + project with description and optional update body.
+
+    Returns (user, project).
+    """
+    user = await make_user(db, email=email, username=username)
+    project = Project(
+        user_id=user.id,
+        title="Bench",
+        slug=slug,
+        status=ProjectStatus.idea,
+        description=description,
+    )
+    db.add(project)
+    await db.flush()
+    if update_content is not None:
+        db.add(ProjectUpdate(project_id=project.id, content=update_content))
+    await db.commit()
+    return user, project
+
+
+async def test_file_rename_updates_description_and_updates(client, db):
+    _, project = await _seed_project_with_refs(
+        db,
+        description="See [orig](files/a.stl) for details.",
+        update_content="Also [orig](files/a.stl) is here.",
+    )
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="a.stl", content=b"x", mime="application/octet-stream",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}",
+        data={
+            "_csrf": token,
+            "filename": "b.stl",
+            "path": "",
+            "description": "",
+            "update_refs": "1",
+        },
+    )
+    assert resp.status_code == 302
+
+    await db.refresh(project)
+    assert project.description == "See [orig](files/b.stl) for details."
+    updates = (
+        await db.execute(select(ProjectUpdate))
+    ).scalars().all()
+    assert updates[0].content == "Also [orig](files/b.stl) is here."
+
+    # The flash notice should follow along on the redirected GET page.
+    detail = await client.get(resp.headers["location"])
+    assert "Updated 2 markdown references" in detail.text
+
+
+async def test_file_rename_without_update_refs_leaves_markdown_alone(client, db):
+    _, project = await _seed_project_with_refs(
+        db,
+        description="See [orig](files/a.stl) for details.",
+        update_content="Update ref [x](files/a.stl).",
+    )
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="a.stl", content=b"x", mime="application/octet-stream",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}",
+        data={
+            "_csrf": token,
+            "filename": "b.stl",
+            "path": "",
+            "description": "",
+            # update_refs intentionally omitted — unchecked checkbox
+        },
+    )
+    assert resp.status_code == 302
+    await db.refresh(project)
+    assert project.description == "See [orig](files/a.stl) for details."
+    update = (await db.execute(select(ProjectUpdate))).scalar_one()
+    assert update.content == "Update ref [x](files/a.stl)."
+
+    detail = await client.get(resp.headers["location"])
+    # Flash says "File renamed" but does NOT mention reference count.
+    assert "File renamed" in detail.text
+    assert "Updated" not in detail.text or "markdown references" not in detail.text
+
+
+async def test_folder_rename_updates_all_refs_across_files(client, db):
+    _, project = await _seed_project_with_refs(
+        db,
+        description=(
+            "See [a](files/models/a.stl) and [b](files/models/b.stl)."
+        ),
+    )
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="a.stl", content=b"x", mime="application/octet-stream",
+        extra_form={"path": "models"},
+        csrf_path="/u/alice/bench",
+    )
+
+    token = await csrf_token(
+        client, "/u/alice/bench/files/folder/edit?path=models"
+    )
+    resp = await client.post(
+        "/u/alice/bench/files/folder/rename",
+        data={
+            "_csrf": token,
+            "old_path": "models",
+            "new_path": "stl",
+            "update_refs": "1",
+        },
+    )
+    assert resp.status_code == 302
+    await db.refresh(project)
+    assert project.description == (
+        "See [a](files/stl/a.stl) and [b](files/stl/b.stl)."
+    )
+
+    followed = await client.get(resp.headers["location"])
+    assert "Updated 2 markdown references" in followed.text
+
+
+async def test_dnd_move_updates_refs(client, db):
+    _, project = await _seed_project_with_refs(
+        db,
+        description="Link: [x](files/models/a.stl)",
+    )
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="a.stl", content=b"x", mime="application/octet-stream",
+        extra_form={"path": "models"},
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, "/u/alice/bench/files")
+    resp = await client.post(
+        "/u/alice/bench/files/move",
+        data={
+            "_csrf": token,
+            "source_kind": "file",
+            "source_id": str(file.id),
+            "destination_path": "archive",
+            # No update_refs form field — DnD always rewrites by design.
+        },
+    )
+    assert resp.status_code == 204
+
+    await db.refresh(project)
+    assert project.description == "Link: [x](files/archive/a.stl)"
+
+
+async def test_rename_only_touches_the_renaming_project(client, db):
+    # Two separate projects owned by the same user, both with the same
+    # `files/a.stl` ref in their descriptions. Renaming the file inside
+    # project1 must NOT touch project2's markdown — the rewrite is
+    # scoped to the project the file lives in.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    p1 = Project(
+        user_id=user.id, title="One", slug="one", status=ProjectStatus.idea,
+        description="[ref](files/a.stl)",
+    )
+    p2 = Project(
+        user_id=user.id, title="Two", slug="two", status=ProjectStatus.idea,
+        description="[ref](files/a.stl)",
+    )
+    db.add_all([p1, p2])
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/one/files",
+        filename="a.stl", content=b"x", mime="application/octet-stream",
+        csrf_path="/u/alice/one",
+    )
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.project_id == p1.id))
+    ).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/one/files/{file.id}/edit")
+    resp = await client.post(
+        f"/u/alice/one/files/{file.id}",
+        data={
+            "_csrf": token,
+            "filename": "b.stl",
+            "path": "",
+            "description": "",
+            "update_refs": "1",
+        },
+    )
+    assert resp.status_code == 302
+
+    await db.refresh(p1)
+    await db.refresh(p2)
+    assert p1.description == "[ref](files/b.stl)"
+    assert p2.description == "[ref](files/a.stl)"  # untouched

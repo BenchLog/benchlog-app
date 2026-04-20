@@ -50,6 +50,13 @@
         <textarea id="description" name="description" rows="3" maxlength="2000">{{ form_values.description }}</textarea>
     </div>
 
+    {% if file %}
+    <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" name="update_refs" value="1" checked>
+        Also update markdown references in this project's description and updates
+    </label>
+    {% endif %}
+
     <div class="flex flex-wrap items-center gap-2 pt-2">
         <button type="submit" class="btn-primary text-sm">
             {% if file %}Save changes{% else %}Upload{% endif %}

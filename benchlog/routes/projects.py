@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
-from benchlog.models import Project, ProjectFile, ProjectStatus, Tag, User
+from benchlog.models import Project, ProjectFile, ProjectStatus, ProjectTag, Tag, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -22,6 +24,15 @@ router = APIRouter()
 
 STATUS_VALUES = [s.value for s in ProjectStatus]
 
+STATUS_LABELS = {
+    ProjectStatus.idea.value: "Idea",
+    ProjectStatus.in_progress.value: "In progress",
+    ProjectStatus.completed.value: "Completed",
+    ProjectStatus.archived.value: "Archived",
+}
+
+VISIBILITY_CHOICES = {"all", "public", "private"}
+
 
 def _parse_status(raw: str | None) -> ProjectStatus | None:
     if not raw:
@@ -30,6 +41,96 @@ def _parse_status(raw: str | None) -> ProjectStatus | None:
         return ProjectStatus(raw)
     except ValueError:
         return None
+
+
+def _clean_status_list(raw: list[str] | None) -> list[str]:
+    """Filter a raw ?status=... list down to known enum values (lowercased)."""
+    if not raw:
+        return []
+    # Preserve user-visible order, drop duplicates & unknowns silently.
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in raw:
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered not in STATUS_VALUES or lowered in seen:
+            continue
+        seen.add(lowered)
+        out.append(lowered)
+    return out
+
+
+def _clean_tag_list(raw: list[str] | None) -> list[str]:
+    """Normalize + dedupe a raw ?tag=... list; drop blanks."""
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in raw:
+        slug = normalize_slug(value or "")
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        out.append(slug)
+    return out
+
+
+def _clean_visibility(raw: str | None) -> str:
+    """Coerce ?visibility= to one of {'all','public','private'}. Unknown → 'all'."""
+    if raw in VISIBILITY_CHOICES:
+        return raw
+    return "all"
+
+
+def _status_options() -> list[tuple[str, str]]:
+    return [(value, STATUS_LABELS[value]) for value in STATUS_VALUES]
+
+
+def _clean_tag_mode(raw: str | None) -> str:
+    """Normalize the tag-match mode. Default "all" preserves legacy behaviour
+    when callers don't pass anything."""
+    return "any" if raw == "any" else "all"
+
+
+def _apply_filter_query(
+    query,
+    *,
+    statuses: list[str],
+    tags: list[str],
+    tag_mode: str = "all",
+):
+    """Apply the shared status/tag filters to a Project select.
+
+    - ``statuses`` empty → exclude archived (default list behaviour).
+    - ``statuses`` non-empty → keep only those statuses.
+    - ``tags`` with ``tag_mode="all"`` (default) → AND: project must carry
+      every selected slug. ``tag_mode="any"`` → OR: project must carry at
+      least one of the selected slugs (useful for corralling spelling
+      variants like "3d-printing" / "3d-printed" on Explore).
+    """
+    if statuses:
+        query = query.where(Project.status.in_(statuses))
+    else:
+        query = query.where(Project.status != ProjectStatus.archived)
+
+    if tags:
+        # Subquery yields project ids matching the tag predicate. Using
+        # ProjectTag + Tag keeps us off the `raise_on_sql` association
+        # collection on Project.tags.
+        matching = (
+            select(ProjectTag.project_id)
+            .join(Tag, Tag.id == ProjectTag.tag_id)
+            .where(Tag.slug.in_(tags))
+        )
+        if tag_mode == "all":
+            matching = matching.group_by(ProjectTag.project_id).having(
+                func.count(func.distinct(Tag.slug)) == len(tags)
+            )
+        # "any" mode: no HAVING — the IN subquery already returns project ids
+        # with at least one matching tag.
+        query = query.where(Project.id.in_(matching))
+    return query
 
 
 def _empty_form_values() -> dict:
@@ -109,13 +210,17 @@ async def _render_form(
 @router.get("/projects")
 async def list_projects(
     request: Request,
-    status: str | None = None,
-    tag: str | None = None,
+    status: Annotated[list[str] | None, Query()] = None,
+    tag: Annotated[list[str] | None, Query()] = None,
+    tag_mode: Annotated[str | None, Query()] = None,
+    visibility: Annotated[str | None, Query()] = None,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
-    current_status = _parse_status(status)
-    current_tag = normalize_slug(tag) if tag else ""
+    current_statuses = _clean_status_list(status)
+    current_tags = _clean_tag_list(tag)
+    current_tag_mode = _clean_tag_mode(tag_mode)
+    current_visibility = _clean_visibility(visibility)
 
     query = (
         select(Project)
@@ -126,16 +231,22 @@ async def list_projects(
         )
         .where(Project.user_id == user.id)
     )
-    if current_status is not None:
-        query = query.where(Project.status == current_status)
-    else:
-        query = query.where(Project.status != ProjectStatus.archived)
-    if current_tag:
-        query = query.join(Project.tags).where(Tag.slug == current_tag)
+    query = _apply_filter_query(
+        query,
+        statuses=current_statuses,
+        tags=current_tags,
+        tag_mode=current_tag_mode,
+    )
+    if current_visibility == "public":
+        query = query.where(Project.is_public.is_(True))
+    elif current_visibility == "private":
+        query = query.where(Project.is_public.is_(False))
 
     query = query.order_by(Project.pinned.desc(), Project.updated_at.desc())
     result = await db.execute(query)
     projects = list(result.scalars().unique().all())
+
+    known_tags = await get_user_tag_slugs(db, user.id)
 
     return templates.TemplateResponse(
         request,
@@ -144,8 +255,16 @@ async def list_projects(
             "user": user,
             "projects": projects,
             "statuses": STATUS_VALUES,
-            "current_status": current_status.value if current_status else None,
-            "current_tag": current_tag or None,
+            "current_statuses": current_statuses,
+            "current_tags": current_tags,
+            "current_tag_mode": current_tag_mode,
+            "current_visibility": current_visibility,
+            "known_tags": known_tags,
+            "status_options": _status_options(),
+            "status_labels": STATUS_LABELS,
+            "base_url": "/projects",
+            "is_explore": False,
+            "show_visibility": True,
             "tag_href_prefix": "/projects",
         },
     )

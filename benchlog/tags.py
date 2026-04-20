@@ -94,6 +94,23 @@ async def get_user_tag_slugs(db: AsyncSession, user_id: uuid.UUID) -> list[str]:
     return list(result.scalars().all())
 
 
+async def get_public_tag_slugs(db: AsyncSession) -> list[str]:
+    """Return distinct tag slugs used by any public project, alphabetically sorted.
+
+    Powers the Explore filter sidebar's tag autocomplete — scoped to tags that
+    are actually visible to a visitor so suggestions can't leak private tagging.
+    """
+    result = await db.execute(
+        select(Tag.slug)
+        .join(ProjectTag, ProjectTag.tag_id == Tag.id)
+        .join(Project, Project.id == ProjectTag.project_id)
+        .where(Project.is_public.is_(True))
+        .distinct()
+        .order_by(Tag.slug)
+    )
+    return list(result.scalars().all())
+
+
 async def set_project_tags(
     db: AsyncSession, project: Project, slugs: list[str]
 ) -> None:

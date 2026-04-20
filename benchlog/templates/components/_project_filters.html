@@ -1,0 +1,138 @@
+{#
+  Shared project-filter bar for /projects and /explore.
+
+  Horizontal top-bar layout: search input · status pills · tags popover ·
+  visibility segmented control · clear-all link. Controls live inside a
+  single GET form so the URL is always the source of truth. Status and
+  visibility auto-submit on click; the tags popover has its own Apply
+  button because selecting multiple tags is a multi-step action and
+  firing a submit on every checkbox click would be chatty.
+
+  Args (via `{% with %}` at include time):
+    current_statuses   — list[str] of active status values
+    current_tags       — list[str] of active tag slugs
+    current_visibility — "all" | "public" | "private" (ignored if not shown)
+    known_tags         — list[str] of tag slugs offered in the popover
+    status_options     — list[(value, label)] rendered as pill toggles
+    base_url           — "/projects" or "/explore"; form action + Clear-all link
+    show_visibility    — bool; gates the visibility segmented control
+#}
+{% set _active_count = (current_statuses|length) + (current_tags|length) + (1 if current_visibility not in (None, 'all') else 0) %}
+<form method="get" action="{{ base_url }}" class="filter-bar" data-filter-bar>
+    {# TODO(search): full-text search lands here next task — add
+       <input type="search" name="q" value="{{ current_q or '' }}"> as the
+       first child and thread `current_q` through both routes. #}
+
+    <div class="filter-bar-group" role="group" aria-label="Status">
+        {% for value, label in status_options %}
+        <label class="filter-pill">
+            <input type="checkbox" name="status" value="{{ value }}"
+                   {% if value in current_statuses %}checked{% endif %}
+                   data-autosubmit>
+            <span>{{ label }}</span>
+        </label>
+        {% endfor %}
+    </div>
+
+    <details class="filter-popover" data-filter-popover data-tags-popover>
+        <summary class="filter-trigger" aria-label="Filter by tag">
+            <i data-lucide="tag" class="w-3.5 h-3.5"></i>
+            <span>Tags</span>
+            {% if current_tags %}
+            <span class="filter-trigger-count">{{ current_tags|length }}</span>
+            {% endif %}
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 filter-trigger-caret"></i>
+        </summary>
+        <div class="filter-popover-panel">
+            {% with name="tag", selected=current_tags, suggestions=known_tags, placeholder="Filter by tag…", multi_value=True, existing_only=True %}
+                {% include "components/_tag_combobox.html" %}
+            {% endwith %}
+            {# Any / All match-mode. Default "all" keeps legacy AND behaviour;
+               "any" is useful for corralling spelling variants on Explore
+               (e.g., "3d-printing" OR "3d-printed"). No-op with <2 tags but
+               harmless — skipping render there would mean extra JS to
+               show/hide as the user adds tags. #}
+            <div class="filter-tag-mode">
+                <span class="filter-tag-mode-label">Match</span>
+                <div class="filter-segmented filter-segmented-sm" role="group" aria-label="Tag match mode">
+                    {% for value, label in [("all", "all"), ("any", "any")] %}
+                    <label class="filter-segment">
+                        <input type="radio" name="tag_mode" value="{{ value }}"
+                               {% if (current_tag_mode or 'all') == value %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </details>
+
+    {% if show_visibility %}
+    <div class="filter-segmented" role="group" aria-label="Visibility">
+        {% for value, label in [("all", "All"), ("public", "Public"), ("private", "Private")] %}
+        <label class="filter-segment">
+            <input type="radio" name="visibility" value="{{ value }}"
+                   {% if (current_visibility or 'all') == value %}checked{% endif %}
+                   data-autosubmit>
+            <span>{{ label }}</span>
+        </label>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if _active_count %}
+    <a href="{{ base_url }}" class="filter-clear">Clear all</a>
+    {% endif %}
+</form>
+<script>
+  (() => {
+    const bars = document.querySelectorAll("[data-filter-bar]:not([data-filter-wired])");
+    bars.forEach((bar) => {
+      bar.dataset.filterWired = "1";
+
+      // Auto-submit on status pill toggle / visibility segment change. Using
+      // change (not click) so keyboard users and screen readers trigger it
+      // the same way.
+      bar.querySelectorAll("[data-autosubmit]").forEach((el) => {
+        el.addEventListener("change", () => bar.submit());
+      });
+
+      // Tags popover: batch mutations, submit on close only if something
+      // inside changed (selected tags OR the any/all match mode). Lets users
+      // add/remove several tags and flip the match mode without the page
+      // reloading under them.
+      const tagsPopover = bar.querySelector("[data-tags-popover]");
+      if (tagsPopover) {
+        const tagsSnapshot = () => {
+          const tagVals = [...tagsPopover.querySelectorAll('input[name="tag"]')]
+            .map((i) => i.value).sort().join(",");
+          const modeEl = tagsPopover.querySelector('input[name="tag_mode"]:checked');
+          const mode = modeEl ? modeEl.value : "all";
+          return mode + "|" + tagVals;
+        };
+        let openSnapshot = tagsSnapshot();
+        tagsPopover.addEventListener("toggle", () => {
+          if (tagsPopover.open) {
+            openSnapshot = tagsSnapshot();
+          } else if (tagsSnapshot() !== openSnapshot) {
+            bar.submit();
+          }
+        });
+      }
+
+      // Close open <details> popovers when clicking outside. Use
+      // composedPath() instead of contains(e.target) because the target may
+      // have been removed from the DOM by an earlier handler (clicking a
+      // pill's × detaches the button before this listener fires, which
+      // would make contains() return false and incorrectly close us).
+      // composedPath captures the path at dispatch time. The toggle handler
+      // above picks up the close and submits if tags changed.
+      document.addEventListener("click", (e) => {
+        const path = e.composedPath();
+        bar.querySelectorAll("details[data-filter-popover][open]").forEach((d) => {
+          if (!path.includes(d)) d.open = false;
+        });
+      });
+    });
+  })();
+</script>

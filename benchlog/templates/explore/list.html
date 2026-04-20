@@ -6,15 +6,15 @@
     <p class="text-ink-muted">Public projects from everyone on this instance.</p>
 </div>
 
-{% if current_tag %}
-<div class="mb-6 flex flex-wrap items-center gap-2 text-sm">
-    <span class="text-ink-muted">Filtering by</span>
-    <span class="inline-flex items-center gap-1 rounded-full border border-rust bg-rust/10 text-rust-deep px-2 py-0.5 font-mono text-xs tracking-wide">
-        #{{ current_tag }}
-    </span>
-    <a href="/explore" class="meta underline hover:text-rust">clear</a>
-</div>
-{% endif %}
+{% with current_statuses=current_statuses,
+        current_tags=current_tags,
+        current_visibility=current_visibility,
+        known_tags=known_tags,
+        status_options=status_options,
+        base_url=base_url,
+        show_visibility=show_visibility %}
+    {% include "components/_project_filters.html" %}
+{% endwith %}
 
 {% if projects %}
 <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
@@ -28,8 +28,8 @@
 </ul>
 {% else %}
 <div class="card text-center py-10">
-    {% if current_tag %}
-    <p class="text-ink-muted">No public projects tagged <code class="font-mono">#{{ current_tag }}</code> yet.</p>
+    {% if current_tags or current_statuses %}
+    <p class="text-ink-muted">No public projects match these filters.</p>
     {% elif user %}
     <p class="text-ink-muted mb-4">No public projects yet. Be the first — flip a project to public from its edit page.</p>
     <a href="/projects/new" class="btn-primary text-sm">Start a project</a>

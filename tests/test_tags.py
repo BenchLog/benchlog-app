@@ -233,9 +233,9 @@ async def test_my_projects_filter_by_tag(client, db):
     assert "Wood A" in resp.text
     assert "Wood B" in resp.text
     assert "Electronics only" not in resp.text
-    # Active tag indicator shown with clear link
+    # Active tag indicator shown with clear-all link
     assert "#woodworking" in resp.text
-    assert "clear" in resp.text
+    assert "Clear all" in resp.text
 
 
 async def test_explore_filter_by_tag(client, db):

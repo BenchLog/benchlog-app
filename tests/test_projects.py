@@ -837,6 +837,393 @@ async def test_edit_keeping_existing_slug_saves_without_collision(client, db):
     assert project.title == "Updated Title"
 
 
+# ---------- filter sidebar: multi-select + visibility + chips ---------- #
+
+
+async def test_list_filter_multiple_statuses(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Idea A",
+                slug="idea-a",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Doing B",
+                slug="doing-b",
+                status=ProjectStatus.in_progress,
+            ),
+            Project(
+                user_id=user.id,
+                title="Done C",
+                slug="done-c",
+                status=ProjectStatus.completed,
+            ),
+            Project(
+                user_id=user.id,
+                title="Gone D",
+                slug="gone-d",
+                status=ProjectStatus.archived,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+
+    resp = await client.get("/projects?status=idea&status=completed")
+    assert "Idea A" in resp.text
+    assert "Done C" in resp.text
+    assert "Doing B" not in resp.text
+    # Archived excluded by default even without status filter — also excluded
+    # here because archived isn't in the explicit list.
+    assert "Gone D" not in resp.text
+
+    # No status filter: archived hidden, others visible
+    resp = await client.get("/projects")
+    assert "Idea A" in resp.text
+    assert "Doing B" in resp.text
+    assert "Done C" in resp.text
+    assert "Gone D" not in resp.text
+
+
+async def test_list_filter_single_tag(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    await post_form(
+        client,
+        "/projects",
+        {"title": "Has foo", "description": "", "status": "idea", "tags": "foo"},
+        csrf_path="/projects/new",
+    )
+    await post_form(
+        client,
+        "/projects",
+        {"title": "No tags", "description": "", "status": "idea", "tags": ""},
+        csrf_path="/projects/new",
+    )
+
+    resp = await client.get("/projects?tag=foo")
+    assert "Has foo" in resp.text
+    assert "No tags" not in resp.text
+
+
+async def test_list_filter_multiple_tags_requires_all(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    for title, tags in [
+        ("Has A and B", "a, b"),
+        ("Has A and C", "a, c"),
+        ("Has A only", "a"),
+    ]:
+        await post_form(
+            client,
+            "/projects",
+            {"title": title, "description": "", "status": "idea", "tags": tags},
+            csrf_path="/projects/new",
+        )
+
+    resp = await client.get("/projects?tag=a&tag=b")
+    assert "Has A and B" in resp.text
+    assert "Has A and C" not in resp.text
+    assert "Has A only" not in resp.text
+
+
+async def test_list_filter_tag_mode_any_is_union(client, db):
+    # With tag_mode=any, a project needs only ONE of the selected tags.
+    # Useful for corralling spelling variants ("3d-printing" OR "3d-printed").
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    for title, tags in [
+        ("Has A and B", "a, b"),
+        ("Has A and C", "a, c"),
+        ("Has only D", "d"),
+    ]:
+        await post_form(
+            client,
+            "/projects",
+            {"title": title, "description": "", "status": "idea", "tags": tags},
+            csrf_path="/projects/new",
+        )
+
+    resp = await client.get("/projects?tag=b&tag=c&tag_mode=any")
+    assert "Has A and B" in resp.text
+    assert "Has A and C" in resp.text
+    assert "Has only D" not in resp.text
+
+
+async def test_list_filter_tag_mode_defaults_to_all(client, db):
+    # Omitting tag_mode (or passing unknown value) keeps the legacy AND
+    # behaviour so existing bookmarks/links don't silently broaden.
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+    for title, tags in [("Has A and B", "a, b"), ("Has only A", "a")]:
+        await post_form(
+            client,
+            "/projects",
+            {"title": title, "description": "", "status": "idea", "tags": tags},
+            csrf_path="/projects/new",
+        )
+
+    # No tag_mode — AND
+    resp = await client.get("/projects?tag=a&tag=b")
+    assert "Has A and B" in resp.text
+    assert "Has only A" not in resp.text
+    # tag_mode=bogus — also AND
+    resp = await client.get("/projects?tag=a&tag=b&tag_mode=bogus")
+    assert "Has A and B" in resp.text
+    assert "Has only A" not in resp.text
+
+
+async def test_list_filter_visibility_public(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Pub One",
+                slug="pub-one",
+                status=ProjectStatus.idea,
+                is_public=True,
+            ),
+            Project(
+                user_id=user.id,
+                title="Pub Two",
+                slug="pub-two",
+                status=ProjectStatus.in_progress,
+                is_public=True,
+            ),
+            Project(
+                user_id=user.id,
+                title="Priv One",
+                slug="priv-one",
+                status=ProjectStatus.idea,
+                is_public=False,
+            ),
+            Project(
+                user_id=user.id,
+                title="Priv Two",
+                slug="priv-two",
+                status=ProjectStatus.in_progress,
+                is_public=False,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?visibility=public")
+    assert "Pub One" in resp.text
+    assert "Pub Two" in resp.text
+    assert "Priv One" not in resp.text
+    assert "Priv Two" not in resp.text
+
+
+async def test_list_filter_visibility_private(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Pub One",
+                slug="pub-one",
+                status=ProjectStatus.idea,
+                is_public=True,
+            ),
+            Project(
+                user_id=user.id,
+                title="Pub Two",
+                slug="pub-two",
+                status=ProjectStatus.in_progress,
+                is_public=True,
+            ),
+            Project(
+                user_id=user.id,
+                title="Priv One",
+                slug="priv-one",
+                status=ProjectStatus.idea,
+                is_public=False,
+            ),
+            Project(
+                user_id=user.id,
+                title="Priv Two",
+                slug="priv-two",
+                status=ProjectStatus.in_progress,
+                is_public=False,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?visibility=private")
+    assert "Priv One" in resp.text
+    assert "Priv Two" in resp.text
+    assert "Pub One" not in resp.text
+    assert "Pub Two" not in resp.text
+
+
+async def test_list_known_tags_are_user_scoped(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+
+    # Alice seeds tags a, b
+    await login(client, "alice")
+    await post_form(
+        client,
+        "/projects",
+        {"title": "Alice P", "description": "", "status": "idea", "tags": "a, b"},
+        csrf_path="/projects/new",
+    )
+
+    # Bob seeds tag c
+    await login(client, "bob")
+    await post_form(
+        client,
+        "/projects",
+        {"title": "Bob P", "description": "", "status": "idea", "tags": "c"},
+        csrf_path="/projects/new",
+    )
+
+    # Back to alice — her combobox should list a,b but not c
+    await login(client, "alice")
+    resp = await client.get("/projects")
+    assert resp.status_code == 200
+    import re
+
+    known_match = re.search(r'data-known-tags="([^"]*)"', resp.text)
+    assert known_match is not None
+    slugs = set(known_match.group(1).split())
+    assert slugs == {"a", "b"}
+    assert "c" not in slugs
+
+
+async def test_list_filter_active_state_rendered_in_bar(client, db):
+    # In the top-bar layout, active filters show up as pressed pills /
+    # selected radios / tag chips inside the popover — users toggle them off
+    # by clicking the pill again, not by clicking a separate chip row.
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Tagged idea",
+            "description": "",
+            "status": "idea",
+            "tags": "foo",
+        },
+        csrf_path="/projects/new",
+    )
+
+    import re
+    resp = await client.get("/projects?status=idea&tag=foo")
+    body = resp.text
+    # Status pill for "idea" is rendered checked (attrs may split across lines).
+    assert re.search(r'value="idea"\s+checked', body)
+    # Tag "foo" appears as a selected pill inside the popover.
+    assert 'value="foo"' in body
+    # A Clear-all link is rendered when any filter is active.
+    assert 'href="/projects"' in body and "Clear all" in body
+
+
+async def test_list_filter_combining_status_tag_visibility(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    # Use the form endpoint so tags attach cleanly.
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Match me",
+            "description": "",
+            "status": "in_progress",
+            "tags": "foo",
+            "is_public": "1",
+        },
+        csrf_path="/projects/new",
+    )
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Wrong status",
+            "description": "",
+            "status": "idea",
+            "tags": "foo",
+            "is_public": "1",
+        },
+        csrf_path="/projects/new",
+    )
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Wrong tag",
+            "description": "",
+            "status": "in_progress",
+            "tags": "bar",
+            "is_public": "1",
+        },
+        csrf_path="/projects/new",
+    )
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Wrong visibility",
+            "description": "",
+            "status": "in_progress",
+            "tags": "foo",
+        },
+        csrf_path="/projects/new",
+    )
+    # Sanity — 4 projects attached to alice
+    from sqlalchemy import func as _func
+
+    count = (
+        await db.execute(
+            select(_func.count(Project.id)).where(Project.user_id == user.id)
+        )
+    ).scalar_one()
+    assert count == 4
+
+    resp = await client.get(
+        "/projects?status=in_progress&tag=foo&visibility=public"
+    )
+    assert "Match me" in resp.text
+    assert "Wrong status" not in resp.text
+    assert "Wrong tag" not in resp.text
+    assert "Wrong visibility" not in resp.text
+
+
+async def test_list_filter_ignores_unknown_status(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Visible",
+            slug="visible",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?status=bogus")
+    # Unknown value ignored → behaves as no filter → default (exclude archived)
+    assert resp.status_code == 200
+    assert "Visible" in resp.text
+
+
 async def test_deleting_user_cascades_to_projects(client, db):
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add(

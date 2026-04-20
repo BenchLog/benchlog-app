@@ -12,7 +12,14 @@ from benchlog import audit
 from benchlog.config import settings
 from benchlog.database import get_db
 from benchlog.dependencies import require_user
-from benchlog.models import OIDCIdentity, User, WebAuthnCredential
+from benchlog.links import normalize_url
+from benchlog.models import (
+    OIDCIdentity,
+    User,
+    UserSocialLink,
+    UserSocialLinkType,
+    WebAuthnCredential,
+)
 from benchlog.auth import oidc as oidc_svc
 from benchlog.auth import users as user_svc
 from benchlog.auth.passwords import hash_password, verify_password
@@ -28,6 +35,21 @@ from benchlog.templating import templates
 logger = logging.getLogger("benchlog.account")
 
 router = APIRouter(prefix="/account")
+
+
+SOCIAL_LINK_TYPES = list(UserSocialLinkType)
+
+
+async def _load_social_links(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[UserSocialLink]:
+    """Fetch a user's social links ordered for the editor + profile views."""
+    result = await db.execute(
+        select(UserSocialLink)
+        .where(UserSocialLink.user_id == user_id)
+        .order_by(UserSocialLink.sort_order, UserSocialLink.created_at)
+    )
+    return list(result.scalars().all())
 
 
 @router.get("")
@@ -54,6 +76,8 @@ async def account_page(
     )
     passkeys = list(passkeys_result.scalars().all())
 
+    social_links = await _load_social_links(db, user.id)
+
     has_password = user.password_hash is not None
 
     error = request.session.pop("flash_error", None)
@@ -67,6 +91,8 @@ async def account_page(
             "identities": identities,
             "unlinked_providers": unlinked_providers,
             "passkeys": passkeys,
+            "social_links": social_links,
+            "social_link_types": SOCIAL_LINK_TYPES,
             "has_password": has_password,
             "error": error,
             "notice": notice,
@@ -412,3 +438,114 @@ async def unlink_oidc(
     await db.commit()
     request.session["flash_notice"] = "Sign-in method unlinked."
     return RedirectResponse("/account", status_code=302)
+
+
+# ---------- bio ----------
+
+
+# Enforced in the form + server-side truncation. Keeps public profiles
+# scan-friendly and bounds the size of markdown we're asked to render.
+BIO_MAX_LENGTH = 2000
+
+
+@router.post("/bio")
+async def update_bio(
+    request: Request,
+    bio: str = Form(""),
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    trimmed = (bio or "").strip()
+    if len(trimmed) > BIO_MAX_LENGTH:
+        request.session["flash_error"] = (
+            f"Bio is too long — {BIO_MAX_LENGTH} characters max."
+        )
+        return RedirectResponse("/account#profile", status_code=302)
+
+    # Empty-string bios collapse to NULL so the profile template's
+    # `{% if user.bio %}` guard hides the section cleanly.
+    user.bio = trimmed or None
+    await db.commit()
+    request.session["flash_notice"] = "Bio updated."
+    return RedirectResponse("/account#profile", status_code=302)
+
+
+# ---------- social links ----------
+
+
+def _parse_social_link_type(raw: str | None) -> UserSocialLinkType:
+    if not raw:
+        return UserSocialLinkType.other
+    try:
+        return UserSocialLinkType(raw)
+    except ValueError:
+        return UserSocialLinkType.other
+
+
+@router.post("/social-links")
+async def add_social_link(
+    request: Request,
+    link_type: str = Form(UserSocialLinkType.other.value),
+    url: str = Form(""),
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Append a single social link to the owner's profile.
+
+    Server-side normalizes the URL via `normalize_url` — the same helper
+    that protects project links from `javascript:` schemes, and that
+    auto-prepends `https://` when the user omits the scheme.
+    """
+    normalized = normalize_url(url)
+    if not normalized:
+        request.session["flash_error"] = "Please enter a valid URL."
+        return RedirectResponse("/account#social-links", status_code=302)
+
+    # Sort_order = one past the current max so new rows append at the
+    # bottom of the editor + the public profile.
+    max_order_result = await db.execute(
+        select(func.max(UserSocialLink.sort_order)).where(
+            UserSocialLink.user_id == user.id
+        )
+    )
+    current_max = max_order_result.scalar_one_or_none()
+    next_order = 0 if current_max is None else current_max + 1
+
+    db.add(
+        UserSocialLink(
+            user_id=user.id,
+            link_type=_parse_social_link_type(link_type),
+            url=normalized,
+            sort_order=next_order,
+        )
+    )
+    await db.commit()
+    request.session["flash_notice"] = "Link added."
+    return RedirectResponse("/account#social-links", status_code=302)
+
+
+@router.post("/social-links/{link_id}/delete")
+async def delete_social_link(
+    request: Request,
+    link_id: uuid.UUID,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Owner-scoped lookup — a crafted id belonging to another user must 404
+    # (not leak a "link not found on your account" vs "wrong owner"
+    # distinction).
+    result = await db.execute(
+        select(UserSocialLink).where(
+            UserSocialLink.id == link_id,
+            UserSocialLink.user_id == user.id,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        request.session["flash_error"] = "Link not found."
+        return RedirectResponse("/account#social-links", status_code=302)
+
+    await db.delete(link)
+    await db.commit()
+    request.session["flash_notice"] = "Link removed."
+    return RedirectResponse("/account#social-links", status_code=302)

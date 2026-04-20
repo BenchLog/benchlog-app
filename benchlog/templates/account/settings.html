@@ -3,11 +3,15 @@
 {% block content %}
 <script src="{{ url_for('static', path='js/passkeys.js') }}"></script>
 <h1 class="text-3xl mb-1">Account</h1>
-<p class="meta mb-6">{{ user.email }}</p>
+<p class="meta mb-6">
+    {{ user.email }}
+    &middot;
+    <a href="/u/{{ user.username }}" class="hover:text-rust">View your public profile</a>
+</p>
 
 <div id="passkey-status" style="display:none"></div>
 
-<section class="card mb-6">
+<section id="profile" class="card mb-6">
     <h2 class="text-xl mb-1">Profile</h2>
     <p class="meta mb-4">
         Email is {% if user.email_verified %}<strong>verified</strong>{% else %}<strong>not verified</strong>{% endif %}.
@@ -78,6 +82,79 @@
         sync();
       })();
     </script>
+</section>
+
+<section id="bio" class="card mb-6">
+    <h2 class="text-xl mb-1">Bio</h2>
+    <p class="meta mb-4">
+        Shown on your public profile at <a href="/u/{{ user.username }}" class="hover:text-rust">/u/{{ user.username }}</a>.
+        Markdown supported.
+    </p>
+    <form method="post" action="/account/bio" class="space-y-3">
+        {% include "components/_csrf.html" %}
+        <div>
+            <label for="bio" class="sr-only">Bio</label>
+            <textarea id="bio" name="bio" rows="6" maxlength="2000"
+                      placeholder="A sentence or two about you and what you make.">{{ user.bio or '' }}</textarea>
+            <p class="meta mt-1">Up to 2000 characters.</p>
+        </div>
+        <button type="submit" class="btn-primary">Save bio</button>
+    </form>
+</section>
+
+<section id="social-links" class="card mb-6">
+    <h2 class="text-xl mb-1">Social links</h2>
+    <p class="meta mb-4">
+        Pick a type, paste a URL. We'll add <code>https://</code> if you leave the scheme off.
+    </p>
+
+    {% if social_links %}
+    <ul class="divide-y divide-edge mb-4 list-none p-0">
+        {% for link in social_links %}
+        <li class="flex items-center justify-between gap-3 py-3">
+            <div class="min-w-0 flex items-center gap-3">
+                <span class="inline-flex items-center justify-center w-9 h-9 rounded-md border border-edge bg-paper text-ink-muted shrink-0"
+                      aria-hidden="true">
+                    <i data-lucide="{{ link.link_type.icon }}" class="w-4 h-4"></i>
+                </span>
+                <div class="min-w-0">
+                    <div class="text-sm font-medium">{{ link.link_type.label }}</div>
+                    <div class="meta break-all">{{ link.url }}</div>
+                </div>
+            </div>
+            <form method="post" action="/account/social-links/{{ link.id }}/delete"
+                  data-confirm
+                  data-confirm-title="Remove link?"
+                  data-confirm-body="This {{ link.link_type.label }} link will disappear from your profile."
+                  data-confirm-ok="Remove"
+                  data-confirm-variant="danger">
+                {% include "components/_csrf.html" %}
+                <button type="submit" class="btn-ghost text-sm">Remove</button>
+            </form>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-ink-muted mb-4">No links yet.</p>
+    {% endif %}
+
+    <form method="post" action="/account/social-links" class="flex flex-wrap items-end gap-3 pt-3 border-t border-edge">
+        {% include "components/_csrf.html" %}
+        <div class="shrink-0">
+            <label for="social_link_type">Type</label>
+            <select id="social_link_type" name="link_type">
+                {% for t in social_link_types %}
+                <option value="{{ t.value }}">{{ t.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="flex-1 min-w-56">
+            <label for="social_link_url">URL</label>
+            <input id="social_link_url" name="url" type="text" required maxlength="2048"
+                   placeholder="https://…">
+        </div>
+        <button type="submit" class="btn-primary text-sm shrink-0">Add link</button>
+    </form>
 </section>
 
 <section class="card mb-6">

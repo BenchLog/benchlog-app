@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ profile_user.display_name }} (@{{ profile_user.username }}) · BenchLog{% endblock %}
+{% block content %}
+
+{# Field Notebook palette: cream surface + rust accents. Placeholder avatar
+   is a rust ring with the initial — no image-fetch until a later task
+   adds real uploads. #}
+
+{% set initial = (profile_user.display_name or profile_user.username)[:1] | upper %}
+
+<header class="flex flex-wrap items-start gap-4 sm:gap-6 mb-8">
+    <span class="inline-flex items-center justify-center w-20 h-20 shrink-0 rounded-full border-2 border-rust bg-paper text-rust font-display text-3xl font-semibold select-none"
+          aria-hidden="true"
+          style='font-variation-settings: "opsz" 60;'>
+        {{ initial }}
+    </span>
+    <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 class="text-3xl leading-tight m-0 min-w-0 break-words">
+                {{ profile_user.display_name }}
+            </h1>
+            {% if is_owner %}
+            <a href="/account" class="btn-ghost text-sm shrink-0">Edit profile</a>
+            {% endif %}
+        </div>
+        <p class="meta mt-1">@{{ profile_user.username }}</p>
+    </div>
+</header>
+
+{% if profile_user.bio %}
+<section class="prose max-w-none mb-8">
+    {{ profile_user.bio|markdown }}
+</section>
+{% endif %}
+
+{% if social_links %}
+<section class="mb-8">
+    <ul class="flex flex-wrap gap-2 list-none p-0">
+        {% for link in social_links %}
+        <li>
+            <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer me"
+               class="inline-flex items-center gap-2 rounded-full border border-edge bg-paper-surface px-3 py-1.5 text-sm text-ink-muted no-underline hover:border-rust hover:text-rust">
+                <i data-lucide="{{ link.link_type.icon }}" class="w-4 h-4" aria-hidden="true"></i>
+                <span>{{ link.link_type.label }}</span>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+<section>
+    <h2 class="text-xl mb-4">Projects</h2>
+
+    {% if public_projects %}
+    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+        {% for project in public_projects %}
+        <li>
+            {% with show_owner = False %}
+                {% include "components/project_card.html" %}
+            {% endwith %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="card text-center py-10">
+        <p class="text-ink-muted">No public projects yet.</p>
+    </div>
+    {% endif %}
+</section>
+
+{% endblock %}

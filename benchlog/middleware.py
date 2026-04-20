@@ -18,8 +18,9 @@ PUBLIC_PREFIXES = (
 
 
 def _is_public_project_view(method: str, path: str) -> bool:
-    """Allow guest GETs for canonical project + update + link + file tab URLs.
+    """Allow guest GETs for canonical profile + project + update + link + file URLs.
 
+    - `/u/{username}` — user profile page
     - `/u/{username}/{slug}` — overview tab
     - `/u/{username}/{slug}/updates` — updates tab (full feed)
     - `/u/{username}/{slug}/updates/{id}` — single update permalink
@@ -39,6 +40,9 @@ def _is_public_project_view(method: str, path: str) -> bool:
     parts = path[len("/u/"):].rstrip("/").split("/")
     if not all(parts):
         return False
+    # /u/{username}
+    if len(parts) == 1:
+        return True
     # /u/{username}/{slug}
     if len(parts) == 2:
         return True

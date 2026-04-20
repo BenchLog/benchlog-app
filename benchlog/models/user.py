@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, Index, Integer, String, text
+from sqlalchemy import Boolean, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from benchlog.models.base import Base, TimestampMixin, new_uuid
@@ -31,6 +31,10 @@ class User(TimestampMixin, Base):
     # Bumped on password change, admin reset, disable, demote, delete. Sessions
     # compare against this value so signed-cookie sessions can be invalidated.
     session_epoch: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Free-form markdown bio shown on the public profile page. Null when the
+    # user hasn't written one yet — the profile template hides the section
+    # rather than rendering an empty block.
+    bio: Mapped[str | None] = mapped_column(Text, default=None)
 
     # lazy='raise_on_sql' — templates must not trigger implicit IO. Routes that
     # need these collections must eager-load via selectinload.
@@ -45,4 +49,10 @@ class User(TimestampMixin, Base):
     )
     projects: Mapped[list["Project"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan", lazy="raise_on_sql"
+    )
+    social_links: Mapped[list["UserSocialLink"]] = relationship(  # noqa: F821
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="(UserSocialLink.sort_order, UserSocialLink.created_at)",
+        lazy="raise_on_sql",
     )

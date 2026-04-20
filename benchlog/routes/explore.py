@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,10 +12,13 @@ from benchlog.routes.projects import (
     STATUS_LABELS,
     STATUS_VALUES,
     _apply_filter_query,
+    _apply_search_query,
+    _clean_q,
     _clean_status_list,
     _clean_tag_list,
     _clean_tag_mode,
     _status_options,
+    _tsquery_for,
 )
 from benchlog.tags import get_public_tag_slugs
 from benchlog.templating import templates
@@ -29,12 +32,14 @@ async def explore(
     status: Annotated[list[str] | None, Query()] = None,
     tag: Annotated[list[str] | None, Query()] = None,
     tag_mode: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
     user: User | None = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
     current_statuses = _clean_status_list(status)
     current_tags = _clean_tag_list(tag)
     current_tag_mode = _clean_tag_mode(tag_mode)
+    current_q = _clean_q(q)
 
     query = (
         select(Project)
@@ -51,7 +56,18 @@ async def explore(
         tags=current_tags,
         tag_mode=current_tag_mode,
     )
-    query = query.order_by(Project.updated_at.desc())
+    query = _apply_search_query(query, q=current_q)
+    # With a query, sort by relevance (ts_rank_cd) and fall back to recency
+    # for ties. Without a query, keep the legacy recency-only ordering —
+    # Explore has no pinned sort.
+    search_ts = _tsquery_for(current_q) if current_q else None
+    if search_ts is not None:
+        query = query.order_by(
+            func.ts_rank_cd(Project.search_vector, search_ts).desc(),
+            Project.updated_at.desc(),
+        )
+    else:
+        query = query.order_by(Project.updated_at.desc())
 
     result = await db.execute(query)
     projects = list(result.scalars().unique().all())
@@ -71,6 +87,7 @@ async def explore(
             # Explore hardcodes visibility=public; expose it so the filter
             # partial can render a stable context without branching.
             "current_visibility": "all",
+            "current_q": current_q,
             "known_tags": known_tags,
             "status_options": _status_options(),
             "status_labels": STATUS_LABELS,

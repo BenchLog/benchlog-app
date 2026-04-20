@@ -9,6 +9,7 @@
 {% with current_statuses=current_statuses,
         current_tags=current_tags,
         current_visibility=current_visibility,
+        current_q=current_q,
         known_tags=known_tags,
         status_options=status_options,
         base_url=base_url,
@@ -27,7 +28,7 @@
 {% else %}
 <div class="card text-center py-10">
     <p class="text-ink-muted mb-4">
-        {% if current_tags or current_statuses or (current_visibility and current_visibility != 'all') %}
+        {% if current_q or current_tags or current_statuses or (current_visibility and current_visibility != 'all') %}
             No projects match these filters.
         {% else %}
             You haven't started any projects yet.

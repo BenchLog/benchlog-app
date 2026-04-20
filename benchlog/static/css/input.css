@@ -1421,4 +1421,84 @@ dialog.modal[open] {
   .filter-clear:hover {
     color: var(--color-rust);
   }
+
+  /* Full-text search input — pill-shaped wrapper so the icon, <input>, and
+     clear × feel like one control. Matches the rounded-pill language of
+     .filter-trigger / .filter-pill. The native <input type="search"> is
+     borderless inside the pill; the wrapper owns the border + focus ring
+     so all three children are visually unified when the input is focused. */
+  .filter-search {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.1875rem 0.625rem;
+    min-width: 14rem;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    color: var(--color-ink);
+    background-color: var(--color-paper);
+    border: 1px solid var(--color-edge);
+    border-radius: 999px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+    cursor: text;
+  }
+  .filter-search:hover {
+    border-color: var(--color-rust);
+  }
+  .filter-search:focus-within {
+    border-color: var(--color-rust);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-rust) 20%, transparent);
+  }
+  .filter-search-icon {
+    flex-shrink: 0;
+    color: var(--color-ink-muted);
+  }
+  /* Target with the class (not just [type=search]) so the selector beats
+     the base `input { width: 100%; padding: 0.5rem 0.75rem; }` reset on
+     specificity, not only on layer ordering — some browsers / Tailwind
+     configurations have bitten us with the layer approach. */
+  .filter-search-input {
+    flex: 1 1 auto;
+    min-width: 8rem;
+    width: auto;
+    background: transparent;
+    border: 0;
+    padding: 0.125rem 0;
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    color: var(--color-ink);
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: none;
+  }
+  .filter-search-input:focus {
+    outline: none;
+    border: 0;
+    box-shadow: none;
+  }
+  .filter-search-input::-webkit-search-cancel-button,
+  .filter-search-input::-webkit-search-decoration {
+    /* Hide the browser's default × — we render our own when `current_q` is
+       set, which also persists the action (href) instead of only clearing
+       the field client-side. */
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  .filter-search-clear {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
+    border-radius: 999px;
+    color: var(--color-ink-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+  .filter-search-clear:hover {
+    color: var(--color-rust);
+    background-color: color-mix(in srgb, var(--color-rust) 12%, transparent);
+  }
 }

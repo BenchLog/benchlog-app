@@ -1224,6 +1224,306 @@ async def test_list_filter_ignores_unknown_status(client, db):
     assert "Visible" in resp.text
 
 
+# ---------- full-text search: /projects?q= ---------- #
+
+
+async def test_list_search_matches_title(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Inlay fixture",
+                slug="inlay-fixture",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Router jig",
+                slug="router-jig",
+                status=ProjectStatus.idea,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=inlay")
+    assert resp.status_code == 200
+    assert "Inlay fixture" in resp.text
+    assert "Router jig" not in resp.text
+
+
+async def test_list_search_matches_description(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Weekend plans",
+                slug="weekend-plans",
+                description="Cutting dovetails with a router",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Desk build",
+                slug="desk-build",
+                description="Gluing up panels",
+                status=ProjectStatus.idea,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=router")
+    assert "Weekend plans" in resp.text
+    assert "Desk build" not in resp.text
+
+
+async def test_list_search_multi_word_is_and(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Inlay fixture for router",
+                slug="inlay-fixture-router",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Router jig",
+                slug="router-jig-2",
+                status=ProjectStatus.idea,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=inlay+router")
+    assert "Inlay fixture for router" in resp.text
+    assert "Router jig" not in resp.text
+
+
+async def test_list_search_is_stemmed(client, db):
+    # English stemmer folds "building" -> "build", so ?q=build finds
+    # "Building a router table".
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Building a router table",
+            slug="building-router-table",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=build")
+    assert "Building a router table" in resp.text
+
+
+async def test_list_search_is_prefix_match(client, db):
+    # Typing a partial token should match words that start with it —
+    # "flowi" finds "Flowire" (motivating case). Lets users get results
+    # after 2-3 characters instead of needing a full-word match.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Flowire",
+                slug="flowire",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Dovetail jig",
+                slug="dovetail-jig",
+                status=ProjectStatus.idea,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=flowi")
+    assert "Flowire" in resp.text
+    assert "Dovetail jig" not in resp.text
+
+    # Single-letter prefixes are too broad — we ignore tokens <2 chars so
+    # they don't scan the whole GIN index. Should behave like no-search.
+    resp = await client.get("/projects?q=f")
+    assert "Flowire" in resp.text
+    assert "Dovetail jig" in resp.text
+
+
+async def test_list_search_combines_with_status_filter(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Router jig completed",
+                slug="router-done",
+                status=ProjectStatus.completed,
+            ),
+            Project(
+                user_id=user.id,
+                title="Router plan idea",
+                slug="router-idea",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Lathe overhaul completed",
+                slug="lathe-done",
+                status=ProjectStatus.completed,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=router&status=completed")
+    assert "Router jig completed" in resp.text
+    assert "Router plan idea" not in resp.text
+    assert "Lathe overhaul completed" not in resp.text
+
+
+async def test_list_search_combines_with_tag_filter(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    for title, tags in [
+        ("Router jig with fixture", "fixture"),
+        ("Router table", "bench"),
+        ("Lathe with fixture", "fixture"),
+    ]:
+        await post_form(
+            client,
+            "/projects",
+            {"title": title, "description": "", "status": "idea", "tags": tags},
+            csrf_path="/projects/new",
+        )
+
+    resp = await client.get("/projects?q=router&tag=fixture")
+    assert "Router jig with fixture" in resp.text
+    assert "Router table" not in resp.text  # wrong tag
+    assert "Lathe with fixture" not in resp.text  # wrong search
+
+
+async def test_list_search_empty_string_behaves_like_no_search(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Apple pie",
+                slug="apple-pie",
+                status=ProjectStatus.idea,
+            ),
+            Project(
+                user_id=user.id,
+                title="Banana bread",
+                slug="banana-bread",
+                status=ProjectStatus.idea,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    # Whitespace-only q is treated as absent — all non-archived show up.
+    resp = await client.get("/projects?q=%20%20%20")
+    assert "Apple pie" in resp.text
+    assert "Banana bread" in resp.text
+
+
+async def test_list_search_returns_empty_for_no_matches(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Inlay fixture",
+            slug="inlay-fixture",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects?q=zzznotfound")
+    assert resp.status_code == 200
+    assert "Inlay fixture" not in resp.text
+    assert "No projects match these filters." in resp.text
+
+
+async def test_list_search_ordering_by_relevance_overrides_pinned(client, db):
+    # Pinned project without the term should NOT appear first when q is set —
+    # relevance wins. Without q, the pinned one is first.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add_all(
+        [
+            Project(
+                user_id=user.id,
+                title="Pinned unrelated",
+                slug="pinned-unrelated",
+                description="something completely different",
+                status=ProjectStatus.idea,
+                pinned=True,
+            ),
+            Project(
+                user_id=user.id,
+                title="Non-pinned with keyword dovetail",
+                slug="dovetail-match",
+                status=ProjectStatus.idea,
+                pinned=False,
+            ),
+        ]
+    )
+    await db.commit()
+
+    await login(client, "alice")
+
+    # With q=dovetail, only the non-pinned match shows up (and therefore is
+    # also first). Proves relevance filter + ordering.
+    resp = await client.get("/projects?q=dovetail")
+    body = resp.text
+    assert "Non-pinned with keyword dovetail" in body
+    assert "Pinned unrelated" not in body
+
+    # No q: both render, and pinned comes first in page order.
+    resp = await client.get("/projects")
+    body = resp.text
+    idx_pinned = body.find("Pinned unrelated")
+    idx_other = body.find("Non-pinned with keyword dovetail")
+    assert idx_pinned != -1 and idx_other != -1
+    assert idx_pinned < idx_other
+
+
+async def test_list_search_input_rendered_in_filter_bar(client, db):
+    # Smoke check: the filter bar renders a <input name="q"> and echoes any
+    # active query back into its value attribute.
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await client.get("/projects")
+    assert 'name="q"' in resp.text
+    assert 'placeholder="Search projects' in resp.text
+
+    resp = await client.get("/projects?q=widgets")
+    assert 'value="widgets"' in resp.text
+    # ✕ clear link shows when q is active, and it clears back to base_url.
+    assert 'class="filter-search-clear"' in resp.text
+    # Clear-all link also renders (since q counts as an active filter).
+    assert "Clear all" in resp.text
+
+
 async def test_deleting_user_cascades_to_projects(client, db):
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add(

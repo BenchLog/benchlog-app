@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -91,6 +92,63 @@ def _clean_tag_mode(raw: str | None) -> str:
     """Normalize the tag-match mode. Default "all" preserves legacy behaviour
     when callers don't pass anything."""
     return "any" if raw == "any" else "all"
+
+
+def _clean_q(raw: str | None) -> str:
+    """Normalize a raw ?q= value. Whitespace-only / missing → empty string
+    (treated as "no search" by `_apply_search_query`)."""
+    return (raw or "").strip()
+
+
+# Strip anything that isn't a word char (letters/digits/underscore) or space.
+# Catches tsquery operators (&, |, !, :, *, (, ), <->) so user input can't
+# craft query syntax, and also normalizes punctuation to spaces so "flow-ire"
+# splits into ["flow", "ire"] for prefix matching.
+_QUERY_TOKEN_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _build_prefix_tsquery(q: str) -> str:
+    """Turn a free-text search into a tsquery string with prefix matching
+    per token. "flowi router" → "flowi:* & router:*". Drops tokens shorter
+    than 2 chars — single-letter prefixes scan too much of the GIN index
+    and the results are rarely what the user wants."""
+    if not q:
+        return ""
+    cleaned = _QUERY_TOKEN_RE.sub(" ", q)
+    tokens = [t for t in cleaned.split() if len(t) >= 2]
+    if not tokens:
+        return ""
+    return " & ".join(f"{t}:*" for t in tokens)
+
+
+def _tsquery_for(q: str):
+    """Build a prefix-matching tsquery expression from a free-text search
+    string, or None if the query is empty / all tokens too short. Shared
+    between `_apply_search_query` (WHERE) and the routes' ORDER BY so both
+    use the exact same parsed query."""
+    ts_str = _build_prefix_tsquery(q)
+    if not ts_str:
+        return None
+    return func.to_tsquery("english", ts_str)
+
+
+def _apply_search_query(query, *, q: str):
+    """Filter a Project select by full-text search over title + description.
+
+    Uses prefix matching (per token `:*`) so typing "flowi" finds "Flowire".
+    `to_tsquery` is strict about syntax — `_build_prefix_tsquery` sanitizes
+    out operators and normalizes whitespace so arbitrary user input can't
+    break the query or inject operators.
+
+    Returns `query` unchanged when the search is empty. Caller is
+    responsible for overriding their default ORDER BY with ts_rank_cd —
+    kept out of here so routes can decide whether relevance or recency
+    wins.
+    """
+    ts = _tsquery_for(q)
+    if ts is None:
+        return query
+    return query.where(Project.search_vector.op("@@")(ts))
 
 
 def _apply_filter_query(
@@ -214,6 +272,7 @@ async def list_projects(
     tag: Annotated[list[str] | None, Query()] = None,
     tag_mode: Annotated[str | None, Query()] = None,
     visibility: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -221,6 +280,7 @@ async def list_projects(
     current_tags = _clean_tag_list(tag)
     current_tag_mode = _clean_tag_mode(tag_mode)
     current_visibility = _clean_visibility(visibility)
+    current_q = _clean_q(q)
 
     query = (
         select(Project)
@@ -237,12 +297,23 @@ async def list_projects(
         tags=current_tags,
         tag_mode=current_tag_mode,
     )
+    query = _apply_search_query(query, q=current_q)
     if current_visibility == "public":
         query = query.where(Project.is_public.is_(True))
     elif current_visibility == "private":
         query = query.where(Project.is_public.is_(False))
 
-    query = query.order_by(Project.pinned.desc(), Project.updated_at.desc())
+    # When a search is active, relevance wins over pinned/recency. Recency as
+    # tiebreaker keeps results stable for equally-ranked rows. No `q` → keep
+    # the pre-existing pinned-then-recent order so bookmarks don't shuffle.
+    search_ts = _tsquery_for(current_q) if current_q else None
+    if search_ts is not None:
+        query = query.order_by(
+            func.ts_rank_cd(Project.search_vector, search_ts).desc(),
+            Project.updated_at.desc(),
+        )
+    else:
+        query = query.order_by(Project.pinned.desc(), Project.updated_at.desc())
     result = await db.execute(query)
     projects = list(result.scalars().unique().all())
 
@@ -259,6 +330,7 @@ async def list_projects(
             "current_tags": current_tags,
             "current_tag_mode": current_tag_mode,
             "current_visibility": current_visibility,
+            "current_q": current_q,
             "known_tags": known_tags,
             "status_options": _status_options(),
             "status_labels": STATUS_LABELS,

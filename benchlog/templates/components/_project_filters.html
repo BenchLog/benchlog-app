@@ -12,16 +12,39 @@
     current_statuses   — list[str] of active status values
     current_tags       — list[str] of active tag slugs
     current_visibility — "all" | "public" | "private" (ignored if not shown)
+    current_q          — str; active full-text search query (empty when absent)
     known_tags         — list[str] of tag slugs offered in the popover
     status_options     — list[(value, label)] rendered as pill toggles
     base_url           — "/projects" or "/explore"; form action + Clear-all link
     show_visibility    — bool; gates the visibility segmented control
 #}
-{% set _active_count = (current_statuses|length) + (current_tags|length) + (1 if current_visibility not in (None, 'all') else 0) %}
+{% set _active_count = (current_statuses|length) + (current_tags|length)
+     + (1 if current_visibility not in (None, 'all') else 0)
+     + (1 if current_q else 0) %}
 <form method="get" action="{{ base_url }}" class="filter-bar" data-filter-bar>
-    {# TODO(search): full-text search lands here next task — add
-       <input type="search" name="q" value="{{ current_q or '' }}"> as the
-       first child and thread `current_q` through both routes. #}
+    {# Full-text search over title + description. Enter submits the form
+       (native behaviour — no auto-submit on keystroke, that'd be chatty).
+       The ✕ clear button strips the whole URL back to `base_url`, same as
+       "Clear all" — keeps the two affordances consistent and avoids the
+       URL-rebuilding gymnastics of preserving other active filters. #}
+    <label class="filter-search">
+        <i data-lucide="search" class="w-3.5 h-3.5 filter-search-icon"></i>
+        <input type="search"
+               name="q"
+               class="filter-search-input"
+               value="{{ current_q or '' }}"
+               placeholder="Search projects…"
+               autocomplete="off"
+               enterkeyhint="search">
+        {% if current_q %}
+        <a href="{{ base_url }}" class="filter-search-clear" aria-label="Clear search">&times;</a>
+        {% endif %}
+        {# Without an explicit submit control, HTML only does implicit-submit
+           on Enter when the form has exactly one text input. We have two
+           (search + tag combobox search), so Enter would otherwise do
+           nothing. Visually-hidden button fixes that. #}
+        <button type="submit" class="sr-only" aria-hidden="true" tabindex="-1">Search</button>
+    </label>
 
     <div class="filter-bar-group" role="group" aria-label="Status">
         {% for value, label in status_options %}

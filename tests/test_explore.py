@@ -166,6 +166,87 @@ async def test_explore_known_tags_only_from_public_projects(client, db):
     assert alice.username == "alice"
 
 
+async def test_explore_search_matches_public_only(client, db):
+    # Search on /explore must respect the public-only contract — private
+    # matches must not leak.
+    alice = await make_user(
+        db, email="alice@test.com", username="alice", display_name="Alice"
+    )
+    db.add_all(
+        [
+            Project(
+                user_id=alice.id,
+                title="Public router jig",
+                slug="pub-router",
+                status=ProjectStatus.in_progress,
+                is_public=True,
+            ),
+            Project(
+                user_id=alice.id,
+                title="Private router plan",
+                slug="priv-router",
+                status=ProjectStatus.in_progress,
+                is_public=False,
+            ),
+            Project(
+                user_id=alice.id,
+                title="Public dovetails",
+                slug="pub-dove",
+                status=ProjectStatus.in_progress,
+                is_public=True,
+            ),
+        ]
+    )
+    await db.commit()
+
+    resp = await client.get("/explore?q=router")
+    assert resp.status_code == 200
+    assert "Public router jig" in resp.text
+    assert "Private router plan" not in resp.text
+    assert "Public dovetails" not in resp.text
+
+
+async def test_explore_search_combines_with_tag_any_mode(client, db):
+    # OR-mode tags + search compose: project must (match q) AND (carry any
+    # of the selected tags).
+    await make_user(
+        db, email="alice@test.com", username="alice", display_name="Alice"
+    )
+    await login(client, "alice")
+
+    for title, tags in [
+        ("Router jig printing", "3d-printing"),
+        ("Router jig woodworking", "woodworking"),
+        ("Unrelated print", "3d-printing"),
+    ]:
+        await post_form(
+            client,
+            "/projects",
+            {
+                "title": title,
+                "description": "",
+                "status": "in_progress",
+                "tags": tags,
+                "is_public": "1",
+            },
+            csrf_path="/projects/new",
+        )
+
+    resp = await client.get(
+        "/explore?q=router&tag=3d-printing&tag=woodworking&tag_mode=any"
+    )
+    assert "Router jig printing" in resp.text
+    assert "Router jig woodworking" in resp.text
+    assert "Unrelated print" not in resp.text
+
+
+async def test_explore_search_input_rendered(client, db):
+    # Explore's filter bar includes the search input too.
+    resp = await client.get("/explore")
+    assert resp.status_code == 200
+    assert 'name="q"' in resp.text
+
+
 async def test_explore_visibility_param_is_ignored(client, db):
     alice = await make_user(
         db, email="alice@test.com", username="alice", display_name="Alice"

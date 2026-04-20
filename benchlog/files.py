@@ -22,12 +22,25 @@ from sqlalchemy.orm import selectinload
 from benchlog.models import FileVersion, ProjectFile
 from benchlog.storage import LocalStorage
 
+# Cap decoded image pixels so a small crafted PNG can't balloon into
+# gigabytes of RAM when PIL decompresses it (classic "zip bomb" for
+# images). 64 megapixels covers a ~9000×7000 photo with headroom.
+Image.MAX_IMAGE_PIXELS = 64 * 1024 * 1024
+
 # Thumbnails are bounded so gallery grids stay snappy. WebP is small and
 # universally supported in modern browsers.
 _THUMB_MAX_DIMENSION = 600
 _THUMB_FORMAT = "WEBP"
 _THUMB_QUALITY = 82
 _CHUNK = 64 * 1024
+
+
+class UploadTooLarge(Exception):
+    """Raised mid-stream when an upload exceeds the configured byte cap.
+
+    The Content-Length pre-check in the route is advisory (client-supplied);
+    this exception is the authoritative enforcement.
+    """
 
 # Cap inline text previews so we don't stream a 50MB log into the page.
 _TEXT_PREVIEW_LIMIT = 256 * 1024
@@ -246,14 +259,26 @@ async def store_upload(
     version_number: int,
     source: BinaryIO,
     declared_mime: str,
+    max_bytes: int,
 ) -> StoredBlob:
     """Write the upload to storage, checksum it, generate thumbnail if image.
 
     Returns the metadata needed to construct the FileVersion row. The caller
-    persists that row in its own transaction.
+    persists that row in its own transaction. Raises UploadTooLarge if the
+    streamed body exceeds `max_bytes`.
     """
     storage_path = f"files/{file_id}/{version_number}"
-    size_bytes, checksum = await _save_with_checksum(storage, storage_path, source)
+    try:
+        size_bytes, checksum = await _save_with_checksum(
+            storage, storage_path, source, max_bytes=max_bytes
+        )
+    except UploadTooLarge:
+        # Clean up the partial blob so we don't leak disk on a rejected upload.
+        try:
+            await storage.delete(storage_path)
+        except (FileNotFoundError, ValueError):
+            pass
+        raise
 
     width: int | None = None
     height: int | None = None
@@ -273,10 +298,11 @@ async def store_upload(
                 thumbnail_path = await _save_thumbnail(
                     storage, file_id, version_number, oriented
                 )
-        except (UnidentifiedImageError, OSError):
+        except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
             # Fall through with image fields left null — declared_mime was
-            # wrong or the bytes are corrupt. The file still uploads OK; it
-            # just won't appear in the gallery.
+            # wrong, the bytes are corrupt, or the decoded pixel count
+            # exceeded MAX_IMAGE_PIXELS. The file still uploads OK; it just
+            # won't appear in the gallery.
             width = height = None
             thumbnail_path = None
             detected_mime = None
@@ -293,9 +319,18 @@ async def store_upload(
 
 
 async def _save_with_checksum(
-    storage: LocalStorage, storage_path: str, source: BinaryIO
+    storage: LocalStorage,
+    storage_path: str,
+    source: BinaryIO,
+    *,
+    max_bytes: int,
 ) -> tuple[int, str]:
-    """Save while computing sha256 and the byte count in one pass."""
+    """Save while computing sha256 and the byte count in one pass.
+
+    Enforces `max_bytes` on the actual streamed bytes — Content-Length is
+    client-supplied and can lie, so the only trustworthy cap is counted
+    during the copy.
+    """
     sha = hashlib.sha256()
     size = 0
 
@@ -306,6 +341,8 @@ async def _save_with_checksum(
                 sha.update(chunk)
             nonlocal size
             size += len(chunk)
+            if size > max_bytes:
+                raise UploadTooLarge()
             return chunk
 
     await storage.save(storage_path, _CountingHasher())

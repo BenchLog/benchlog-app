@@ -9,8 +9,9 @@ declared BEFORE `{file_id}`-parameterized routes, otherwise FastAPI matches
 the literal as a UUID param and 422s.
 """
 
-import io
 import mimetypes
+import os
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -22,12 +23,14 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.background import BackgroundTask
 
 from benchlog.config import settings
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.files import (
     StoredBlob,
+    UploadTooLarge,
     delete_blob,
     delete_folder,
     get_existing_file,
@@ -432,13 +435,20 @@ async def upload_file(
             target_file.description = description
 
     upload.file.seek(0)
-    blob: StoredBlob = await store_upload(
-        storage,
-        file_id=target_file.id,
-        version_number=version_number,
-        source=upload.file,
-        declared_mime=declared_mime,
-    )
+    try:
+        blob: StoredBlob = await store_upload(
+            storage,
+            file_id=target_file.id,
+            version_number=version_number,
+            source=upload.file,
+            declared_mime=declared_mime,
+            max_bytes=settings.max_upload_size,
+        )
+    except UploadTooLarge:
+        return fail(
+            f"File is too large (max {settings.max_upload_size // (1024 * 1024)} MB).",
+            status=413,
+        )
 
     version = FileVersion(
         file_id=target_file.id,
@@ -478,13 +488,35 @@ def _zip_filename(slug: str, folder_path: str) -> str:
     return f"{slug}-files-{safe}.zip"
 
 
-def _build_zip_bytes(members: list[tuple[str, bytes]]) -> bytes:
-    """Sync zip build — run in a thread to keep the event loop free."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for arcname, content in members:
-            zf.writestr(arcname, content)
-    return buf.getvalue()
+_ZIP_READ_CHUNK = 64 * 1024
+
+
+def _build_zip_tempfile(members: list[tuple[str, str]]) -> str:
+    """Stream sources into a zip on disk and return the temp path.
+
+    `members` is (arcname, absolute_source_path). Streaming keeps memory use
+    bounded regardless of project size — neither the source files nor the
+    zip itself are fully resident in RAM. Caller is responsible for deleting
+    the returned path.
+    """
+    fd, tmp_path = tempfile.mkstemp(prefix="benchlog-zip-", suffix=".zip")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for arcname, source_path in members:
+                with (
+                    open(source_path, "rb") as src,
+                    zf.open(arcname, "w", force_zip64=True) as dst,
+                ):
+                    while chunk := src.read(_ZIP_READ_CHUNK):
+                        dst.write(chunk)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    return tmp_path
 
 
 @router.get("/u/{username}/{slug}/files/download-zip")
@@ -534,7 +566,7 @@ async def download_zip(
         raise HTTPException(status_code=404, detail="No files to download.")
 
     storage = get_storage()
-    members: list[tuple[str, bytes]] = []
+    members: list[tuple[str, str]] = []
     seen_names: set[str] = set()
     for f in files:
         if f.current_version is None:
@@ -549,27 +581,38 @@ async def download_zip(
         # Guard against accidental duplicates from a flattening edge case.
         if arcname in seen_names:
             continue
-        seen_names.add(arcname)
         try:
-            content = await storage.read(f.current_version.storage_path)
-        except (FileNotFoundError, ValueError):
+            source_path = storage.full_path(f.current_version.storage_path)
+        except ValueError:
             continue
-        members.append((arcname, content))
+        if not source_path.is_file():
+            continue
+        seen_names.add(arcname)
+        members.append((arcname, str(source_path)))
 
     if not members:
         raise HTTPException(status_code=404, detail="No files to download.")
 
-    zip_bytes = await to_thread.run_sync(_build_zip_bytes, members)
+    tmp_path = await to_thread.run_sync(_build_zip_tempfile, members)
     zip_name = _zip_filename(project.slug, folder_path)
-    return Response(
-        content=zip_bytes,
+
+    def _cleanup() -> None:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return FileResponse(
+        tmp_path,
         media_type="application/zip",
         headers={
             "Content-Disposition": (
                 f'attachment; filename="{zip_name}"; '
                 f"filename*=UTF-8''{quote(zip_name)}"
             ),
+            "X-Content-Type-Options": "nosniff",
         },
+        background=BackgroundTask(_cleanup),
     )
 
 
@@ -869,6 +912,9 @@ async def download_file(
             "Content-Disposition": (
                 f"attachment; filename=\"{file.filename}\"; filename*=UTF-8''{encoded}"
             ),
+            # The stored mime_type originates from the uploader's browser —
+            # don't let old clients re-sniff an HTML payload into rendering.
+            "X-Content-Type-Options": "nosniff",
         },
     )
 
@@ -896,6 +942,7 @@ async def file_thumbnail(
     return FileResponse(
         storage.full_path(file.current_version.thumbnail_path),
         media_type="image/webp",
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 
@@ -932,13 +979,17 @@ async def upload_new_version(
     storage = get_storage()
     version_number = await next_version_number(db, file.id)
     upload.file.seek(0)
-    blob = await store_upload(
-        storage,
-        file_id=file.id,
-        version_number=version_number,
-        source=upload.file,
-        declared_mime=declared_mime,
-    )
+    try:
+        blob = await store_upload(
+            storage,
+            file_id=file.id,
+            version_number=version_number,
+            source=upload.file,
+            declared_mime=declared_mime,
+            max_bytes=settings.max_upload_size,
+        )
+    except UploadTooLarge:
+        raise HTTPException(status_code=413, detail="File too large.")
 
     version = FileVersion(
         file_id=file.id,

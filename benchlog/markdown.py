@@ -36,6 +36,29 @@ def render(text: str) -> str:
     return _md.render(text or "")
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def plain_excerpt(text: str | None, max_len: int = 200) -> str:
+    """Markdown → plain-text single-line excerpt, capped at `max_len`.
+
+    Used for meta description / og:description where a paragraph of
+    pretty-printed prose would be noise. Renders markdown so things like
+    `**bold**` become `bold` (not literal asterisks), strips tags, folds
+    whitespace, truncates on a word boundary with an ellipsis.
+    """
+    if not text:
+        return ""
+    html = _md.render(text)
+    stripped = _TAG_RE.sub("", html)
+    flat = _WS_RE.sub(" ", stripped).strip()
+    if len(flat) <= max_len:
+        return flat
+    cut = flat[: max_len + 1].rsplit(" ", 1)[0].rstrip(",.;:—-")
+    return f"{cut}…"
+
+
 _FILES_LINK_RE = re.compile(
     r'(<a\s[^>]*?)href="files/([^"]*)"',
     re.IGNORECASE,

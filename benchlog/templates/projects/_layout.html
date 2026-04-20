@@ -2,6 +2,21 @@
    tab bar once, and lets child templates drop their content into the
    `project_content` block. Used by overview/updates/update-detail. #}
 {% extends "base.html" %}
+{% block head_meta %}
+    {# OG / Twitter preview tags — public projects only. Private-project URLs
+       are shared direct-link-only; rendering a preview card on those would
+       leak the title/description to anyone the URL is forwarded to. #}
+    {% if project.is_public %}
+        {% set _cover = project.cover_file if (project.cover_file and project.cover_file.current_version and project.cover_file.current_version.is_image) else None %}
+        {% with
+            title = project.title,
+            description = project.description|excerpt,
+            url = ('/u/' ~ project.user.username ~ '/' ~ project.slug)|absolute_url,
+            image = (('/u/' ~ project.user.username ~ '/' ~ project.slug ~ '/files/' ~ _cover.id ~ '/download')|absolute_url) if _cover else None,
+            og_type = 'article'
+        %}{% include "components/_meta_og.html" %}{% endwith %}
+    {% endif %}
+{% endblock %}
 {% block content %}
 {% include "components/_project_header.html" %}
 {% include "components/_project_tabs.html" %}

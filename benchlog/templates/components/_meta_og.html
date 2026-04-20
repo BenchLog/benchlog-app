@@ -1,0 +1,30 @@
+{# Social-preview meta tags (OpenGraph + Twitter Card).
+   Args (all strings unless noted):
+     title         — the og:title / twitter:title (falls back to <title>)
+     description   — og:description / twitter:description / meta description
+     url           — canonical absolute URL (og:url)
+     image         — absolute image URL (optional — omit for text-only cards)
+     og_type       — "article" (default), "profile", "website", etc.
+
+   Twitter reads og:* as fallback for most fields, so we only emit
+   twitter-specific overrides for `twitter:card`. That keeps the tag list
+   short and consistent with common practice. #}
+{%- if description %}
+<meta name="description" content="{{ description }}">
+{%- endif %}
+<meta property="og:site_name" content="{{ site_name }}">
+<meta property="og:title" content="{{ title }}">
+{%- if description %}
+<meta property="og:description" content="{{ description }}">
+{%- endif %}
+{%- if url %}
+<meta property="og:url" content="{{ url }}">
+<link rel="canonical" href="{{ url }}">
+{%- endif %}
+<meta property="og:type" content="{{ og_type or 'article' }}">
+{%- if image %}
+<meta property="og:image" content="{{ image }}">
+<meta name="twitter:card" content="summary_large_image">
+{%- else %}
+<meta name="twitter:card" content="summary">
+{%- endif %}

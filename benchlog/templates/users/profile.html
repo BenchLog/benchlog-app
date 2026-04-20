@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ profile_user.display_name }} (@{{ profile_user.username }}) · BenchLog{% endblock %}
+{% block head_meta %}
+    {% with
+        title = profile_user.display_name ~ ' (@' ~ profile_user.username ~ ')',
+        description = profile_user.bio|excerpt,
+        url = ('/u/' ~ profile_user.username)|absolute_url,
+        og_type = 'profile'
+    %}{% include "components/_meta_og.html" %}{% endwith %}
+{% endblock %}
 {% block content %}
 
 {# Field Notebook palette: cream surface + rust accents. Placeholder avatar

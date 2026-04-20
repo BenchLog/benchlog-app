@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ request.session.csrf_token }}">
     <title>{% block title %}BenchLog{% endblock %}</title>
+    {% block head_meta %}{% endblock %}
     <script>
       (() => {
         const pref = localStorage.getItem("benchlog-theme") || "system";

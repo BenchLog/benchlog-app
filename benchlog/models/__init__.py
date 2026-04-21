@@ -1,5 +1,6 @@
 from benchlog.models.audit_event import AuditEvent
 from benchlog.models.base import Base
+from benchlog.models.category import Category, ProjectCategory
 from benchlog.models.email_token import EmailToken
 from benchlog.models.file import FileVersion, ProjectFile
 from benchlog.models.link import LinkType, ProjectLink
@@ -16,12 +17,14 @@ from benchlog.models.webauthn_credential import WebAuthnCredential
 __all__ = [
     "AuditEvent",
     "Base",
+    "Category",
     "EmailToken",
     "FileVersion",
     "LinkType",
     "OIDCIdentity",
     "OIDCProvider",
     "Project",
+    "ProjectCategory",
     "ProjectFile",
     "ProjectLink",
     "ProjectStatus",

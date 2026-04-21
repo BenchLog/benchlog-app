@@ -1,4 +1,5 @@
 import re
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -7,11 +8,23 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from benchlog.categories import (
+    get_categories_flat,
+    set_project_categories,
+)
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.files import get_project_file_index, get_project_file_lookup
 from benchlog.markdown import render_for_project
-from benchlog.models import Project, ProjectFile, ProjectStatus, ProjectTag, Tag, User
+from benchlog.models import (
+    Project,
+    ProjectCategory,
+    ProjectFile,
+    ProjectStatus,
+    ProjectTag,
+    Tag,
+    User,
+)
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -79,6 +92,32 @@ def _clean_tag_list(raw: list[str] | None) -> list[str]:
     return out
 
 
+def _clean_category_list(raw: list[str] | None) -> list[str]:
+    """Normalize + dedupe a raw ?category=... list; drop non-UUID values.
+
+    Categories filter by UUID (see benchlog/categories.py for rationale —
+    slugs aren't globally unique because of the `(parent_id, slug)` scope).
+    Forgiving on bad URLs: silently skip anything unparseable.
+    """
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in raw:
+        if not value:
+            continue
+        try:
+            parsed = uuid.UUID(str(value))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        s = str(parsed)
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def _clean_visibility(raw: str | None) -> str:
     """Coerce ?visibility= to one of {'all','public','private'}. Unknown → 'all'."""
     if raw in VISIBILITY_CHOICES:
@@ -93,6 +132,11 @@ def _status_options() -> list[tuple[str, str]]:
 def _clean_tag_mode(raw: str | None) -> str:
     """Normalize the tag-match mode. Default "all" preserves legacy behaviour
     when callers don't pass anything."""
+    return "any" if raw == "any" else "all"
+
+
+def _clean_category_mode(raw: str | None) -> str:
+    """Same shape as `_clean_tag_mode` but for categories. Default "all"."""
     return "any" if raw == "any" else "all"
 
 
@@ -159,8 +203,10 @@ def _apply_filter_query(
     statuses: list[str],
     tags: list[str],
     tag_mode: str = "all",
+    categories: list[str] | None = None,
+    category_mode: str = "all",
 ):
-    """Apply the shared status/tag filters to a Project select.
+    """Apply the shared status/tag/category filters to a Project select.
 
     - ``statuses`` empty → exclude archived (default list behaviour).
     - ``statuses`` non-empty → keep only those statuses.
@@ -168,6 +214,11 @@ def _apply_filter_query(
       every selected slug. ``tag_mode="any"`` → OR: project must carry at
       least one of the selected slugs (useful for corralling spelling
       variants like "3d-printing" / "3d-printed" on Explore).
+    - ``categories`` with ``category_mode="all"`` (default) → AND: project
+      must be assigned to every selected category. ``category_mode="any"``
+      → OR: project must be assigned to at least one. Curated taxonomies
+      still benefit from the "any" escape — e.g. browsing across siblings
+      under the same parent without manually clicking each.
     """
     if statuses:
         query = query.where(Project.status.in_(statuses))
@@ -190,6 +241,22 @@ def _apply_filter_query(
         # "any" mode: no HAVING — the IN subquery already returns project ids
         # with at least one matching tag.
         query = query.where(Project.id.in_(matching))
+
+    if categories:
+        # Same subquery shape as tags. Using ProjectCategory directly
+        # avoids touching the raise_on_sql `Project.categories` collection.
+        cat_match = (
+            select(ProjectCategory.project_id)
+            .where(ProjectCategory.category_id.in_(categories))
+        )
+        if category_mode == "all":
+            cat_match = cat_match.group_by(ProjectCategory.project_id).having(
+                func.count(func.distinct(ProjectCategory.category_id))
+                == len(categories)
+            )
+        # "any" mode: no HAVING — the IN subquery already returns project
+        # ids with at least one matching category.
+        query = query.where(Project.id.in_(cat_match))
     return query
 
 
@@ -202,6 +269,7 @@ def _empty_form_values() -> dict:
         "pinned": False,
         "is_public": False,
         "tags": "",
+        "categories": [],
     }
 
 
@@ -214,6 +282,7 @@ def _form_values_from_project(project: Project) -> dict:
         "pinned": project.pinned,
         "is_public": project.is_public,
         "tags": ", ".join(tag.slug for tag in project.tags),
+        "categories": [str(c.id) for c in project.categories],
     }
 
 
@@ -226,6 +295,7 @@ def _form_values_from_submission(
     pinned: str | None,
     is_public: str | None,
     tags: str,
+    categories: list[str] | None = None,
 ) -> dict:
     return {
         "title": title,
@@ -235,6 +305,7 @@ def _form_values_from_submission(
         "pinned": bool(pinned),
         "is_public": bool(is_public),
         "tags": tags,
+        "categories": _clean_category_list(categories or []),
     }
 
 
@@ -249,6 +320,8 @@ async def _render_form(
     status_code: int = 200,
 ):
     known_tags = await get_user_tag_slugs(db, user.id)
+    # Full, admin-curated taxonomy — the picker is shared, not user-scoped.
+    known_categories = await get_categories_flat(db)
     # Editors scoped to a project expose a `files/…` typeahead sourced from
     # this index. New projects have no files yet, so send an empty list —
     # the client-side code treats that as "enable typeahead but no matches".
@@ -265,6 +338,7 @@ async def _render_form(
             "statuses": STATUS_VALUES,
             "error": error,
             "known_tags": known_tags,
+            "known_categories": known_categories,
             "file_index": file_index,
         },
         status_code=status_code,
@@ -280,6 +354,8 @@ async def list_projects(
     status: Annotated[list[str] | None, Query()] = None,
     tag: Annotated[list[str] | None, Query()] = None,
     tag_mode: Annotated[str | None, Query()] = None,
+    category: Annotated[list[str] | None, Query()] = None,
+    category_mode: Annotated[str | None, Query()] = None,
     visibility: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
     user: User = Depends(require_user),
@@ -288,6 +364,8 @@ async def list_projects(
     current_statuses = _clean_status_list(status)
     current_tags = _clean_tag_list(tag)
     current_tag_mode = _clean_tag_mode(tag_mode)
+    current_categories = _clean_category_list(category)
+    current_category_mode = _clean_category_mode(category_mode)
     current_visibility = _clean_visibility(visibility)
     current_q = _clean_q(q)
 
@@ -296,6 +374,7 @@ async def list_projects(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.categories),
             selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .where(Project.user_id == user.id)
@@ -305,6 +384,8 @@ async def list_projects(
         statuses=current_statuses,
         tags=current_tags,
         tag_mode=current_tag_mode,
+        categories=current_categories,
+        category_mode=current_category_mode,
     )
     query = _apply_search_query(query, q=current_q)
     if current_visibility == "public":
@@ -327,6 +408,13 @@ async def list_projects(
     projects = list(result.scalars().unique().all())
 
     known_tags = await get_user_tag_slugs(db, user.id)
+    # Flat option list for the filter-bar combobox — breadcrumb-labelled,
+    # matches the shape the shared `_category_combobox.html` partial expects.
+    category_options = await get_categories_flat(db)
+    # Category chip tooltips / detail breadcrumbs all read from one flat
+    # {id: "Parent › Child"} dict. Build once and pass to the card partial.
+    all_cats = [c for p in projects for c in p.categories]
+    category_breadcrumbs = await _breadcrumbs_for(db, all_cats)
 
     return templates.TemplateResponse(
         request,
@@ -338,15 +426,20 @@ async def list_projects(
             "current_statuses": current_statuses,
             "current_tags": current_tags,
             "current_tag_mode": current_tag_mode,
+            "current_categories": current_categories,
+            "current_category_mode": current_category_mode,
             "current_visibility": current_visibility,
             "current_q": current_q,
             "known_tags": known_tags,
+            "category_options": category_options,
+            "category_breadcrumbs": category_breadcrumbs,
             "status_options": _status_options(),
             "status_labels": STATUS_LABELS,
             "base_url": "/projects",
             "is_explore": False,
             "show_visibility": True,
             "tag_href_prefix": "/projects",
+            "category_href_prefix": "/projects",
         },
     )
 
@@ -377,6 +470,7 @@ async def create_project(
     pinned: str | None = Form(None),
     is_public: str | None = Form(None),
     tags: str = Form(""),
+    category: list[str] | None = Form(None),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -388,6 +482,7 @@ async def create_project(
         pinned=pinned,
         is_public=is_public,
         tags=tags,
+        categories=category or [],
     )
 
     async def fail(msg: str):
@@ -418,10 +513,13 @@ async def create_project(
         pinned=values["pinned"],
         is_public=values["is_public"],
     )
-    # Empty list initializes the relationship so set_project_tags can diff it.
+    # Empty list initializes the relationships so the helpers can assign
+    # through them without tripping raise_on_sql lazy loads.
     project.tags = []
+    project.categories = []
     db.add(project)
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
+    await set_project_categories(db, project, values["categories"])
     await db.commit()
     return RedirectResponse(f"/u/{user.username}/{final_slug}", status_code=302)
 
@@ -447,6 +545,10 @@ async def project_detail(
     # File index only matters for the inline description editor (owner-only),
     # so skip the query entirely for guests / non-owners.
     file_index = await get_project_file_index(db, project.id) if is_owner else None
+    # Full category breadcrumbs for the header chips — `Parent › Child`
+    # labels come from this flat lookup rather than walking `parent`
+    # (raise_on_sql guards against that).
+    category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -456,9 +558,24 @@ async def project_detail(
             "project": project,
             "is_owner": is_owner,
             "tag_href_prefix": "/explore",
+            "category_href_prefix": "/explore",
+            "category_breadcrumbs": category_breadcrumbs,
             "file_index": file_index,
         },
     )
+
+
+async def _breadcrumbs_for(db: AsyncSession, cats) -> dict[str, str]:
+    """Return ``{category_id_str: 'Parent › Child'}`` for the given cats.
+
+    Short-circuits to empty dict when no categories are attached so callers
+    don't have to branch. Hits `get_categories_flat` once and filters down.
+    """
+    if not cats:
+        return {}
+    flat = await get_categories_flat(db)
+    by_id = {str(row["id"]): row["breadcrumb"] for row in flat}
+    return {str(c.id): by_id.get(str(c.id), c.name) for c in cats}
 
 
 @router.get("/u/{username}/{slug}/edit")
@@ -473,7 +590,10 @@ async def edit_project_form(
         raise HTTPException(status_code=404)
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.tags))
+        .options(
+            selectinload(Project.tags),
+            selectinload(Project.categories),
+        )
         .where(Project.slug == slug, Project.user_id == user.id)
     )
     project = result.scalar_one_or_none()
@@ -501,6 +621,7 @@ async def update_project(
     pinned: str | None = Form(None),
     is_public: str | None = Form(None),
     tags: str = Form(""),
+    category: list[str] | None = Form(None),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -508,7 +629,10 @@ async def update_project(
         raise HTTPException(status_code=404)
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.tags))
+        .options(
+            selectinload(Project.tags),
+            selectinload(Project.categories),
+        )
         .where(Project.slug == slug, Project.user_id == user.id)
     )
     project = result.scalar_one_or_none()
@@ -523,6 +647,7 @@ async def update_project(
         pinned=pinned,
         is_public=is_public,
         tags=tags,
+        categories=category or [],
     )
 
     async def fail(msg: str):
@@ -552,6 +677,7 @@ async def update_project(
     project.pinned = values["pinned"]
     project.is_public = values["is_public"]
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
+    await set_project_categories(db, project, values["categories"])
     await db.commit()
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}", status_code=302

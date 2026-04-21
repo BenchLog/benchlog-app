@@ -1,0 +1,53 @@
+{% extends "admin/_layout.html" %}
+{% block title %}{% if category %}Edit {{ category.name }}{% else %}New category{% endif %} · Admin{% endblock %}
+{% block admin_content %}
+<div class="meta mb-2">
+    <a href="/admin/categories" class="hover:text-rust">Categories</a> /
+    {% if category %}Edit {{ category.name }}{% else %}New{% endif %}
+</div>
+<h2 class="text-xl mb-4">{% if category %}Edit category{% else %}New category{% endif %}</h2>
+
+{% if error %}
+<div class="card max-w-xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">{{ error }}</div>
+{% endif %}
+
+<form method="post"
+      action="{% if category %}/admin/categories/{{ category.id }}{% else %}/admin/categories{% endif %}"
+      class="card max-w-xl space-y-4">
+    {% include "components/_csrf.html" %}
+
+    <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" required maxlength="120"
+               value="{{ form_values.name }}" autofocus>
+    </div>
+    <div>
+        <label for="slug">Slug</label>
+        <input id="slug" name="slug" type="text" maxlength="120"
+               value="{{ form_values.slug }}"
+               placeholder="auto-generated from name">
+        <p class="meta mt-1">Lowercase, hyphenated. Must be unique under the chosen parent.</p>
+    </div>
+    <div>
+        <label for="parent_id">Parent</label>
+        <select id="parent_id" name="parent_id">
+            <option value="">— No parent (root) —</option>
+            {% for opt in parent_choices %}
+            <option value="{{ opt.id }}"
+                    {% if form_values.parent_id == (opt.id|string) %}selected{% endif %}>
+                {{ opt.breadcrumb }}
+            </option>
+            {% endfor %}
+        </select>
+        {% if category %}
+        <p class="meta mt-1">A node can't be moved under itself or any of its descendants.</p>
+        {% endif %}
+    </div>
+    <div class="flex gap-2">
+        <button type="submit" class="btn-primary text-sm">
+            {% if category %}Save changes{% else %}Create category{% endif %}
+        </button>
+        <a href="/admin/categories" class="btn-ghost text-sm">Cancel</a>
+    </div>
+</form>
+{% endblock %}

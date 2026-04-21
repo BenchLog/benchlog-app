@@ -1,0 +1,566 @@
+{% extends "admin/_layout.html" %}
+{% block title %}Categories · Admin{% endblock %}
+{% block admin_content %}
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <div>
+        <h2 class="text-xl">Categories</h2>
+        <p class="meta">Curated taxonomy. Projects can belong to multiple categories.</p>
+    </div>
+    <button type="button" class="btn-primary text-sm"
+            data-category-edit-trigger
+            data-category-mode="new"
+            data-category-parent-id="">
+        <i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i>
+        New root category
+    </button>
+</div>
+
+{% if error %}
+<div class="card mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">{{ error }}</div>
+{% endif %}
+{% if notice %}
+<div class="card mb-4 border-rust text-rust-deep bg-rust/5">{{ notice }}</div>
+{% endif %}
+
+{# Category tree rendered as a file-manager-style table. Reuses the
+   `.file-tree-*` utility classes so hover actions, indentation, and
+   row rhythm match the project files browser verbatim. #}
+{% macro render_node(node, depth) %}
+<tr class="file-tree-row-folder category-row"
+    data-category-id="{{ node.id }}"
+    data-parent-id="{{ node.parent_id or '' }}"
+    data-category-name="{{ node.name }}"
+    data-category-slug="{{ node.slug }}"
+    draggable="true">
+    <td class="file-tree-name" style="--indent: {{ depth }};">
+        <div class="file-tree-name-row">
+            <span class="file-tree-chevron-spacer" aria-hidden="true"></span>
+            <span class="file-tree-icon">
+                <i data-lucide="{{ 'folder-tree' if node.children else 'tag' }}" class="w-3.5 h-3.5"></i>
+            </span>
+            <a href="/admin/categories/{{ node.id }}/edit"
+               class="file-tree-folder-label"
+               data-category-edit-trigger
+               data-category-mode="edit"
+               data-category-id="{{ node.id }}"
+               data-category-name="{{ node.name }}"
+               data-category-slug="{{ node.slug }}"
+               data-category-parent-id="{{ node.parent_id or '' }}"
+               title="Edit {{ node.name }}">{{ node.name }}</a>
+            <span class="file-tree-row-actions">
+                <button type="button"
+                        class="file-tree-action-btn"
+                        data-category-edit-trigger
+                        data-category-mode="new"
+                        data-category-parent-id="{{ node.id }}"
+                        title="Add child category" aria-label="Add child under {{ node.name }}">
+                    <i data-lucide="plus" class="w-3 h-3"></i>
+                </button>
+                <button type="button"
+                        class="file-tree-action-btn"
+                        data-category-edit-trigger
+                        data-category-mode="edit"
+                        data-category-id="{{ node.id }}"
+                        data-category-name="{{ node.name }}"
+                        data-category-slug="{{ node.slug }}"
+                        data-category-parent-id="{{ node.parent_id or '' }}"
+                        title="Edit" aria-label="Edit {{ node.name }}">
+                    <i data-lucide="pencil" class="w-3 h-3"></i>
+                </button>
+                {% set count = counts.get(node.id, 0) %}
+                {% set child_count = node.children|length %}
+                <form method="post" action="/admin/categories/{{ node.id }}/delete"
+                      data-confirm
+                      data-confirm-title="Delete category?"
+                      data-confirm-body="{% if child_count %}“{{ node.name }}” has {{ child_count }} child categor{{ 'y' if child_count == 1 else 'ies' }}. Remove those first.{% else %}Deleting “{{ node.name }}” will detach it from {{ count }} project{{ '' if count == 1 else 's' }}.{% endif %}"
+                      data-confirm-ok="Delete"
+                      class="inline">
+                    {% include "components/_csrf.html" %}
+                    <button type="submit" class="file-tree-action-btn"
+                            title="Delete" aria-label="Delete {{ node.name }}">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i>
+                    </button>
+                </form>
+            </span>
+        </div>
+    </td>
+    <td class="col-modified">
+        <code class="font-mono text-xs">{{ node.slug }}</code>
+    </td>
+    <td class="col-size">
+        {% set count = counts.get(node.id, 0) %}
+        {% if count %}{{ count }}{% else %}—{% endif %}
+    </td>
+</tr>
+{% for child in node.children %}
+    {{ render_node(child, depth + 1) }}
+{% endfor %}
+{% endmacro %}
+
+{% if tree %}
+<div class="card p-0 overflow-hidden">
+    <table class="file-tree w-full">
+        <thead>
+            <tr>
+                <th class="file-tree-name-col">Category</th>
+                <th class="col-modified">Slug</th>
+                <th class="col-size">Projects</th>
+            </tr>
+        </thead>
+        <tbody data-category-tree>
+            {% for node in tree %}
+                {{ render_node(node, 0) }}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="meta mt-2">Drag a row to reorder within its parent. Re-parenting lives in the edit form.</p>
+{% else %}
+<div class="card text-center py-8 meta">No categories yet. Start by adding a root category.</div>
+{% endif %}
+
+{# Edit/create modal — same pattern as the file manager's pencil modal.
+   Without JS the pencil links still hit the full edit page (href= is
+   preserved), so behaviour degrades cleanly. #}
+<dialog class="modal" data-category-edit-modal>
+    <form data-category-edit-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0" data-category-edit-title>Edit category</h2>
+            <button type="button" class="btn-ghost text-xs" data-category-edit-cancel aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div>
+            <label for="category-edit-name">Name</label>
+            <input id="category-edit-name" name="name" type="text" required maxlength="120" autocomplete="off">
+        </div>
+        <div>
+            <label for="category-edit-slug">Slug <span class="meta ml-2">optional</span></label>
+            <input id="category-edit-slug" name="slug" type="text" maxlength="120"
+                   autocomplete="off" placeholder="auto-generated from name">
+            <p class="meta mt-1">Lowercase, hyphenated. Must be unique under the chosen parent.</p>
+        </div>
+        <div>
+            <label for="category-edit-parent-search">Parent</label>
+            {# Searchable single-select combobox. Hidden input carries the
+               UUID the server expects; the visible text input is just a
+               filter. The `— No parent —` row (empty value) is the
+               implicit root option. Options come from the JSON script
+               block below so the JS can filter without an extra fetch. #}
+            {% set _parent_options = [{'id': '', 'breadcrumb': '— No parent (root) —'}] %}
+            {% for opt in parent_choices %}
+                {% set _ = _parent_options.append({'id': opt.id|string, 'breadcrumb': opt.breadcrumb}) %}
+            {% endfor %}
+            <div class="relative" data-parent-combobox>
+                {# Options JSON lives inside the combobox container so the
+                   JS can find it via `parentBox.querySelector(...)`. #}
+                <script type="application/json" data-parent-combobox-options>{{ _parent_options|tojson }}</script>
+                <input type="hidden" name="parent_id" value="" data-parent-combobox-value>
+                <div class="relative">
+                    <input id="category-edit-parent-search"
+                           type="text"
+                           autocomplete="off"
+                           placeholder="— No parent (root) —"
+                           data-parent-combobox-search
+                           aria-autocomplete="list"
+                           aria-expanded="false">
+                    <button type="button"
+                            class="filter-search-clear absolute right-2 top-1/2 -translate-y-1/2"
+                            data-parent-combobox-clear
+                            aria-label="Clear parent"
+                            hidden>&times;</button>
+                </div>
+                <div class="tag-input-dropdown"
+                     data-parent-combobox-dropdown
+                     role="listbox"
+                     hidden></div>
+            </div>
+            <p class="meta mt-1" data-category-edit-cycle-hint hidden>A node can't be moved under itself or any of its descendants.</p>
+        </div>
+        <p class="text-rust-deep text-sm m-0" data-category-edit-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-category-edit-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm" data-category-edit-save>Save</button>
+        </div>
+    </form>
+</dialog>
+
+<script src="{{ url_for('static', path='js/sortable.min.js') }}"></script>
+<script>
+(() => {
+  const tbody = document.querySelector('[data-category-tree]');
+  const csrfToken =
+    document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  // ---------- DnD reorder ---------- //
+  if (tbody && typeof Sortable !== 'undefined') {
+    function siblingIdsFor(parentId) {
+      const rows = tbody.querySelectorAll('tr[data-category-id]');
+      return [...rows]
+        .filter((r) => (r.dataset.parentId || '') === (parentId || ''))
+        .map((r) => r.dataset.categoryId);
+    }
+
+    async function persistOrder(parentId) {
+      const orderedIds = siblingIdsFor(parentId);
+      try {
+        const resp = await fetch('/admin/categories/reorder', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-Token': csrfToken,
+          },
+          body: JSON.stringify({
+            parent_id: parentId || null,
+            ordered_ids: orderedIds,
+          }),
+        });
+        if (!resp.ok) window.location.reload();
+      } catch (_) {
+        window.location.reload();
+      }
+    }
+
+    new Sortable(tbody, {
+      animation: 120,
+      draggable: '.category-row',
+      onMove: (evt) => {
+        const draggedParent = evt.dragged.dataset.parentId || '';
+        const relatedParent = evt.related.dataset.parentId || '';
+        return draggedParent === relatedParent;
+      },
+      onEnd: (evt) => {
+        if (evt.oldIndex === evt.newIndex) return;
+        const parentId = evt.item.dataset.parentId || '';
+        persistOrder(parentId);
+      },
+    });
+  }
+
+  // ---------- Edit/create modal ---------- //
+  //
+  // Pencil / + Child / "New root category" all open the same <dialog>.
+  // Form submits via fetch with Accept: application/json so the server
+  // returns 201/200/JSON errors instead of HTML redirects — lets us
+  // show inline errors and reload on success. Without JS the pencil's
+  // name-link still points at the full edit page, so it degrades.
+  const modal = document.querySelector('[data-category-edit-modal]');
+  const form = modal?.querySelector('[data-category-edit-form]');
+  const titleEl = modal?.querySelector('[data-category-edit-title]');
+  const nameEl = form?.querySelector('[name="name"]');
+  const slugEl = form?.querySelector('[name="slug"]');
+  const errorEl = form?.querySelector('[data-category-edit-error]');
+  const cycleHint = form?.querySelector('[data-category-edit-cycle-hint]');
+  const saveBtn = form?.querySelector('[data-category-edit-save]');
+
+  // ---------- Parent combobox ---------- //
+  //
+  // Single-select searchable dropdown over the parent_choices list.
+  // `parent_id` hidden input holds the UUID the server wants; the visible
+  // text input is just a filter. `disabledIds` blocks picking a category
+  // that would form a cycle (editing an existing node — can't re-parent
+  // under itself or any descendant).
+  const parentBox = form?.querySelector('[data-parent-combobox]');
+  const parentValueEl = parentBox?.querySelector('[data-parent-combobox-value]');
+  const parentSearchEl = parentBox?.querySelector('[data-parent-combobox-search]');
+  const parentClearEl = parentBox?.querySelector('[data-parent-combobox-clear]');
+  const parentDropdownEl = parentBox?.querySelector('[data-parent-combobox-dropdown]');
+  const parentOptionsRaw = parentBox?.querySelector('[data-parent-combobox-options]');
+  let parentOptions = [];
+  try {
+    parentOptions = JSON.parse(parentOptionsRaw?.textContent || '[]');
+  } catch (_) { parentOptions = []; }
+  let parentActiveIdx = -1;
+  let parentDisabled = new Set();
+  // When the user focuses the input (selection highlighted, not yet
+  // typed), the dropdown should show every option — filtering by the
+  // displayed breadcrumb would drop most options to a single match,
+  // defeating the "here's everything you can pick" affordance. Flipped
+  // back to false on the first `input` event.
+  let parentIgnoreValueOnRender = false;
+
+  function parentLabel(id) {
+    const opt = parentOptions.find((o) => o.id === (id || ''));
+    return opt ? opt.breadcrumb : '';
+  }
+
+  function parentVisibleOptions() {
+    const q = parentIgnoreValueOnRender
+      ? ''
+      : parentSearchEl.value.trim().toLowerCase();
+    const pool = parentOptions.filter((o) => !parentDisabled.has(o.id));
+    if (!q) return pool;
+    return pool.filter((o) => o.breadcrumb.toLowerCase().includes(q));
+  }
+
+  // Reposition the dropdown anchored to the search input. We body-anchor
+  // it with `position: fixed` (set via style) so the modal's `overflow:
+  // hidden` doesn't clip it — same trick the file-link autocomplete uses.
+  function positionParentDropdown() {
+    if (!parentSearchEl || !parentDropdownEl) return;
+    const rect = parentSearchEl.getBoundingClientRect();
+    parentDropdownEl.style.position = 'fixed';
+    parentDropdownEl.style.top = `${Math.round(rect.bottom + 4)}px`;
+    parentDropdownEl.style.left = `${Math.round(rect.left)}px`;
+    parentDropdownEl.style.width = `${Math.round(rect.width)}px`;
+    parentDropdownEl.style.zIndex = '1000';
+  }
+
+  function renderParentDropdown() {
+    const opts = parentVisibleOptions();
+    parentDropdownEl.innerHTML = '';
+    if (opts.length === 0) {
+      parentDropdownEl.hidden = true;
+      parentSearchEl.setAttribute('aria-expanded', 'false');
+      parentActiveIdx = -1;
+      return;
+    }
+    if (parentActiveIdx >= opts.length) parentActiveIdx = opts.length - 1;
+    if (parentActiveIdx < 0) parentActiveIdx = 0;
+    opts.forEach((opt, i) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tag-option' + (i === parentActiveIdx ? ' is-active' : '');
+      btn.setAttribute('role', 'option');
+      btn.setAttribute('aria-selected', i === parentActiveIdx ? 'true' : 'false');
+      btn.dataset.parentId = opt.id;
+      btn.textContent = opt.breadcrumb;
+      parentDropdownEl.appendChild(btn);
+    });
+    parentDropdownEl.hidden = false;
+    parentSearchEl.setAttribute('aria-expanded', 'true');
+    positionParentDropdown();
+  }
+
+  function setParentSelection(id) {
+    parentValueEl.value = id || '';
+    parentSearchEl.value = id ? parentLabel(id) : '';
+    parentClearEl.hidden = !id;
+  }
+
+  function pickParent(id) {
+    if (parentDisabled.has(id)) return;
+    setParentSelection(id);
+    parentDropdownEl.hidden = true;
+    parentSearchEl.setAttribute('aria-expanded', 'false');
+  }
+
+  if (parentBox) {
+    // Dropdown stays INSIDE the <dialog> so it rides the modal's
+    // top-layer — a body-appended element would stack below the dialog
+    // backdrop and come out dim + unreadable. `position: fixed` on the
+    // dropdown (set in `positionParentDropdown`) escapes the dialog's
+    // `max-height` clipping without needing to hoist it out.
+    parentSearchEl.addEventListener('focus', () => {
+      parentActiveIdx = 0;
+      // Select all the text on focus so the user sees what's currently
+      // picked and typing replaces it. If they click away without typing
+      // the selection stays intact (handled by blur + pickParent).
+      parentSearchEl.select();
+      parentIgnoreValueOnRender = true;
+      renderParentDropdown();
+    });
+    // Reposition on window scroll/resize so the dropdown tracks the
+    // input if the dialog contents scroll underneath.
+    window.addEventListener('scroll', () => {
+      if (!parentDropdownEl.hidden) positionParentDropdown();
+    }, true);
+    window.addEventListener('resize', () => {
+      if (!parentDropdownEl.hidden) positionParentDropdown();
+    });
+    parentSearchEl.addEventListener('input', () => {
+      // User is actually typing now — start honoring the filter text.
+      parentIgnoreValueOnRender = false;
+      parentActiveIdx = 0;
+      renderParentDropdown();
+    });
+    parentSearchEl.addEventListener('keydown', (e) => {
+      const opts = parentVisibleOptions();
+      if (e.key === 'ArrowDown') {
+        if (opts.length) { e.preventDefault(); parentActiveIdx = (parentActiveIdx + 1) % opts.length; renderParentDropdown(); }
+      } else if (e.key === 'ArrowUp') {
+        if (opts.length) { e.preventDefault(); parentActiveIdx = (parentActiveIdx - 1 + opts.length) % opts.length; renderParentDropdown(); }
+      } else if (e.key === 'Enter') {
+        if (opts.length && parentActiveIdx >= 0) {
+          e.preventDefault();
+          pickParent(opts[parentActiveIdx].id);
+        }
+      } else if (e.key === 'Escape') {
+        parentDropdownEl.hidden = true;
+        parentSearchEl.setAttribute('aria-expanded', 'false');
+        // Restore the previously-selected label on Esc (revert filter).
+        parentSearchEl.value = parentLabel(parentValueEl.value);
+      }
+    });
+    parentDropdownEl.addEventListener('mousedown', (e) => {
+      const btn = e.target.closest('[data-parent-id]');
+      if (btn) {
+        e.preventDefault();
+        pickParent(btn.dataset.parentId);
+      }
+    });
+    parentClearEl.addEventListener('click', (e) => {
+      e.preventDefault();
+      setParentSelection('');
+      parentSearchEl.focus();
+    });
+    parentSearchEl.addEventListener('blur', () => {
+      // Delay so a mousedown on a dropdown row still fires pickParent.
+      setTimeout(() => {
+        parentDropdownEl.hidden = true;
+        parentSearchEl.setAttribute('aria-expanded', 'false');
+        // Re-show the committed selection if the user blurred without
+        // picking anything — avoids leaving a stale filter string behind.
+        parentSearchEl.value = parentLabel(parentValueEl.value);
+      }, 120);
+    });
+  }
+
+  let currentAction = null;  // URL to POST to
+  let editingId = null;      // category id when editing, null when creating
+  // Cache of (category_id -> Set<descendant_id>) built from DOM parent_id
+  // links. Used to disable parent-select options that would form a cycle.
+  function buildDescendantMap() {
+    const rows = tbody?.querySelectorAll('tr[data-category-id]') || [];
+    const byParent = new Map();
+    rows.forEach((r) => {
+      const pid = r.dataset.parentId || '';
+      if (!byParent.has(pid)) byParent.set(pid, []);
+      byParent.get(pid).push(r.dataset.categoryId);
+    });
+    const descendants = {};
+    function collect(id) {
+      if (descendants[id]) return descendants[id];
+      const out = new Set();
+      for (const child of byParent.get(id) || []) {
+        out.add(child);
+        for (const d of collect(child)) out.add(d);
+      }
+      descendants[id] = out;
+      return out;
+    }
+    rows.forEach((r) => collect(r.dataset.categoryId));
+    return descendants;
+  }
+  const descendants = buildDescendantMap();
+
+  function openModal(trigger) {
+    if (!modal || !form) return;
+    const mode = trigger.dataset.categoryMode;
+    const parentId = trigger.dataset.categoryParentId || '';
+    const catId = trigger.dataset.categoryId || null;
+
+    if (mode === 'edit' && catId) {
+      editingId = catId;
+      currentAction = `/admin/categories/${catId}`;
+      titleEl.textContent = 'Edit category';
+      nameEl.value = trigger.dataset.categoryName || '';
+      slugEl.value = trigger.dataset.categorySlug || '';
+      setParentSelection(parentId);
+      cycleHint.hidden = false;
+    } else {
+      editingId = null;
+      currentAction = '/admin/categories';
+      titleEl.textContent = parentId ? 'New child category' : 'New root category';
+      nameEl.value = '';
+      slugEl.value = '';
+      setParentSelection(parentId);
+      cycleHint.hidden = true;
+    }
+
+    // Build the set of parent ids to block: self + all descendants (so a
+    // re-parent can't form a cycle). Server enforces this too; this just
+    // makes the offending options unreachable in the UI.
+    parentDisabled = new Set();
+    if (editingId) {
+      parentDisabled.add(editingId);
+      for (const d of descendants[editingId] || []) parentDisabled.add(d);
+    }
+
+    errorEl.hidden = true;
+    errorEl.textContent = '';
+    saveBtn.disabled = false;
+    modal.showModal();
+    requestAnimationFrame(() => {
+      nameEl.focus();
+      nameEl.select();
+    });
+  }
+
+  // Wire triggers — pencil/link/+Child all use the same data attrs.
+  document.querySelectorAll('[data-category-edit-trigger]').forEach((t) => {
+    t.addEventListener('click', (e) => {
+      e.preventDefault();
+      openModal(t);
+    });
+  });
+
+  modal?.querySelectorAll('[data-category-edit-cancel]').forEach((btn) => {
+    btn.addEventListener('click', () => modal.close());
+  });
+
+  // On close: hide the combobox dropdown + kick focus off the row
+  // action button that opened the modal. Without that blur, the browser
+  // returns focus to the trigger on close, and `:focus-within` keeps
+  // that row's action buttons visible until the user clicks elsewhere
+  // — same quirk the file manager solves this way.
+  modal?.addEventListener('close', () => {
+    if (parentDropdownEl) {
+      parentDropdownEl.hidden = true;
+    }
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active.closest('.file-tree-row-actions')
+    ) {
+      active.blur();
+    }
+  });
+
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentAction) return;
+    errorEl.hidden = true;
+    errorEl.textContent = '';
+    saveBtn.disabled = true;
+
+    const body = new URLSearchParams();
+    body.set('_csrf', csrfToken);
+    body.set('name', nameEl.value);
+    body.set('slug', slugEl.value);
+    body.set('parent_id', parentValueEl?.value || '');
+
+    try {
+      const resp = await fetch(currentAction, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+      if (resp.ok) {
+        // Reload so the tree re-renders with the new/updated row in the
+        // right position. Could patch the DOM in place, but a reload is
+        // much simpler and nobody's editing categories in a tight loop.
+        window.location.reload();
+        return;
+      }
+      let detail = 'Save failed.';
+      try {
+        const data = await resp.json();
+        if (data && typeof data.detail === 'string') detail = data.detail;
+      } catch (_) { /* keep default */ }
+      errorEl.textContent = detail;
+      errorEl.hidden = false;
+      saveBtn.disabled = false;
+    } catch (_) {
+      errorEl.textContent = 'Network error — please try again.';
+      errorEl.hidden = false;
+      saveBtn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

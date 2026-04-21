@@ -52,6 +52,7 @@ async def get_public_projects_for_user(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.categories),
             selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .where(

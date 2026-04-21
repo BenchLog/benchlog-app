@@ -2,23 +2,28 @@
   Shared project-filter bar for /projects and /explore.
 
   Horizontal top-bar layout: search input · status pills · tags popover ·
-  visibility segmented control · clear-all link. Controls live inside a
-  single GET form so the URL is always the source of truth. Status and
-  visibility auto-submit on click; the tags popover has its own Apply
-  button because selecting multiple tags is a multi-step action and
-  firing a submit on every checkbox click would be chatty.
+  categories popover · visibility segmented control · clear-all link.
+  Controls live inside a single GET form so the URL is always the source
+  of truth. Status and visibility auto-submit on click; the tags and
+  categories popovers have snapshot-submit-on-close so users can tick
+  several boxes without the page reloading under them.
 
   Args (via `{% with %}` at include time):
-    current_statuses   — list[str] of active status values
-    current_tags       — list[str] of active tag slugs
-    current_visibility — "all" | "public" | "private" (ignored if not shown)
-    current_q          — str; active full-text search query (empty when absent)
-    known_tags         — list[str] of tag slugs offered in the popover
-    status_options     — list[(value, label)] rendered as pill toggles
-    base_url           — "/projects" or "/explore"; form action + Clear-all link
-    show_visibility    — bool; gates the visibility segmented control
+    current_statuses     — list[str] of active status values
+    current_tags         — list[str] of active tag slugs
+    current_tag_mode     — "all" | "any" for multi-tag match
+    current_categories   — list[str] of active category UUIDs
+    current_category_mode — "all" | "any" for multi-category match
+    current_visibility   — "all" | "public" | "private" (ignored if not shown)
+    current_q            — str; active full-text search query (empty when absent)
+    known_tags           — list[str] of tag slugs offered in the popover
+    category_options     — flat list of {id, name, breadcrumb, breadcrumb_parts}
+                           offered in the categories popover combobox
+    status_options       — list[(value, label)] rendered as pill toggles
+    base_url             — "/projects" or "/explore"; form action + Clear-all
+    show_visibility      — bool; gates the visibility segmented control
 #}
-{% set _active_count = (current_statuses|length) + (current_tags|length)
+{% set _active_count = (current_statuses|length) + (current_tags|length) + (current_categories|length if current_categories else 0)
      + (1 if current_visibility not in (None, 'all') else 0)
      + (1 if current_q else 0) %}
 <form method="get" action="{{ base_url }}" class="filter-bar" data-filter-bar>
@@ -67,14 +72,10 @@
             <i data-lucide="chevron-down" class="w-3.5 h-3.5 filter-trigger-caret"></i>
         </summary>
         <div class="filter-popover-panel">
-            {% with name="tag", selected=current_tags, suggestions=known_tags, placeholder="Filter by tag…", multi_value=True, existing_only=True %}
-                {% include "components/_tag_combobox.html" %}
-            {% endwith %}
-            {# Any / All match-mode. Default "all" keeps legacy AND behaviour;
-               "any" is useful for corralling spelling variants on Explore
-               (e.g., "3d-printing" OR "3d-printed"). No-op with <2 tags but
-               harmless — skipping render there would mean extra JS to
-               show/hide as the user adds tags. #}
+            {# Any / All match-mode. Moved to the TOP of the popover so the
+               user can set their intent before picking tags — avoids the
+               "oh wait I meant OR" re-click after selecting. No-op with
+               <2 tags but harmless. #}
             <div class="filter-tag-mode">
                 <span class="filter-tag-mode-label">Match</span>
                 <div class="filter-segmented filter-segmented-sm" role="group" aria-label="Tag match mode">
@@ -87,8 +88,52 @@
                     {% endfor %}
                 </div>
             </div>
+            {% with name="tag", selected=current_tags, suggestions=known_tags, placeholder="Filter by tag…", multi_value=True, existing_only=True %}
+                {% include "components/_tag_combobox.html" %}
+            {% endwith %}
         </div>
     </details>
+
+    {% if category_options %}
+    <details class="filter-popover" data-filter-popover data-categories-popover>
+        <summary class="filter-trigger" aria-label="Filter by category">
+            <i data-lucide="folder-tree" class="w-3.5 h-3.5"></i>
+            <span>Categories</span>
+            {% if current_categories %}
+            <span class="filter-trigger-count">{{ current_categories|length }}</span>
+            {% endif %}
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 filter-trigger-caret"></i>
+        </summary>
+        <div class="filter-popover-panel">
+            {# Any / All match-mode at the top, mirrors the tag popover.
+               "any" is useful for grabbing a whole subtree in one shot —
+               e.g. pick multiple siblings under "3D Printing" and
+               browse anything matching any of them. #}
+            <div class="filter-tag-mode">
+                <span class="filter-tag-mode-label">Match</span>
+                <div class="filter-segmented filter-segmented-sm" role="group" aria-label="Category match mode">
+                    {% for value, label in [("all", "all"), ("any", "any")] %}
+                    <label class="filter-segment">
+                        <input type="radio" name="category_mode" value="{{ value }}"
+                               {% if (current_category_mode or 'all') == value %}checked{% endif %}>
+                        <span>{{ label }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            {# Searchable multi-select combobox — same UX as the project
+               form's category picker (breadcrumb pills, Lucide chevrons,
+               type-to-filter). Hidden `<input name="category">` per
+               selection; the outer GET form carries them through. #}
+            {% with name="category",
+                    selected_ids=current_categories,
+                    options=category_options,
+                    placeholder="Filter by category…" %}
+                {% include "components/_category_combobox.html" %}
+            {% endwith %}
+        </div>
+    </details>
+    {% endif %}
 
     {% if show_visibility %}
     <div class="filter-segmented" role="group" aria-label="Visibility">
@@ -138,6 +183,30 @@
           if (tagsPopover.open) {
             openSnapshot = tagsSnapshot();
           } else if (tagsSnapshot() !== openSnapshot) {
+            bar.submit();
+          }
+        });
+      }
+
+      // Categories popover: same snapshot pattern as tags — selection set
+      // AND any/all mode. The combobox emits one hidden `<input
+      // name="category">` per selected id; mode is a radio group.
+      const catsPopover = bar.querySelector("[data-categories-popover]");
+      if (catsPopover) {
+        const catsSnapshot = () => {
+          const ids = [...catsPopover.querySelectorAll('input[name="category"]')]
+            .map((i) => i.value).sort().join(",");
+          const modeEl = catsPopover.querySelector(
+            'input[name="category_mode"]:checked'
+          );
+          const mode = modeEl ? modeEl.value : "all";
+          return mode + "|" + ids;
+        };
+        let openCatSnapshot = catsSnapshot();
+        catsPopover.addEventListener("toggle", () => {
+          if (catsPopover.open) {
+            openCatSnapshot = catsSnapshot();
+          } else if (catsSnapshot() !== openCatSnapshot) {
             bar.submit();
           }
         });

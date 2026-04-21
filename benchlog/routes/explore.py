@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from benchlog.categories import get_categories_flat
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
 from benchlog.models import Project, ProjectFile, User
@@ -13,6 +14,8 @@ from benchlog.routes.projects import (
     STATUS_VALUES,
     _apply_filter_query,
     _apply_search_query,
+    _clean_category_list,
+    _clean_category_mode,
     _clean_q,
     _clean_status_list,
     _clean_tag_list,
@@ -32,6 +35,8 @@ async def explore(
     status: Annotated[list[str] | None, Query()] = None,
     tag: Annotated[list[str] | None, Query()] = None,
     tag_mode: Annotated[str | None, Query()] = None,
+    category: Annotated[list[str] | None, Query()] = None,
+    category_mode: Annotated[str | None, Query()] = None,
     q: Annotated[str | None, Query()] = None,
     user: User | None = Depends(current_user),
     db: AsyncSession = Depends(get_db),
@@ -39,6 +44,8 @@ async def explore(
     current_statuses = _clean_status_list(status)
     current_tags = _clean_tag_list(tag)
     current_tag_mode = _clean_tag_mode(tag_mode)
+    current_categories = _clean_category_list(category)
+    current_category_mode = _clean_category_mode(category_mode)
     current_q = _clean_q(q)
 
     query = (
@@ -46,6 +53,7 @@ async def explore(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.categories),
             selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
         )
         .where(Project.is_public.is_(True))
@@ -55,6 +63,8 @@ async def explore(
         statuses=current_statuses,
         tags=current_tags,
         tag_mode=current_tag_mode,
+        categories=current_categories,
+        category_mode=current_category_mode,
     )
     query = _apply_search_query(query, q=current_q)
     # With a query, sort by relevance (ts_rank_cd) and fall back to recency
@@ -73,6 +83,15 @@ async def explore(
     projects = list(result.scalars().unique().all())
 
     known_tags = await get_public_tag_slugs(db)
+    # Categories are shared across all projects so the whole taxonomy
+    # shows up in the filter regardless of which categories currently
+    # appear on public projects. An empty-result category is a fine
+    # answer — "no public projects in this bucket yet."
+    category_options = await get_categories_flat(db)
+    # Avoid a circular import by reusing the helper directly.
+    from benchlog.routes.projects import _breadcrumbs_for
+    all_cats = [c for p in projects for c in p.categories]
+    category_breadcrumbs = await _breadcrumbs_for(db, all_cats)
 
     return templates.TemplateResponse(
         request,
@@ -84,16 +103,21 @@ async def explore(
             "current_statuses": current_statuses,
             "current_tags": current_tags,
             "current_tag_mode": current_tag_mode,
+            "current_categories": current_categories,
+            "current_category_mode": current_category_mode,
             # Explore hardcodes visibility=public; expose it so the filter
             # partial can render a stable context without branching.
             "current_visibility": "all",
             "current_q": current_q,
             "known_tags": known_tags,
+            "category_options": category_options,
+            "category_breadcrumbs": category_breadcrumbs,
             "status_options": _status_options(),
             "status_labels": STATUS_LABELS,
             "base_url": "/explore",
             "is_explore": True,
             "show_visibility": False,
             "tag_href_prefix": "/explore",
+            "category_href_prefix": "/explore",
         },
     )

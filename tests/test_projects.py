@@ -1550,3 +1550,436 @@ async def test_deleting_user_cascades_to_projects(client, db):
 
     remaining = (await db.execute(select(Project))).scalars().all()
     assert remaining == []
+
+
+# ---------- categories ----------
+
+
+async def _seed_cat(db, **kwargs):
+    from benchlog.models import Category
+
+    cat = Category(**kwargs)
+    db.add(cat)
+    await db.commit()
+    await db.refresh(cat)
+    return cat
+
+
+async def test_create_project_with_categories(client, db):
+    import uuid as _uuid
+
+    from sqlalchemy.orm import selectinload
+
+    parent = await _seed_cat(db, slug="3d-printing", name="3D Printing")
+    fdm = await _seed_cat(
+        db, slug="fdm", name="FDM", parent_id=parent.id
+    )
+    assert isinstance(fdm.id, _uuid.UUID)
+
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "FDM Printer Upgrade",
+            "description": "",
+            "status": "idea",
+            "category": [str(fdm.id)],
+        },
+        csrf_path="/projects/new",
+    )
+
+    project = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.slug == "fdm-printer-upgrade")
+        )
+    ).scalar_one()
+    assert [c.slug for c in project.categories] == ["fdm"]
+
+
+async def test_edit_project_categories_replace_semantics(client, db):
+    from sqlalchemy.orm import selectinload
+
+    from benchlog.categories import set_project_categories
+
+    a = await _seed_cat(db, slug="a", name="A")
+    b = await _seed_cat(db, slug="b", name="B")
+    c = await _seed_cat(db, slug="c", name="C")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    project = Project(
+        user_id=user.id,
+        title="Iterating",
+        slug="iterating",
+        status=ProjectStatus.idea,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    await set_project_categories(db, project, [str(a.id), str(b.id)])
+    await db.commit()
+
+    await post_form(
+        client,
+        f"/u/alice/{project.slug}",
+        {
+            "title": "Iterating",
+            "slug": project.slug,
+            "description": "",
+            "status": "idea",
+            "category": [str(b.id), str(c.id)],
+        },
+        csrf_path=f"/u/alice/{project.slug}/edit",
+    )
+    # Identity map holds pre-request state with expire_on_commit=False.
+    db.expunge_all()
+    refreshed = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.id == project.id)
+        )
+    ).scalar_one()
+    assert sorted(cat.slug for cat in refreshed.categories) == ["b", "c"]
+
+
+async def test_project_form_renders_known_category_options(client, db):
+    parent = await _seed_cat(db, slug="woodworking", name="Woodworking")
+    await _seed_cat(db, slug="joinery", name="Joinery", parent_id=parent.id)
+
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await client.get("/projects/new")
+    assert 'data-category-input' in resp.text
+    assert 'Woodworking \u203a Joinery' in resp.text
+
+
+async def test_create_project_drops_unknown_category_ids_silently(client, db):
+    import uuid as _uuid
+
+    from sqlalchemy.orm import selectinload
+
+    real = await _seed_cat(db, slug="real", name="Real")
+
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    bogus_uuid = str(_uuid.uuid4())
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Silent Drop",
+            "description": "",
+            "status": "idea",
+            "category": [str(real.id), bogus_uuid, "not-a-uuid"],
+        },
+        csrf_path="/projects/new",
+    )
+
+    project = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.slug == "silent-drop")
+        )
+    ).scalar_one()
+    assert [c.slug for c in project.categories] == ["real"]
+
+
+async def test_list_filter_by_single_category(client, db):
+    from benchlog.categories import set_project_categories
+
+    wood = await _seed_cat(db, slug="woodworking", name="Woodworking")
+    elec = await _seed_cat(db, slug="electronics", name="Electronics")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    p_wood = Project(
+        user_id=user.id,
+        title="Wood Project",
+        slug="wood-project",
+        status=ProjectStatus.in_progress,
+    )
+    p_elec = Project(
+        user_id=user.id,
+        title="Elec Project",
+        slug="elec-project",
+        status=ProjectStatus.in_progress,
+    )
+    db.add_all([p_wood, p_elec])
+    await db.commit()
+    await db.refresh(p_wood)
+    await db.refresh(p_elec)
+    await set_project_categories(db, p_wood, [str(wood.id)])
+    await set_project_categories(db, p_elec, [str(elec.id)])
+    await db.commit()
+
+    resp = await client.get(f"/projects?category={wood.id}")
+    assert "Wood Project" in resp.text
+    assert "Elec Project" not in resp.text
+
+
+async def test_list_filter_by_multiple_categories_requires_all(client, db):
+    from benchlog.categories import set_project_categories
+
+    a = await _seed_cat(db, slug="a", name="A")
+    b = await _seed_cat(db, slug="b", name="B")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    both = Project(
+        user_id=user.id, title="Both", slug="both", status=ProjectStatus.idea
+    )
+    only_a = Project(
+        user_id=user.id, title="Only A", slug="only-a", status=ProjectStatus.idea
+    )
+    db.add_all([both, only_a])
+    await db.commit()
+    await db.refresh(both)
+    await db.refresh(only_a)
+    await set_project_categories(db, both, [str(a.id), str(b.id)])
+    await set_project_categories(db, only_a, [str(a.id)])
+    await db.commit()
+
+    resp = await client.get(f"/projects?category={a.id}&category={b.id}")
+    assert "Both" in resp.text
+    assert "Only A" not in resp.text
+
+
+async def test_list_filter_category_mode_any_is_union(client, db):
+    # With category_mode=any, a project matches when it carries ANY of the
+    # selected categories. Useful for "show me anything under the 3D
+    # Printing subtree" — pick FDM + Resin, flip to any.
+    from benchlog.categories import set_project_categories
+
+    a = await _seed_cat(db, slug="a", name="A")
+    b = await _seed_cat(db, slug="b", name="B")
+    c = await _seed_cat(db, slug="c", name="C")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    in_a = Project(
+        user_id=user.id, title="In A", slug="in-a", status=ProjectStatus.idea
+    )
+    in_b = Project(
+        user_id=user.id, title="In B", slug="in-b", status=ProjectStatus.idea
+    )
+    in_c = Project(
+        user_id=user.id, title="In C", slug="in-c", status=ProjectStatus.idea
+    )
+    db.add_all([in_a, in_b, in_c])
+    await db.commit()
+    for p in (in_a, in_b, in_c):
+        await db.refresh(p)
+    await set_project_categories(db, in_a, [str(a.id)])
+    await set_project_categories(db, in_b, [str(b.id)])
+    await set_project_categories(db, in_c, [str(c.id)])
+    await db.commit()
+
+    # any-mode: request A OR B → C is excluded, both A-only and B-only show.
+    resp = await client.get(
+        f"/projects?category={a.id}&category={b.id}&category_mode=any"
+    )
+    assert "In A" in resp.text
+    assert "In B" in resp.text
+    assert "In C" not in resp.text
+
+
+async def test_list_filter_category_mode_defaults_to_all(client, db):
+    # Omitting category_mode (or passing unknown value) keeps legacy AND
+    # so existing bookmarks / old URLs don't silently broaden.
+    from benchlog.categories import set_project_categories
+
+    a = await _seed_cat(db, slug="a", name="A")
+    b = await _seed_cat(db, slug="b", name="B")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+    both = Project(
+        user_id=user.id, title="Both", slug="both", status=ProjectStatus.idea
+    )
+    only_a = Project(
+        user_id=user.id, title="Only A", slug="only-a", status=ProjectStatus.idea
+    )
+    db.add_all([both, only_a])
+    await db.commit()
+    await db.refresh(both)
+    await db.refresh(only_a)
+    await set_project_categories(db, both, [str(a.id), str(b.id)])
+    await set_project_categories(db, only_a, [str(a.id)])
+    await db.commit()
+
+    # No category_mode → AND
+    resp = await client.get(f"/projects?category={a.id}&category={b.id}")
+    assert "Both" in resp.text
+    assert "Only A" not in resp.text
+    # Bogus category_mode → also AND
+    resp = await client.get(
+        f"/projects?category={a.id}&category={b.id}&category_mode=bogus"
+    )
+    assert "Both" in resp.text
+    assert "Only A" not in resp.text
+
+
+async def test_explore_filter_by_category_only_shows_public(client, db):
+    from benchlog.categories import set_project_categories
+
+    a = await _seed_cat(db, slug="a", name="A")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+
+    pub = Project(
+        user_id=user.id,
+        title="Pub",
+        slug="pub",
+        status=ProjectStatus.in_progress,
+        is_public=True,
+    )
+    priv = Project(
+        user_id=user.id,
+        title="Priv",
+        slug="priv",
+        status=ProjectStatus.in_progress,
+        is_public=False,
+    )
+    db.add_all([pub, priv])
+    await db.commit()
+    await db.refresh(pub)
+    await db.refresh(priv)
+    await set_project_categories(db, pub, [str(a.id)])
+    await set_project_categories(db, priv, [str(a.id)])
+    await db.commit()
+
+    resp = await client.get(f"/explore?category={a.id}")
+    assert "Pub" in resp.text
+    assert "Priv" not in resp.text
+
+
+async def test_filter_composes_with_status_and_tag(client, db):
+    from benchlog.categories import set_project_categories
+    from benchlog.tags import set_project_tags
+
+    a = await _seed_cat(db, slug="a", name="A")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    match = Project(
+        user_id=user.id,
+        title="Match",
+        slug="match",
+        status=ProjectStatus.completed,
+    )
+    wrong_status = Project(
+        user_id=user.id,
+        title="WrongStatus",
+        slug="wrong-status",
+        status=ProjectStatus.idea,
+    )
+    no_tag = Project(
+        user_id=user.id,
+        title="NoTag",
+        slug="no-tag",
+        status=ProjectStatus.completed,
+    )
+    db.add_all([match, wrong_status, no_tag])
+    await db.commit()
+    for p in (match, wrong_status, no_tag):
+        await db.refresh(p, ["tags"])  # raise_on_sql — preload before assign
+        await set_project_categories(db, p, [str(a.id)])
+    await set_project_tags(db, match, ["woodworking"])
+    await set_project_tags(db, wrong_status, ["woodworking"])
+    await db.commit()
+
+    resp = await client.get(
+        f"/projects?category={a.id}&status=completed&tag=woodworking"
+    )
+    assert "Match" in resp.text
+    assert "WrongStatus" not in resp.text
+    assert "NoTag" not in resp.text
+
+
+async def test_project_card_shows_leaf_name_with_breadcrumb_tooltip(client, db):
+    from benchlog.categories import set_project_categories
+
+    parent = await _seed_cat(db, slug="3d-printing", name="3D Printing")
+    fdm = await _seed_cat(
+        db, slug="fdm", name="FDM", parent_id=parent.id
+    )
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    project = Project(
+        user_id=user.id,
+        title="Printer",
+        slug="printer",
+        status=ProjectStatus.idea,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    await set_project_categories(db, project, [str(fdm.id)])
+    await db.commit()
+
+    resp = await client.get("/projects")
+    # Leaf name "FDM" appears on the chip with breadcrumb in title=.
+    assert "FDM" in resp.text
+    assert 'title="3D Printing \u203a FDM"' in resp.text
+
+
+async def test_project_header_shows_full_breadcrumb_chips(client, db):
+    from benchlog.categories import set_project_categories
+
+    parent = await _seed_cat(db, slug="3d-printing", name="3D Printing")
+    fdm = await _seed_cat(
+        db, slug="fdm", name="FDM", parent_id=parent.id
+    )
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    project = Project(
+        user_id=user.id,
+        title="Printer",
+        slug="printer",
+        status=ProjectStatus.idea,
+        is_public=True,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    await set_project_categories(db, project, [str(fdm.id)])
+    await db.commit()
+
+    resp = await client.get("/u/alice/printer")
+    # Full breadcrumb in the chip body for the detail header.
+    assert "3D Printing \u203a FDM" in resp.text
+
+
+async def test_card_hides_category_row_when_empty(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bare",
+            slug="bare",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects")
+    assert 'aria-label="Categories"' not in resp.text

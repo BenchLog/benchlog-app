@@ -89,6 +89,7 @@ async def get_project_by_username_and_slug(
         .options(
             selectinload(Project.user),
             selectinload(Project.tags),
+            selectinload(Project.categories),
             selectinload(Project.updates),
             selectinload(Project.links),
             selectinload(Project.files).selectinload(ProjectFile.current_version),

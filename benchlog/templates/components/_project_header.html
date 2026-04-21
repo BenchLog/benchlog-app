@@ -54,4 +54,14 @@
         {% endwith %}
     </div>
     {% endif %}
+    {% if project.categories %}
+    <div class="mt-2">
+        {% with categories = project.categories,
+                breadcrumbs = category_breadcrumbs or {},
+                href_prefix = category_href_prefix or '/explore',
+                mode = "full" %}
+            {% include "components/_category_chips.html" %}
+        {% endwith %}
+    </div>
+    {% endif %}
 </header>

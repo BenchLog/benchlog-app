@@ -1,0 +1,267 @@
+{#
+  Searchable multi-select combobox for the curated category taxonomy.
+
+  Sibling to _tag_combobox.html — pills + dropdown + keyboard nav are
+  structurally the same, but the display is breadcrumb-based ("3D Printing
+  › FDM") because category ids alone aren't meaningful. Creation is never
+  allowed: the taxonomy is admin-curated.
+
+  Args (via `{% with %}`):
+    name         — form field name. Default "category". One hidden
+                   <input name="{{name}}" value="<uuid>"> is emitted per
+                   selected category so multipart form encoding gives the
+                   server a `list[str]`.
+    selected_ids — list[str] of initially-selected category UUIDs
+    options      — list[{id, slug, name, breadcrumb}] from get_categories_flat.
+    placeholder  — optional placeholder text
+
+  Value semantics (unlike the tag combobox):
+    Categories are UUIDs; pill label is the breadcrumb. Search matches
+    case-insensitive substring against the breadcrumb so typing "fdm" OR
+    "3d printing" both surface the same option.
+#}
+{% set _cc_name = name or "category" %}
+{% set _cc_selected = selected_ids or [] %}
+{% set _cc_options = options or [] %}
+{% set _cc_placeholder = placeholder or "Search categories…" %}
+<div class="relative"
+     data-category-input
+     data-category-name="{{ _cc_name }}">
+    {# Options catalog: id + breadcrumb-segment list in JSON so the JS can
+       search by text and render with Lucide chevron icons between
+       segments (instead of baking the `›` literal into rendered HTML).
+       Kept in a script tag (not data-*) to avoid attribute-length
+       blow-up as the taxonomy grows. `breadcrumb_parts` comes from
+       `get_categories_flat` pre-split so we don't fight Jinja escaping
+       rules here. #}
+    {% set _payload = [] %}
+    {% for opt in _cc_options %}
+        {% set _ = _payload.append({"id": opt.id|string, "parts": opt.breadcrumb_parts}) %}
+    {% endfor %}
+    <script type="application/json" data-category-options>{{ _payload|tojson }}</script>
+    <div class="hidden" data-category-hidden>
+        {% for cid in _cc_selected %}
+        <input type="hidden" name="{{ _cc_name }}" value="{{ cid }}">
+        {% endfor %}
+    </div>
+    <div class="tag-input-inner" data-category-inner>
+        <div class="contents" data-category-pills></div>
+        <input type="text"
+               class="tag-input-search"
+               data-category-search
+               placeholder="{{ _cc_placeholder }}"
+               aria-label="{{ _cc_placeholder }}"
+               aria-autocomplete="list"
+               aria-expanded="false"
+               autocomplete="off">
+    </div>
+    <div class="tag-input-dropdown" data-category-dropdown role="listbox" hidden></div>
+</div>
+<script>
+  (() => {
+    const roots = document.querySelectorAll("[data-category-input]:not([data-category-initialized])");
+    roots.forEach((root) => {
+      root.dataset.categoryInitialized = "1";
+      const hidden = root.querySelector("[data-category-hidden]");
+      const inner = root.querySelector("[data-category-inner]");
+      const pillsEl = root.querySelector("[data-category-pills]");
+      const search = root.querySelector("[data-category-search]");
+      const dropdown = root.querySelector("[data-category-dropdown]");
+      const name = root.dataset.categoryName || "category";
+      const form = root.closest("form");
+
+      const options = (() => {
+        try {
+          return JSON.parse(root.querySelector("[data-category-options]").textContent);
+        } catch (_) {
+          return [];
+        }
+      })();
+      // Text form used for case-insensitive search — " / " is a plain-ASCII
+      // separator so the tokenization is predictable. We index the text on
+      // each option once instead of recomputing on every keystroke.
+      options.forEach((o) => {
+        o.text = (o.parts || []).join(" / ");
+      });
+      const byId = new Map(options.map((o) => [o.id, o]));
+
+      // Inlined Lucide chevron-right SVG. Built in JS (not data-lucide)
+      // because the dropdown re-renders on every keystroke — calling
+      // lucide.createIcons() each time would be noticeably slower.
+      const CHEVRON_SVG =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" ' +
+        'viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+        'style="opacity:0.7;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>';
+
+      /** Append `parts` to `container` as alternating <span> segments
+       *  separated by inlined chevron SVGs. Used for both pill labels
+       *  and dropdown option rows. */
+      function appendBreadcrumb(container, parts) {
+        (parts || []).forEach((part, idx) => {
+          if (idx > 0) {
+            const sep = document.createElement("span");
+            sep.setAttribute("aria-hidden", "true");
+            sep.innerHTML = CHEVRON_SVG;
+            sep.style.display = "inline-flex";
+            sep.style.alignItems = "center";
+            sep.style.margin = "0 0.15rem";
+            container.appendChild(sep);
+          }
+          const seg = document.createElement("span");
+          seg.textContent = part;
+          container.appendChild(seg);
+        });
+      }
+
+      let selected = [...hidden.querySelectorAll("input")].map((i) => i.value).filter(Boolean);
+      let active = -1;
+
+      const visibleOptions = () => {
+        const q = search.value.trim().toLowerCase();
+        const pool = options.filter((o) => !selected.includes(o.id));
+        if (!q) return pool.slice(0, 15);
+        return pool.filter((o) => o.text.toLowerCase().includes(q)).slice(0, 15);
+      };
+
+      const syncHidden = () => {
+        hidden.innerHTML = "";
+        selected.forEach((cid) => {
+          const inp = document.createElement("input");
+          inp.type = "hidden";
+          inp.name = name;
+          inp.value = cid;
+          hidden.appendChild(inp);
+        });
+      };
+
+      const renderPills = () => {
+        pillsEl.innerHTML = "";
+        selected.forEach((cid) => {
+          const opt = byId.get(cid);
+          // If an id doesn't match (e.g., category deleted out from under
+          // the form), render a placeholder pill so the user still sees
+          // the state and can remove it.
+          const parts = opt ? opt.parts : ["Unknown category"];
+          const labelText = opt ? opt.text : "Unknown category";
+          const pill = document.createElement("span");
+          pill.className = "tag-pill";
+          pill.dataset.pillCategory = cid;
+          const text = document.createElement("span");
+          text.style.display = "inline-flex";
+          text.style.alignItems = "center";
+          appendBreadcrumb(text, parts);
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "tag-pill-remove";
+          btn.setAttribute("aria-label", "Remove " + labelText);
+          btn.dataset.removeCategory = cid;
+          btn.textContent = "\u00D7";
+          pill.appendChild(text);
+          pill.appendChild(btn);
+          pillsEl.appendChild(pill);
+        });
+      };
+
+      const renderDropdown = () => {
+        const opts = visibleOptions();
+        dropdown.innerHTML = "";
+        if (opts.length === 0) {
+          dropdown.hidden = true;
+          search.setAttribute("aria-expanded", "false");
+          active = -1;
+          return;
+        }
+        if (active >= opts.length) active = opts.length - 1;
+        if (active < 0) active = 0;
+        opts.forEach((opt, i) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "tag-option" + (i === active ? " is-active" : "");
+          btn.setAttribute("role", "option");
+          btn.setAttribute("aria-selected", i === active ? "true" : "false");
+          btn.dataset.addCategory = opt.id;
+          btn.style.display = "flex";
+          btn.style.alignItems = "center";
+          appendBreadcrumb(btn, opt.parts);
+          dropdown.appendChild(btn);
+        });
+        dropdown.hidden = false;
+        search.setAttribute("aria-expanded", "true");
+      };
+
+      const addCategory = (cid) => {
+        if (!cid || selected.includes(cid) || !byId.has(cid)) return;
+        selected.push(cid);
+        search.value = "";
+        syncHidden();
+        renderPills();
+        renderDropdown();
+      };
+
+      const removeCategory = (cid) => {
+        if (!selected.includes(cid)) return;
+        selected = selected.filter((x) => x !== cid);
+        syncHidden();
+        renderPills();
+        renderDropdown();
+        search.focus();
+      };
+
+      pillsEl.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-remove-category]");
+        if (btn) removeCategory(btn.dataset.removeCategory);
+      });
+
+      dropdown.addEventListener("mousedown", (e) => {
+        const btn = e.target.closest("[data-add-category]");
+        if (btn) {
+          e.preventDefault();
+          addCategory(btn.dataset.addCategory);
+          search.focus();
+        }
+      });
+
+      inner.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;
+        search.focus();
+      });
+
+      search.addEventListener("input", () => { active = 0; renderDropdown(); });
+      search.addEventListener("focus", () => { renderDropdown(); });
+
+      search.addEventListener("keydown", (e) => {
+        const opts = visibleOptions();
+        if (e.key === "ArrowDown") {
+          if (opts.length) { e.preventDefault(); active = (active + 1) % opts.length; renderDropdown(); }
+        } else if (e.key === "ArrowUp") {
+          if (opts.length) { e.preventDefault(); active = (active - 1 + opts.length) % opts.length; renderDropdown(); }
+        } else if (e.key === "Enter") {
+          if (opts.length && active >= 0) { e.preventDefault(); addCategory(opts[active].id); }
+        } else if (e.key === "Tab") {
+          if (opts.length && active >= 0) { e.preventDefault(); addCategory(opts[active].id); }
+        } else if (e.key === "Escape") {
+          search.value = "";
+          renderDropdown();
+        } else if (e.key === "Backspace" && !search.value && selected.length) {
+          e.preventDefault();
+          selected.pop();
+          syncHidden();
+          renderPills();
+          renderDropdown();
+        }
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!root.contains(e.target)) {
+          dropdown.hidden = true;
+          search.setAttribute("aria-expanded", "false");
+          active = -1;
+        }
+      });
+
+      syncHidden();
+      renderPills();
+    });
+  })();
+</script>

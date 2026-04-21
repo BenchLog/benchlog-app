@@ -74,6 +74,23 @@
     </div>
 
     <div>
+        <label>Categories</label>
+        {# Admin-curated taxonomy; the picker is existing-only (no create)
+           and uses breadcrumb labels ("3D Printing › FDM") so searches on
+           either the parent or the leaf both hit. #}
+        {% with name="category",
+                selected_ids=form_values.categories,
+                options=known_categories,
+                placeholder="Search categories (e.g. fdm, woodworking)…" %}
+            {% include "components/_category_combobox.html" %}
+        {% endwith %}
+        <p class="meta mt-1">
+            Categories are a curated index — pick as many as apply. Tags
+            above are free-form; categories are structured for browsing.
+        </p>
+    </div>
+
+    <div>
         <label for="status">Status</label>
         <select id="status" name="status">
             {% for s in statuses %}

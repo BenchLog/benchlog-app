@@ -1,5 +1,6 @@
 """Tests for project files — upload, version, browse, download, visibility."""
 
+import functools
 import io
 import shutil
 import zipfile
@@ -59,6 +60,7 @@ async def _upload(
     return await client.post(url, data=data, files=files)
 
 
+@functools.cache
 def _png_bytes(width: int = 32, height: int = 24) -> bytes:
     img = Image.new("RGB", (width, height), color=(180, 80, 60))
     buf = io.BytesIO()

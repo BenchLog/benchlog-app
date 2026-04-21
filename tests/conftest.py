@@ -2,6 +2,8 @@
 
 Strategy:
 - Run against a separate Postgres database (`benchlog_test`) created on demand.
+  Under pytest-xdist each worker gets its own suffixed DB (e.g. `_gw0`) so
+  parallel workers don't fight over the same tables.
 - Replace the app's engine with a NullPool variant so connections aren't
   pinned to a specific event loop across tests.
 - Truncate every table after each test for isolation.
@@ -11,11 +13,20 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 
+# Per-worker DB suffix so `pytest -n auto` workers don't share state.
+# `PYTEST_XDIST_WORKER` is set by xdist to e.g. "gw0", "gw1"; absent when
+# running serially.
+_WORKER_ID = os.environ.get("PYTEST_XDIST_WORKER", "")
+_DB_SUFFIX = f"_{_WORKER_ID}" if _WORKER_ID else ""
+_TEST_DB_NAME = f"benchlog_test{_DB_SUFFIX}"
+
 # These MUST be set before any benchlog import so pydantic-settings picks them up.
-os.environ.setdefault(
-    "BENCHLOG_DATABASE_URL",
-    "postgresql+asyncpg://benchlog:benchlog@localhost/benchlog_test",
-)
+# Under xdist we force a per-worker URL so parallel workers don't share a DB.
+_DB_URL = f"postgresql+asyncpg://benchlog:benchlog@localhost/{_TEST_DB_NAME}"
+if _WORKER_ID:
+    os.environ["BENCHLOG_DATABASE_URL"] = _DB_URL
+else:
+    os.environ.setdefault("BENCHLOG_DATABASE_URL", _DB_URL)
 os.environ.setdefault("BENCHLOG_SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("BENCHLOG_BASE_URL", "http://testserver")
 # Fast-path bcrypt in tests — rounds=4 is the spec minimum and keeps hashes
@@ -26,6 +37,7 @@ import asyncpg  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
@@ -56,10 +68,12 @@ async def _create_test_db_if_missing() -> None:
     conn = await asyncpg.connect(**_admin_dsn())
     try:
         exists = await conn.fetchval(
-            "SELECT 1 FROM pg_database WHERE datname='benchlog_test'"
+            "SELECT 1 FROM pg_database WHERE datname=$1", _TEST_DB_NAME
         )
         if not exists:
-            await conn.execute("CREATE DATABASE benchlog_test")
+            # Database names can't be parameterized; _TEST_DB_NAME is built
+            # from a whitelisted worker id (gw0..gwN) so interpolation is safe.
+            await conn.execute(f'CREATE DATABASE "{_TEST_DB_NAME}"')
     finally:
         await conn.close()
 
@@ -78,12 +92,18 @@ def _bootstrap() -> None:
 _bootstrap()
 
 
+_TRUNCATE_SQL = text(
+    "TRUNCATE "
+    + ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
+    + " RESTART IDENTITY CASCADE"
+)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _truncate_tables() -> AsyncIterator[None]:
     yield
     async with _test_engine.begin() as conn:
-        for table in reversed(Base.metadata.sorted_tables):
-            await conn.execute(table.delete())
+        await conn.execute(_TRUNCATE_SQL)
     # Rate limiter is in-process and would otherwise leak state across tests,
     # eventually tripping 429s in later tests that issue many logins.
     limiter._hits.clear()

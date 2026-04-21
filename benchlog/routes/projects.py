@@ -26,8 +26,14 @@ from benchlog.models import (
     ProjectFile,
     ProjectStatus,
     ProjectTag,
+    RelationType,
     Tag,
     User,
+)
+from benchlog.project_relations import (
+    filter_visible,
+    get_incoming_relations,
+    get_outgoing_relations,
 )
 from benchlog.projects import (
     get_project_by_username_and_slug,
@@ -565,6 +571,19 @@ async def project_detail(
         project_collection_ids = await get_project_collection_memberships(
             db, user.id, project.id
         )
+    # Relations (outgoing + incoming), pre-filtered by the viewer's
+    # visibility and grouped by type so the template iterates cleanly.
+    # Owner always sees their own outgoing relations (even when target
+    # is their own private project) thanks to the viewer-id match in
+    # `visible_to`. Guests only see relations whose far endpoint is
+    # public.
+    viewer_id = user.id if user is not None else None
+    outgoing_raw = await get_outgoing_relations(db, project.id)
+    incoming_raw = await get_incoming_relations(db, project.id)
+    outgoing_visible = filter_visible(outgoing_raw, "target", viewer_id)
+    incoming_visible = filter_visible(incoming_raw, "source", viewer_id)
+    outgoing_groups = _group_relations_by_type(outgoing_visible)
+    incoming_groups = _group_relations_by_type(incoming_visible)
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -579,8 +598,32 @@ async def project_detail(
             "file_index": file_index,
             "owner_collections": owner_collections,
             "project_collection_ids": project_collection_ids,
+            "outgoing_relation_groups": outgoing_groups,
+            "incoming_relation_groups": incoming_groups,
+            "user_pickable_relation_types": [
+                (t.value, t.label, t.icon)
+                for t in (
+                    RelationType.inspired_by,
+                    RelationType.related_to,
+                    RelationType.depends_on,
+                )
+            ],
         },
     )
+
+
+def _group_relations_by_type(relations):
+    """Return ``[(RelationType, [relation, ...]), ...]`` in enum order.
+
+    Template-friendly shape — the detail page wants heading-per-group
+    with a stable ordering matching the segmented control. Types with
+    no surviving relations after visibility filtering are dropped so
+    the template doesn't have to branch on emptiness per group.
+    """
+    by_type: dict[RelationType, list] = {}
+    for r in relations:
+        by_type.setdefault(r.relation_type, []).append(r)
+    return [(t, by_type[t]) for t in RelationType if t in by_type]
 
 
 async def _breadcrumbs_for(db: AsyncSession, cats) -> dict[str, str]:

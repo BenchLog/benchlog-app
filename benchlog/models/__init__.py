@@ -7,6 +7,11 @@ from benchlog.models.file import FileVersion, ProjectFile
 from benchlog.models.link import LinkType, ProjectLink
 from benchlog.models.oidc import OIDCIdentity, OIDCProvider
 from benchlog.models.project import Project, ProjectStatus
+from benchlog.models.project_relation import (
+    USER_PICKABLE_TYPES,
+    ProjectRelation,
+    RelationType,
+)
 from benchlog.models.site_settings import SiteSettings
 from benchlog.models.smtp_config import SMTPConfig
 from benchlog.models.tag import ProjectTag, Tag
@@ -30,10 +35,13 @@ __all__ = [
     "ProjectCategory",
     "ProjectFile",
     "ProjectLink",
+    "ProjectRelation",
     "ProjectStatus",
     "ProjectTag",
     "ProjectUpdate",
+    "RelationType",
     "SiteSettings",
+    "USER_PICKABLE_TYPES",
     "SMTPConfig",
     "Tag",
     "User",

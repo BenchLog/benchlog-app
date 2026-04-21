@@ -13,6 +13,7 @@ from benchlog.routes import (
     oidc,
     passkeys,
     profile,
+    project_relations,
     projects,
     updates,
 )
@@ -33,6 +34,10 @@ def register_routes(app: FastAPI) -> None:
     # before `projects` so `/u/{u}/collections/...` doesn't get shadowed
     # by the `/u/{username}/{slug}` project-detail catch-all.
     app.include_router(collections.router)
+    # Same reasoning for project relations — `/u/{u}/{s}/relations...`
+    # needs to beat the `/u/{u}/{s}` catch-all and the tail-matching
+    # `/u/{u}/{s}/updates`-style routes.
+    app.include_router(project_relations.router)
     app.include_router(projects.router)
     app.include_router(updates.router)
     app.include_router(links.router)

@@ -4,6 +4,7 @@ from benchlog.models.category import Category, ProjectCategory
 from benchlog.models.collection import Collection, CollectionProject
 from benchlog.models.email_token import EmailToken
 from benchlog.models.file import FileVersion, ProjectFile
+from benchlog.models.journal_entry import JournalEntry
 from benchlog.models.link import LinkType, ProjectLink
 from benchlog.models.oidc import OIDCIdentity, OIDCProvider
 from benchlog.models.project import Project, ProjectStatus
@@ -15,7 +16,6 @@ from benchlog.models.project_relation import (
 from benchlog.models.site_settings import SiteSettings
 from benchlog.models.smtp_config import SMTPConfig
 from benchlog.models.tag import ProjectTag, Tag
-from benchlog.models.update import ProjectUpdate
 from benchlog.models.user import User
 from benchlog.models.user_social_link import UserSocialLink, UserSocialLinkType
 from benchlog.models.webauthn_credential import WebAuthnCredential
@@ -28,6 +28,7 @@ __all__ = [
     "CollectionProject",
     "EmailToken",
     "FileVersion",
+    "JournalEntry",
     "LinkType",
     "OIDCIdentity",
     "OIDCProvider",
@@ -38,7 +39,6 @@ __all__ = [
     "ProjectRelation",
     "ProjectStatus",
     "ProjectTag",
-    "ProjectUpdate",
     "RelationType",
     "SiteSettings",
     "USER_PICKABLE_TYPES",

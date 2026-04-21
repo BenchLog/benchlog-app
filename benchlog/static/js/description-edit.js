@@ -69,12 +69,15 @@
       mount.id = mountId;
       mount.dataset.toastuiMount = "";
       mount.dataset.toastuiSourceId = sourceId;
-      // Carry the per-project file index through so the typeahead
-      // attaches to the inline editor too — the form already received
-      // the JSON from the server via `data-file-index`, so we don't
-      // need to refetch.
+      // Carry the per-project file + journal-entry indexes through so
+      // the typeahead attaches to the inline editor too — the form
+      // already received the JSON from the server via the data-*
+      // attributes, so we don't need to refetch.
       if (form.dataset.fileIndex) {
         mount.dataset.toastuiFileIndex = form.dataset.fileIndex;
+      }
+      if (form.dataset.entryIndex) {
+        mount.dataset.toastuiEntryIndex = form.dataset.entryIndex;
       }
       mount.className = "h-full";
       resizer.appendChild(mount);

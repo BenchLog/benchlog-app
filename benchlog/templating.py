@@ -25,8 +25,10 @@ def _markdown_filter(text: str | None) -> Markup:
 def _project_markdown_filter(text: str | None, project) -> Markup:
     """Render markdown for content tied to a project. Rewrites bare
     `files/<path>/<name>` links to canonical `/u/{user}/{slug}/files/{id}`
-    detail-page URLs so they resolve the same on every page that renders
-    the content (description, updates list, update detail, AJAX swaps).
+    detail-page URLs, and rewrites bare `journal/<entry_slug>` links to
+    the canonical `/u/{user}/{slug}/journal/{entry_slug}` so they resolve
+    the same on every page that renders the content (description, journal
+    list, journal detail, AJAX swaps).
 
     Requires ``project.files`` to be eager-loaded — the shared
     ``get_project_by_username_and_slug`` helper does this. Falls back to

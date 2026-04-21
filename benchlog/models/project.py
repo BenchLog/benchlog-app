@@ -117,11 +117,13 @@ class Project(TimestampMixin, Base):
         back_populates="projects",
         lazy="raise_on_sql",
     )
-    updates: Mapped[list["ProjectUpdate"]] = relationship(  # noqa: F821
+    journal_entries: Mapped[list["JournalEntry"]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         lazy="raise_on_sql",
-        order_by="ProjectUpdate.created_at.desc()",
+        # Pinned entries first, then newest within each bucket. Keeps the
+        # feed as a single list with pin markers, not two visual sections.
+        order_by="(JournalEntry.is_pinned.desc(), JournalEntry.created_at.desc())",
     )
     links: Mapped[list["ProjectLink"]] = relationship(  # noqa: F821
         back_populates="project",

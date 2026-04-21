@@ -266,6 +266,81 @@ def rewrite_file_references(
     return RewriteResult(new_text, count)
 
 
+def _compile_journal_rewrite(
+    username: str, project_slug: str, old_entry_slug: str
+) -> re.Pattern[str]:
+    """Build the per-entry journal-link rewrite pattern.
+
+    Matches both relative (`](journal/<slug>)`) and canonical
+    (`](/u/<user>/<project>/journal/<slug>)`) link targets. Author-supplied
+    display text is preserved verbatim; only the URL tail changes.
+    """
+    canonical = rf"/u/{re.escape(username)}/{re.escape(project_slug)}/journal/"
+    return re.compile(
+        r"(?<!\\)(!?)\[([^\]]*)\]\((?:"
+        + canonical
+        + r"|journal/)"
+        + re.escape(old_entry_slug)
+        + _TITLE_RE
+        + r"\)"
+    )
+
+
+def rewrite_journal_references(
+    markdown_text: str,
+    username: str,
+    project_slug: str,
+    old_entry_slug: str,
+    new_entry_slug: str,
+    *,
+    old_title: str | None = None,
+    new_title: str | None = None,
+) -> RewriteResult:
+    """Rewrite `](journal/<old_slug>)` refs when slug and/or title change.
+
+    URL rewriting: links targeting the old slug get their URL updated to
+    the new slug. Both relative form (`journal/<slug>`) and canonical
+    (`/u/<user>/<project>/journal/<slug>`) are handled.
+
+    Label rewriting: when the existing link text exactly matches the old
+    title, it's replaced with the new title. Exact-match (not substring)
+    because titles can be short common phrases — partial replacement
+    would clobber unrelated prose. Author-customized labels are preserved.
+
+    Leaves code blocks, inline code, and HTML blocks untouched. Returns
+    the new text and how many refs were rewritten. No-op when neither the
+    slug nor the title actually changed.
+    """
+    if not markdown_text:
+        return RewriteResult(markdown_text or "", 0)
+    slug_changed = old_entry_slug != new_entry_slug
+    title_changed = (
+        old_title is not None
+        and new_title is not None
+        and old_title != new_title
+    )
+    if not slug_changed and not title_changed:
+        return RewriteResult(markdown_text, 0)
+
+    pattern = _compile_journal_rewrite(username, project_slug, old_entry_slug)
+    canonical_prefix = f"/u/{username}/{project_slug}/journal/"
+
+    def _sub(m: re.Match[str]) -> str:
+        bang = m.group(1)
+        text = m.group(2)
+        title_attr = m.group(3) or ""
+        matched = m.group(0)
+        if canonical_prefix in matched:
+            new_url = f"{canonical_prefix}{new_entry_slug}"
+        else:
+            new_url = f"journal/{new_entry_slug}"
+        new_text = new_title if (title_changed and text == old_title) else text
+        return f"{bang}[{new_text}]({new_url}{title_attr})"
+
+    new_text, count = _rewrite_prose(markdown_text, pattern, _sub)
+    return RewriteResult(new_text, count)
+
+
 def rewrite_folder_references(
     markdown_text: str,
     old_folder: str,

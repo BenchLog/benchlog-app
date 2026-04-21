@@ -1,0 +1,78 @@
+{% extends "projects/_layout.html" %}
+{% block title %}{{ entry.title or 'Journal entry' }} · {{ project.title }}{% endblock %}
+{% block project_content %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set edit_url = (project_url ~ '/journal/' ~ entry.slug ~ '/edit') if entry.slug else (project_url ~ '/journal/' ~ entry.id ~ '/edit') %}
+{% set action_ref = entry.slug or entry.id %}
+
+<div class="meta mb-4">
+    <a href="{{ project_url }}/journal" class="hover:text-rust">Journal</a>
+    <span aria-hidden="true"> / </span>
+    <span>Single entry</span>
+</div>
+
+<article class="card">
+    <header class="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+            {% if entry.title %}
+            <h1 class="text-3xl leading-tight m-0 flex items-center gap-2">
+                {% if entry.is_pinned %}
+                <i data-lucide="pin" class="w-5 h-5 text-rust" aria-label="Pinned"></i>
+                {% endif %}
+                {{ entry.title }}
+            </h1>
+            {% endif %}
+            <div class="meta mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>Posted {{ entry.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                {% if entry.updated_at != entry.created_at %}
+                <span aria-hidden="true">·</span>
+                <span>edited {{ entry.updated_at.strftime("%Y-%m-%d") }}</span>
+                {% endif %}
+                {% if not is_owner %}
+                <span aria-hidden="true">·</span>
+                <span>by {{ project.user.display_name }}</span>
+                {% endif %}
+                {% if is_owner and entry.is_public %}
+                <span aria-hidden="true">·</span>
+                <span class="inline-flex items-center gap-1 text-rust-deep"
+                      title="Public — visible to anyone who can see this project">
+                    <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                    Public
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% if is_owner %}
+        <div class="flex items-center gap-2 shrink-0">
+            <form method="post"
+                  action="{{ project_url }}/journal/{{ action_ref }}/{% if entry.is_pinned %}unpin{% else %}pin{% endif %}"
+                  class="inline">
+                {% include "components/_csrf.html" %}
+                <button type="submit" class="btn-ghost text-sm"
+                        title="{% if entry.is_pinned %}Unpin entry{% else %}Pin entry to top{% endif %}">
+                    <i data-lucide="pin{% if entry.is_pinned %}-off{% endif %}" class="w-3.5 h-3.5 inline mr-1"></i>
+                    {% if entry.is_pinned %}Unpin{% else %}Pin{% endif %}
+                </button>
+            </form>
+            <a href="{{ edit_url }}" class="btn-ghost text-sm">Edit</a>
+        </div>
+        {% endif %}
+    </header>
+
+    <div class="markdown-body text-ink">
+        {{ entry.content|project_markdown(project) }}
+    </div>
+</article>
+
+{% if is_owner %}
+<form method="post" action="{{ project_url }}/journal/{{ action_ref }}/delete"
+      class="max-w-2xl mt-4"
+      data-confirm
+      data-confirm-title="Delete entry?"
+      data-confirm-body="This journal entry will be permanently removed."
+      data-confirm-ok="Delete entry">
+    {% include "components/_csrf.html" %}
+    <button type="submit" class="btn-danger text-sm">Delete entry</button>
+</form>
+{% endif %}
+{% endblock %}

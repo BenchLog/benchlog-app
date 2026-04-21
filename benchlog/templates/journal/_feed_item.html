@@ -1,0 +1,86 @@
+{# Renders a single JournalEntry inside the project journal feed.
+   Args:
+     entry         — required
+     project       — required (for building permalink + edit URLs)
+     is_owner      — if truthy, render pin/edit/delete affordances
+#}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set permalink = project_url ~ '/journal/' ~ entry.slug if entry.slug else None %}
+{% set edit_url = (project_url ~ '/journal/' ~ entry.slug ~ '/edit') if entry.slug else (project_url ~ '/journal/' ~ entry.id ~ '/edit') %}
+{% set pin_ref = entry.slug or entry.id %}
+<article id="entry-{{ entry.id }}" class="card relative target:border-rust target:ring-1 target:ring-rust">
+    <header class="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+            {% if entry.title %}
+            <h3 class="text-3xl leading-tight m-0 flex items-center gap-2">
+                {% if entry.is_pinned %}
+                <i data-lucide="pin" class="w-5 h-5 text-rust"
+                   aria-label="Pinned"></i>
+                {% endif %}
+                {% if permalink %}
+                <a href="{{ permalink }}"
+                   title="Open full entry on its own page"
+                   class="no-underline text-ink hover:text-rust">{{ entry.title }}</a>
+                {% else %}
+                <span>{{ entry.title }}</span>
+                {% endif %}
+            </h3>
+            {% elif entry.is_pinned %}
+            <div class="meta flex items-center gap-1 text-rust mb-1">
+                <i data-lucide="pin" class="w-3.5 h-3.5" aria-label="Pinned"></i>
+                Pinned
+            </div>
+            {% endif %}
+            <div class="meta mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                {# Timestamp is always a fragment permalink — lands on
+                   this feed with the entry highlighted via `:target`. For
+                   titled entries the title itself goes to the full detail
+                   page, so users get both affordances: in-place vs full. #}
+                <a href="{{ project_url }}/journal#entry-{{ entry.id }}"
+                   title="Link to this entry (stays in the list)"
+                   class="inline-flex items-center gap-1 hover:text-rust">
+                    <i data-lucide="link-2" class="w-3 h-3"></i>
+                    {{ entry.created_at.strftime("%Y-%m-%d %H:%M") }}
+                </a>
+                {% if entry.updated_at != entry.created_at %}
+                <span aria-hidden="true">·</span>
+                <span>edited {{ entry.updated_at.strftime("%Y-%m-%d") }}</span>
+                {% endif %}
+                {% if is_owner and entry.is_public %}
+                <span aria-hidden="true">·</span>
+                <span class="inline-flex items-center gap-1 text-rust-deep"
+                      title="Public — visible to anyone who can see this project">
+                    <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                    Public
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% if is_owner %}
+        <div class="flex items-center gap-2 shrink-0">
+            <form method="post"
+                  action="{{ project_url }}/journal/{{ pin_ref }}/{% if entry.is_pinned %}unpin{% else %}pin{% endif %}"
+                  class="inline">
+                {% include "components/_csrf.html" %}
+                <button type="submit" class="btn-ghost text-xs"
+                        title="{% if entry.is_pinned %}Unpin entry{% else %}Pin entry to top{% endif %}">
+                    <i data-lucide="pin{% if entry.is_pinned %}-off{% endif %}" class="w-3.5 h-3.5"></i>
+                    {% if entry.is_pinned %}Unpin{% else %}Pin{% endif %}
+                </button>
+            </form>
+            <a href="{{ edit_url }}" class="btn-ghost text-xs">Edit</a>
+            <form method="post" action="{{ project_url }}/journal/{{ pin_ref }}/delete"
+                  data-confirm
+                  data-confirm-title="Delete entry?"
+                  data-confirm-body="This journal entry will be permanently removed."
+                  data-confirm-ok="Delete entry">
+                {% include "components/_csrf.html" %}
+                <button type="submit" class="btn-danger text-xs">Delete</button>
+            </form>
+        </div>
+        {% endif %}
+    </header>
+    <div class="markdown-body text-ink">
+        {{ entry.content|project_markdown(project) }}
+    </div>
+</article>

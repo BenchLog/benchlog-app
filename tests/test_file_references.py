@@ -1,7 +1,7 @@
 """Tests for the `files/…` markdown reference rewriter.
 
 Covers the text-in / text-out helpers in `benchlog.file_references`.
-Route-integration (does a rename actually patch description + updates?)
+Route-integration (does a rename actually patch description + journal?)
 is in `tests/test_files.py`.
 """
 

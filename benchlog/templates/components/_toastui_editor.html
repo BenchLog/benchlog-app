@@ -7,14 +7,19 @@
     - value       (str) initial markdown; Jinja escaping applies inside the
                   textarea body.
     - id_suffix   (str) unique per-page suffix so multiple editors can
-                  coexist (e.g. "description", "update-body").
+                  coexist (e.g. "description", "entry-body").
     - min_height  (str, default "240px") editor body min-height.
     - placeholder (str, optional) placeholder shown when empty.
     - file_index  (list[dict]|None, optional) list of project files for the
                   `files/…` typeahead. Each dict: {path, filename, is_image}.
-                  Set on project-scoped editors (project/update forms +
+                  Set on project-scoped editors (project/journal forms +
                   inline description edit); omit / pass None on the bio
                   editor so typeahead stays disabled there.
+    - entry_index (list[dict]|None, optional) list of titled journal entries
+                  in the same project for the `journal/…` typeahead. Each
+                  dict: {slug, title}. Share the file_index gate — editors
+                  that get a file_index also get this one, empty list if
+                  the project has no titled entries yet.
 
   The <textarea> stays in the DOM (hidden) so form submits pick up its
   value — `toastui-init.js` keeps it synced on every change and on form
@@ -37,6 +42,7 @@
     <div data-toastui-mount
          data-toastui-source-id="toastui-source-{{ id_suffix }}"
          {% if file_index is defined and file_index is not none %}data-toastui-file-index='{{ file_index|tojson }}'{% endif %}
+         {% if entry_index is defined and entry_index is not none %}data-toastui-entry-index='{{ entry_index|tojson }}'{% endif %}
          {% if placeholder %}data-toastui-placeholder="{{ placeholder }}"{% endif %}
          id="toastui-mount-{{ id_suffix }}"
          class="h-full"></div>

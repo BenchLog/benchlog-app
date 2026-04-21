@@ -19,7 +19,11 @@ from benchlog.collections import (
 )
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
-from benchlog.files import get_project_file_index, get_project_file_lookup
+from benchlog.files import (
+    get_project_entry_index,
+    get_project_file_index,
+    get_project_file_lookup,
+)
 from benchlog.markdown import render_for_project
 from benchlog.models import (
     Project,
@@ -333,11 +337,15 @@ async def _render_form(
     known_tags = await get_user_tag_slugs(db, user.id)
     # Full, admin-curated taxonomy — the picker is shared, not user-scoped.
     known_categories = await get_categories_flat(db)
-    # Editors scoped to a project expose a `files/…` typeahead sourced from
-    # this index. New projects have no files yet, so send an empty list —
-    # the client-side code treats that as "enable typeahead but no matches".
+    # Editors scoped to a project expose `files/…` and `journal/…`
+    # typeaheads sourced from these indexes. New projects have no files
+    # or entries yet, so send empty lists — the client-side code treats
+    # that as "enable typeahead but no matches".
     file_index = (
         await get_project_file_index(db, project.id) if project is not None else []
+    )
+    entry_index = (
+        await get_project_entry_index(db, project.id) if project is not None else []
     )
     return templates.TemplateResponse(
         request,
@@ -351,6 +359,7 @@ async def _render_form(
             "known_tags": known_tags,
             "known_categories": known_categories,
             "file_index": file_index,
+            "entry_index": entry_index,
         },
         status_code=status_code,
     )
@@ -553,9 +562,10 @@ async def project_detail(
     # Owner sees their own; everyone else (guests included) only sees public.
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
-    # File index only matters for the inline description editor (owner-only),
-    # so skip the query entirely for guests / non-owners.
+    # File + entry indexes only matter for the inline description editor
+    # (owner-only), so skip the queries entirely for guests / non-owners.
     file_index = await get_project_file_index(db, project.id) if is_owner else None
+    entry_index = await get_project_entry_index(db, project.id) if is_owner else None
     # Full category breadcrumbs for the header chips — `Parent › Child`
     # labels come from this flat lookup rather than walking `parent`
     # (raise_on_sql guards against that).
@@ -602,6 +612,7 @@ async def project_detail(
             "category_href_prefix": "/explore",
             "category_breadcrumbs": category_breadcrumbs,
             "file_index": file_index,
+            "entry_index": entry_index,
             "viewer_collections": viewer_collections,
             "project_collection_ids": project_collection_ids,
             "featured_in_collections": featured_in_collections,

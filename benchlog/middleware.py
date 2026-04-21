@@ -18,12 +18,12 @@ PUBLIC_PREFIXES = (
 
 
 def _is_public_project_view(method: str, path: str) -> bool:
-    """Allow guest GETs for canonical profile + project + update + link + file URLs.
+    """Allow guest GETs for canonical profile + project + journal + link + file URLs.
 
     - `/u/{username}` — user profile page
     - `/u/{username}/{slug}` — overview tab
-    - `/u/{username}/{slug}/updates` — updates tab (full feed)
-    - `/u/{username}/{slug}/updates/{id}` — single update permalink
+    - `/u/{username}/{slug}/journal` — journal tab (full feed)
+    - `/u/{username}/{slug}/journal/{entry_slug}` — single entry permalink
     - `/u/{username}/{slug}/links` — links tab
     - `/u/{username}/{slug}/files` — files tab (browser)
     - `/u/{username}/{slug}/files/{id}` — file detail page
@@ -54,13 +54,13 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # owner-only (the create form), so it stays auth-gated.
     if len(parts) == 3 and parts[1] == "collections" and parts[2] != "new":
         return True
-    # /u/{username}/{slug}/{updates|links|files|gallery|export}
+    # /u/{username}/{slug}/{journal|links|files|gallery|export}
     if len(parts) == 3 and parts[2] in {
-        "updates", "links", "files", "gallery", "export"
+        "journal", "links", "files", "gallery", "export"
     }:
         return True
-    # /u/{username}/{slug}/updates/{id} — but not /updates/new
-    if len(parts) == 4 and parts[2] == "updates" and parts[3] != "new":
+    # /u/{username}/{slug}/journal/{entry_slug} — but not /journal/new
+    if len(parts) == 4 and parts[2] == "journal" and parts[3] != "new":
         return True
     # /u/{username}/{slug}/files/{id} — but not /files/new
     if len(parts) == 4 and parts[2] == "files" and parts[3] != "new":

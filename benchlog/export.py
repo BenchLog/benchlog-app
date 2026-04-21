@@ -3,12 +3,12 @@
 The archive is laid out for both machine consumption (`project.json` is
 exhaustive and round-trippable into an import flow later) and human
 skimming (`README.md` renders an overview). Visibility of individual
-updates is honoured — a guest exporting a public project only gets the
-public updates, matching what they'd see on the web.
+journal entries is honoured — a guest exporting a public project only
+gets the public entries, matching what they'd see on the web.
 
 Caller is expected to pass a `Project` with the standard eager loads
-already populated: `user`, `tags`, `updates`, `links`, `files`, plus
-`files.current_version` and `cover_file.current_version`.
+already populated: `user`, `tags`, `journal_entries`, `links`, `files`,
+plus `files.current_version` and `cover_file.current_version`.
 """
 
 import io
@@ -54,19 +54,23 @@ def _files_meta(project: Project) -> list[dict]:
     return out
 
 
-def _updates_meta(project: Project, *, include_private: bool) -> list[dict]:
+def _journal_entries_meta(
+    project: Project, *, include_private: bool
+) -> list[dict]:
     out: list[dict] = []
-    for u in sorted(project.updates, key=lambda x: x.created_at):
-        if not include_private and not u.is_public:
+    for entry in sorted(project.journal_entries, key=lambda x: x.created_at):
+        if not include_private and not entry.is_public:
             continue
         out.append(
             {
-                "id": str(u.id),
-                "title": u.title,
-                "content": u.content,
-                "is_public": u.is_public,
-                "created_at": _iso(u.created_at),
-                "updated_at": _iso(u.updated_at),
+                "id": str(entry.id),
+                "title": entry.title,
+                "slug": entry.slug,
+                "content": entry.content,
+                "is_public": entry.is_public,
+                "is_pinned": entry.is_pinned,
+                "created_at": _iso(entry.created_at),
+                "updated_at": _iso(entry.updated_at),
             }
         )
     return out
@@ -87,7 +91,7 @@ def _links_meta(project: Project) -> list[dict]:
     return out
 
 
-def build_project_json(project: Project, *, include_private_updates: bool) -> dict:
+def build_project_json(project: Project, *, include_private_entries: bool) -> dict:
     """The whole project as a single structured document."""
     cover_path: str | None = None
     if project.cover_file is not None:
@@ -112,7 +116,9 @@ def build_project_json(project: Project, *, include_private_updates: bool) -> di
         },
         "cover_file": cover_path,
         "files": _files_meta(project),
-        "updates": _updates_meta(project, include_private=include_private_updates),
+        "journal_entries": _journal_entries_meta(
+            project, include_private=include_private_entries
+        ),
         "links": _links_meta(project),
     }
 
@@ -120,10 +126,10 @@ def build_project_json(project: Project, *, include_private_updates: bool) -> di
 def build_readme(project: Project, data: dict) -> str:
     """Human-readable markdown overview written to the zip root.
 
-    Updates live in their own `updates.md` (since there can be lots) —
-    the README just points at it. Files are annotated with `cover` /
-    `gallery` tags so the reader can see which ones show up on the
-    project page without opening every file.
+    Journal entries live in their own `journal.md` (since there can be
+    lots) — the README just points at it. Files are annotated with
+    `cover` / `gallery` tags so the reader can see which ones show up on
+    the project page without opening every file.
     """
     lines: list[str] = []
     lines.append(f"# {project.title}")
@@ -145,12 +151,12 @@ def build_readme(project: Project, data: dict) -> str:
         lines.append(project.description.rstrip())
         lines.append("")
 
-    if data["updates"]:
-        count = len(data["updates"])
-        noun = "update" if count == 1 else "updates"
-        lines.append("## Updates")
+    if data["journal_entries"]:
+        count = len(data["journal_entries"])
+        noun = "entry" if count == 1 else "entries"
+        lines.append("## Journal")
         lines.append("")
-        lines.append(f"See [`updates.md`](updates.md) — {count} {noun}.")
+        lines.append(f"See [`journal.md`](journal.md) — {count} {noun}.")
         lines.append("")
 
     if data["links"]:
@@ -217,24 +223,24 @@ def _render_files_section(data: dict) -> list[str]:
     return lines
 
 
-def build_updates_md(project: Project, data: dict) -> str:
-    """Dedicated update log. Same rendering as the old inline README
+def build_journal_md(project: Project, data: dict) -> str:
+    """Dedicated journal log. Same rendering as the old inline README
     section, but its own file so long-running projects don't dwarf the
     README with years of entries."""
     lines: list[str] = []
-    lines.append(f"# Updates — {project.title}")
+    lines.append(f"# Journal — {project.title}")
     lines.append("")
-    count = len(data["updates"])
-    noun = "update" if count == 1 else "updates"
+    count = len(data["journal_entries"])
+    noun = "entry" if count == 1 else "entries"
     lines.append(f"{count} {noun}.")
     lines.append("")
-    for u in data["updates"]:
-        title = u["title"] or "Untitled update"
-        date = (u["created_at"] or "")[:10]
-        visibility = "" if u["is_public"] else " _(private)_"
+    for entry in data["journal_entries"]:
+        title = entry["title"] or "Untitled entry"
+        date = (entry["created_at"] or "")[:10]
+        visibility = "" if entry["is_public"] else " _(private)_"
         lines.append(f"## {title} — {date}{visibility}")
         lines.append("")
-        lines.append(u["content"].rstrip())
+        lines.append(entry["content"].rstrip())
         lines.append("")
     return "\n".join(lines)
 
@@ -243,14 +249,15 @@ async def build_project_export(
     project: Project,
     storage: LocalStorage,
     *,
-    include_private_updates: bool,
+    include_private_entries: bool,
 ) -> bytes:
     """Package the project into a `{slug}.zip`-shaped bytes blob.
 
     Contents:
-      project.json   — exhaustive structured metadata (updates, links,
-                       files list, tags, cover pointer, owner)
-      README.md      — human overview: description + updates + links
+      project.json   — exhaustive structured metadata (journal entries,
+                       links, files list, tags, cover pointer, owner)
+      README.md      — human overview: description + journal + links
+      journal.md     — dedicated journal log (omitted when there are none)
       files/…        — every current file version, preserving virtual paths
 
     Compression runs in a thread so the event loop stays free. For
@@ -259,10 +266,12 @@ async def build_project_export(
     if anyone hits the limit.
     """
     data = build_project_json(
-        project, include_private_updates=include_private_updates
+        project, include_private_entries=include_private_entries
     )
     readme = build_readme(project, data)
-    updates_md = build_updates_md(project, data) if data["updates"] else None
+    journal_md = (
+        build_journal_md(project, data) if data["journal_entries"] else None
+    )
 
     file_members: list[tuple[str, bytes]] = []
     seen: set[str] = set()
@@ -286,8 +295,8 @@ async def build_project_export(
                 "project.json", json.dumps(data, indent=2, ensure_ascii=False)
             )
             zf.writestr("README.md", readme)
-            if updates_md is not None:
-                zf.writestr("updates.md", updates_md)
+            if journal_md is not None:
+                zf.writestr("journal.md", journal_md)
             for arcname, content in file_members:
                 zf.writestr(arcname, content)
         return buf.getvalue()

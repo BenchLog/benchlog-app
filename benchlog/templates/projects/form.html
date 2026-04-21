@@ -52,7 +52,7 @@
 
     <div>
         <label for="toastui-source-description">Description</label>
-        {% with name="description", value=form_values.description, id_suffix="description", min_height="420px", placeholder="A few notes on what this project is…", file_index=file_index %}
+        {% with name="description", value=form_values.description, id_suffix="description", min_height="420px", placeholder="A few notes on what this project is…", file_index=file_index, entry_index=entry_index %}
             {% include "components/_toastui_editor.html" %}
         {% endwith %}
         <p class="meta mt-1">Markdown is supported — switch to WYSIWYG at the bottom if you prefer.</p>

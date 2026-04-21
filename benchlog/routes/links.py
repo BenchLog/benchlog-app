@@ -62,7 +62,7 @@ async def links_tab(
         raise HTTPException(status_code=404)
     is_owner = user is not None and project.user_id == user.id
     # Links inherit project visibility — there's no per-link flag (unlike
-    # updates), since a link is part of a project's metadata.
+    # journal entries), since a link is part of a project's metadata.
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
     return templates.TemplateResponse(

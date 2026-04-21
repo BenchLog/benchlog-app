@@ -2,8 +2,9 @@
 
 A single endpoint that returns `{slug}.zip` containing project metadata
 (JSON), a human-readable README, and every current file version. Public
-projects are exportable by anyone (guests see only public updates);
-private projects are owner-only, matching the web UI's visibility rules.
+projects are exportable by anyone (guests see only public journal
+entries); private projects are owner-only, matching the web UI's
+visibility rules.
 """
 
 from urllib.parse import quote
@@ -36,10 +37,10 @@ async def export_project(
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
 
-    # Guests on a public project only see public updates; owner gets
-    # everything (same rule as the Updates tab rendering).
+    # Guests on a public project only see public journal entries; owner
+    # gets everything (same rule as the Journal tab rendering).
     zip_bytes = await build_project_export(
-        project, get_storage(), include_private_updates=is_owner
+        project, get_storage(), include_private_entries=is_owner
     )
     zip_name = f"{project.slug}.zip"
     return Response(

@@ -9,6 +9,7 @@ from benchlog.routes import (
     export,
     files,
     home,
+    journal,
     links,
     oidc,
     passkeys,
@@ -16,7 +17,6 @@ from benchlog.routes import (
     project_forks,
     project_relations,
     projects,
-    updates,
 )
 
 
@@ -37,13 +37,13 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(collections.router)
     # Same reasoning for project relations — `/u/{u}/{s}/relations...`
     # needs to beat the `/u/{u}/{s}` catch-all and the tail-matching
-    # `/u/{u}/{s}/updates`-style routes.
+    # `/u/{u}/{s}/journal`-style routes.
     app.include_router(project_relations.router)
     # `/u/{u}/{s}/fork` needs the same precedence as /relations — a literal
     # tail under the project-detail path.
     app.include_router(project_forks.router)
     app.include_router(projects.router)
-    app.include_router(updates.router)
+    app.include_router(journal.router)
     app.include_router(links.router)
     app.include_router(files.router)
     app.include_router(export.router)

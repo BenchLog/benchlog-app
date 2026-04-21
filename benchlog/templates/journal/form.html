@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{% if update %}Edit update{% else %}Post update{% endif %} · {{ project.title }}{% endblock %}
+{% block title %}{% if entry %}Edit entry{% else %}New journal entry{% endif %} · {{ project.title }}{% endblock %}
 {% block head_extra %}
     <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
     <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
@@ -8,14 +8,16 @@
 {% endblock %}
 {% block content %}
 {% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug %}
-{% set action_url = project_url ~ '/updates/' ~ update.id if update else project_url ~ '/updates' %}
+{% set entry_ref = (entry.slug or entry.id) if entry else None %}
+{% set action_url = (project_url ~ '/journal/' ~ entry_ref) if entry else (project_url ~ '/journal') %}
+{% set detail_url = (project_url ~ '/journal/' ~ entry.slug) if (entry and entry.slug) else (project_url ~ '/journal') %}
 
 <div class="meta mb-2">
     <a href="/projects" class="hover:text-rust">My Projects</a> /
     <a href="{{ project_url }}" class="hover:text-rust">{{ project.title }}</a>
-    {% if update %} / <a href="{{ project_url }}/updates/{{ update.id }}" class="hover:text-rust">Update</a> / Edit{% else %} / New update{% endif %}
+    {% if entry %} / <a href="{{ detail_url }}" class="hover:text-rust">Entry</a> / Edit{% else %} / New entry{% endif %}
 </div>
-<h1 class="text-3xl mb-6">{% if update %}Edit update{% else %}Post update{% endif %}</h1>
+<h1 class="text-3xl mb-6">{% if entry %}Edit entry{% else %}New journal entry{% endif %}</h1>
 
 {% if error %}
 <div class="card max-w-2xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
@@ -33,9 +35,23 @@
                placeholder="e.g. Finished the base coat">
     </div>
 
+    {% if entry and entry.title %}
     <div>
-        <label for="toastui-source-update-body">Content</label>
-        {% with name="content", value=form_values.content, id_suffix="update-body", min_height="420px", placeholder="What happened this session?", file_index=file_index %}
+        <label for="slug">Slug</label>
+        <input id="slug" name="slug" type="text" maxlength="256"
+               value="{{ form_values.slug }}"
+               placeholder="e.g. finished-the-base-coat">
+        <p class="meta mt-1">
+            Deep-linkable at <code>{{ project_url }}/journal/&lt;slug&gt;</code>.
+            Only changes when you edit this field — retitling alone keeps the
+            existing slug.
+        </p>
+    </div>
+    {% endif %}
+
+    <div>
+        <label for="toastui-source-entry-body">Content</label>
+        {% with name="content", value=form_values.content, id_suffix="entry-body", min_height="420px", placeholder="What happened this session?", file_index=file_index, entry_index=entry_index %}
             {% include "components/_toastui_editor.html" %}
         {% endwith %}
     </div>
@@ -48,9 +64,9 @@
 
     <div class="flex flex-wrap items-center gap-2 pt-2">
         <button type="submit" class="btn-primary text-sm">
-            {% if update %}Save changes{% else %}Post update{% endif %}
+            {% if entry %}Save changes{% else %}Post entry{% endif %}
         </button>
-        <a href="{% if update %}{{ project_url }}/updates/{{ update.id }}{% else %}{{ project_url }}{% endif %}" class="btn-ghost text-sm">Cancel</a>
+        <a href="{% if entry %}{{ detail_url }}{% else %}{{ project_url }}{% endif %}" class="btn-ghost text-sm">Cancel</a>
     </div>
 </form>
 {% endblock %}

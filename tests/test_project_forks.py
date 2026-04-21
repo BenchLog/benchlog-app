@@ -2,7 +2,7 @@
 caller's namespace.
 
 Covers the route gates (public-only, non-owner-only, auth required), the
-helper-level copy semantics (updates, links, files + versions, blob copy,
+helper-level copy semantics (journal entries, links, files + versions, blob copy,
 `fork_of` relation), ancestry columns (`is_fork` + `forked_from_id`), and
 the detail-page UX (fork button visibility, "Forked from …" header).
 """
@@ -25,7 +25,7 @@ from benchlog.models import (
     ProjectLink,
     ProjectRelation,
     ProjectStatus,
-    ProjectUpdate,
+    JournalEntry,
     RelationType,
 )
 from benchlog.storage import get_storage
@@ -91,7 +91,7 @@ async def _load_fork_by_slug(db, user_id, slug):
     result = await db.execute(
         select(Project)
         .options(
-            selectinload(Project.updates),
+            selectinload(Project.journal_entries),
             selectinload(Project.links),
             selectinload(Project.files).selectinload(ProjectFile.versions),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
@@ -184,15 +184,15 @@ async def test_fork_creates_private_copy_owned_by_forker(client, db):
     assert fork.pinned is False
 
 
-async def test_fork_copies_updates_links_files_and_versions(client, db):
+async def test_fork_copies_journal_links_files_and_versions(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     bob = await make_user(db, email="bob@test.com", username="bob")
     src = await _make_project(
         db, alice, slug="widget", is_public=True, description="Desc"
     )
-    # Updates
+    # Journal entries
     db.add(
-        ProjectUpdate(
+        JournalEntry(
             project_id=src.id,
             title="First",
             content="entry one",
@@ -200,7 +200,7 @@ async def test_fork_copies_updates_links_files_and_versions(client, db):
         )
     )
     db.add(
-        ProjectUpdate(
+        JournalEntry(
             project_id=src.id,
             title=None,
             content="entry two",
@@ -262,9 +262,9 @@ async def test_fork_copies_updates_links_files_and_versions(client, db):
 
     fork = await _load_fork_by_slug(db, bob.id, src.slug)
 
-    # Updates
-    assert len(fork.updates) == 2
-    titles = {u.title for u in fork.updates}
+    # Journal entries
+    assert len(fork.journal_entries) == 2
+    titles = {u.title for u in fork.journal_entries}
     assert titles == {"First", None}
 
     # Links

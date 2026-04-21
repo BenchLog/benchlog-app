@@ -490,7 +490,8 @@
           action="{{ project_url }}/description"
           method="post"
           data-raw-description="{{ project.description or '' }}"
-          data-file-index='{{ file_index|tojson }}'>
+          data-file-index='{{ file_index|tojson }}'
+          data-entry-index='{{ entry_index|tojson }}'>
         {% include "components/_csrf.html" %}
         {# Mount slot — description-edit.js injects a hidden source textarea
            + toastui mount here on first Edit click, so the editor only

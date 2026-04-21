@@ -25,7 +25,7 @@ from benchlog.models import (
     Project,
     ProjectFile,
     ProjectStatus,
-    ProjectUpdate,
+    JournalEntry,
 )
 from benchlog.storage import get_storage
 from tests.conftest import csrf_token, login, make_user
@@ -3500,7 +3500,7 @@ async def test_restore_version_owner_only(client, db):
 # ---------- markdown rename-tracking ---------- #
 #
 # When a file/folder is renamed or moved, the matching `files/<old>` links
-# in the project's description and updates get patched to the new path
+# in the project's description and journal entries get patched to the new path
 # (unless the opt-out checkbox is unchecked on the form surfaces — DnD
 # has no form and always rewrites).
 
@@ -3529,12 +3529,12 @@ async def _seed_project_with_refs(
     db.add(project)
     await db.flush()
     if update_content is not None:
-        db.add(ProjectUpdate(project_id=project.id, content=update_content))
+        db.add(JournalEntry(project_id=project.id, content=update_content))
     await db.commit()
     return user, project
 
 
-async def test_file_rename_updates_description_and_updates(client, db):
+async def test_file_rename_updates_description_and_journal(client, db):
     _, project = await _seed_project_with_refs(
         db,
         description="See [orig](files/a.stl) for details.",
@@ -3564,7 +3564,7 @@ async def test_file_rename_updates_description_and_updates(client, db):
     await db.refresh(project)
     assert project.description == "See [orig](files/b.stl) for details."
     updates = (
-        await db.execute(select(ProjectUpdate))
+        await db.execute(select(JournalEntry))
     ).scalars().all()
     assert updates[0].content == "Also [orig](files/b.stl) is here."
 
@@ -3601,7 +3601,7 @@ async def test_file_rename_without_update_refs_leaves_markdown_alone(client, db)
     assert resp.status_code == 302
     await db.refresh(project)
     assert project.description == "See [orig](files/a.stl) for details."
-    update = (await db.execute(select(ProjectUpdate))).scalar_one()
+    update = (await db.execute(select(JournalEntry))).scalar_one()
     assert update.content == "Update ref [x](files/a.stl)."
 
     detail = await client.get(resp.headers["location"])

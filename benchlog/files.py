@@ -27,6 +27,7 @@ from sqlalchemy.orm import selectinload
 from benchlog.file_references import (
     rewrite_file_references,
     rewrite_folder_references,
+    rewrite_journal_references,
 )
 from benchlog.models import FileVersion, Project, ProjectFile
 from benchlog.storage import LocalStorage
@@ -297,6 +298,42 @@ async def get_project_file_index(
             }
         )
     return out
+
+
+# Hard cap for the editor autocomplete's journal-entry payload. Same
+# bounding logic as files — untitled entries are excluded (they have no
+# slug to link to), so the cap only covers the linkable subset.
+_ENTRY_INDEX_MAX = 500
+
+
+async def get_project_entry_index(
+    db: AsyncSession, project_id: uuid.UUID
+) -> list[dict]:
+    """Serialize a project's titled journal entries for the `journal/…`
+    autocomplete.
+
+    Returns `[{"slug": str, "title": str}, …]` sorted by `(title)` and
+    capped at ``_ENTRY_INDEX_MAX`` entries. Untitled entries are skipped
+    — they have no slug and therefore no deep-link target.
+    """
+    # Local import to sidestep the import cycle (models imports Base,
+    # files imports models; journal_entry lands here at runtime without
+    # a top-level circular).
+    from benchlog.models import JournalEntry
+
+    result = await db.execute(
+        select(JournalEntry)
+        .where(
+            JournalEntry.project_id == project_id,
+            JournalEntry.slug.is_not(None),
+        )
+        .order_by(JournalEntry.title.asc())
+        .limit(_ENTRY_INDEX_MAX)
+    )
+    return [
+        {"slug": e.slug, "title": e.title or ""}
+        for e in result.scalars().all()
+    ]
 
 
 async def get_project_file_lookup(db: AsyncSession, project_id: uuid.UUID):
@@ -651,17 +688,19 @@ async def delete_blob(storage: LocalStorage, version: FileVersion) -> None:
             pass
 
 
-# ---------- rename-tracking for markdown `files/…` references ---------- #
+# ---------- rename-tracking for markdown refs ---------- #
 #
-# When a file or folder moves, the link text in the project's description
-# and updates still points at the old path. The renderer falls back to
-# the files browser so the link doesn't 404, but the author's prose still
-# lies about where the file lives. These helpers patch the source markdown
-# so the reference itself stays truthful.
+# When a file or folder moves, or a journal entry's slug changes, the link
+# text in the project's description and sibling journal entries still
+# points at the old target. The renderer falls back to the files browser
+# (or 404 for journal) so the link doesn't silently resolve elsewhere, but
+# the author's prose still lies about where the target lives. These
+# helpers patch the source markdown so the reference itself stays
+# truthful.
 #
-# Both helpers assume `project.updates` is already eager-loaded — the
-# `updates` relationship is `raise_on_sql`. Callers who don't already have
-# it loaded must `selectinload(Project.updates)` first.
+# Every helper assumes `project.journal_entries` is already eager-loaded —
+# the relationship is `raise_on_sql`. Callers who don't already have it
+# loaded must `selectinload(Project.journal_entries)` first.
 
 
 async def apply_file_rename_to_project_markdown(
@@ -670,7 +709,7 @@ async def apply_file_rename_to_project_markdown(
     old_full_path: str,
     new_full_path: str,
 ) -> int:
-    """Rewrite `files/<old_full_path>` refs in description + updates.
+    """Rewrite `files/<old_full_path>` refs in description + journal entries.
 
     Returns the number of refs rewritten across everything. Commits. No-op
     (returns 0) when old == new.
@@ -687,14 +726,14 @@ async def apply_file_rename_to_project_markdown(
             project.description = result.text
             total += result.count
 
-    for update in project.updates:
-        if not update.content:
+    for entry in project.journal_entries:
+        if not entry.content:
             continue
         result = rewrite_file_references(
-            update.content, old_full_path, new_full_path
+            entry.content, old_full_path, new_full_path
         )
         if result.count:
-            update.content = result.text
+            entry.content = result.text
             total += result.count
 
     if total:
@@ -708,7 +747,7 @@ async def apply_folder_rename_to_project_markdown(
     old_folder: str,
     new_folder: str,
 ) -> int:
-    """Rewrite `files/<old_folder>/…` refs in description + updates.
+    """Rewrite `files/<old_folder>/…` refs in description + journal entries.
 
     Returns the total count. Commits. No-op when old == new.
     """
@@ -724,14 +763,80 @@ async def apply_folder_rename_to_project_markdown(
             project.description = result.text
             total += result.count
 
-    for update in project.updates:
-        if not update.content:
+    for entry in project.journal_entries:
+        if not entry.content:
             continue
         result = rewrite_folder_references(
-            update.content, old_folder, new_folder
+            entry.content, old_folder, new_folder
         )
         if result.count:
-            update.content = result.text
+            entry.content = result.text
+            total += result.count
+
+    if total:
+        await db.commit()
+    return total
+
+
+async def apply_journal_rename_to_project_markdown(
+    db: AsyncSession,
+    project: Project,
+    username: str,
+    old_entry_slug: str,
+    new_entry_slug: str,
+    *,
+    old_title: str | None = None,
+    new_title: str | None = None,
+    skip_entry_id=None,
+) -> int:
+    """Rewrite journal refs in description + sibling entries when an entry
+    is renamed (slug and/or title).
+
+    Scoped to this project only — journal slugs are per-project unique, so
+    rewriting across projects would touch unrelated links. Skips
+    `skip_entry_id` when provided so the entry whose slug just changed
+    doesn't self-rewrite its own body (the author may have embedded the
+    new slug/title in prose and we don't want to double-substitute).
+
+    Returns the total count. Commits. No-op when neither slug nor title
+    changed.
+    """
+    if old_entry_slug == new_entry_slug and (
+        old_title is None or new_title is None or old_title == new_title
+    ):
+        return 0
+
+    total = 0
+    if project.description:
+        result = rewrite_journal_references(
+            project.description,
+            username,
+            project.slug,
+            old_entry_slug,
+            new_entry_slug,
+            old_title=old_title,
+            new_title=new_title,
+        )
+        if result.count:
+            project.description = result.text
+            total += result.count
+
+    for entry in project.journal_entries:
+        if skip_entry_id is not None and entry.id == skip_entry_id:
+            continue
+        if not entry.content:
+            continue
+        result = rewrite_journal_references(
+            entry.content,
+            username,
+            project.slug,
+            old_entry_slug,
+            new_entry_slug,
+            old_title=old_title,
+            new_title=new_title,
+        )
+        if result.count:
+            entry.content = result.text
             total += result.count
 
     if total:

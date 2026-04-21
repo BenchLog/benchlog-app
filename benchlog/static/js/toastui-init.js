@@ -45,12 +45,25 @@
     // Project-scoped editors carry a JSON file index so the `files/…`
     // typeahead module can offer completions. Parse once and cache on the
     // mount; absent attribute → typeahead stays disabled for this editor
-    // (bio editor, anything outside a project context).
+    // (bio editor, anything outside a project context). The sibling
+    // `journal/…` index is parsed alongside — same gate, empty list
+    // allowed, so a project with no titled entries just shows files.
     if (mount.dataset.toastuiFileIndex) {
       try {
         mount.__fileLinkIndex = JSON.parse(mount.dataset.toastuiFileIndex);
       } catch (_) {
         mount.__fileLinkIndex = [];
+      }
+      if (mount.dataset.toastuiEntryIndex) {
+        try {
+          mount.__journalEntryIndex = JSON.parse(
+            mount.dataset.toastuiEntryIndex,
+          );
+        } catch (_) {
+          mount.__journalEntryIndex = [];
+        }
+      } else {
+        mount.__journalEntryIndex = [];
       }
       // Loose coupling: the autocomplete module registers itself on window
       // after this file loads (both tags use `defer`, so load order is

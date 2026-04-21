@@ -1,6 +1,6 @@
 """Routes for project files — browser, upload, detail, download, version, edit, delete.
 
-URL scheme matches updates/links: `/u/{username}/{slug}/files/...`. Visibility
+URL scheme matches journal/links: `/u/{username}/{slug}/files/...`. Visibility
 inherits the parent project (no per-file flag, like links). Mutation routes
 are owner-only with the same `_require_owned_project` pattern.
 
@@ -61,7 +61,7 @@ from benchlog.templating import templates
 router = APIRouter()
 
 
-# ---------- owner helper (same pattern as links/updates) ---------- #
+# ---------- owner helper (same pattern as links/journal) ---------- #
 
 
 async def _require_owned_project(
@@ -75,21 +75,22 @@ async def _require_owned_project(
     return project
 
 
-async def _load_project_with_updates(
+async def _load_project_with_journal(
     db: AsyncSession, project_id: uuid.UUID
 ) -> Project | None:
-    """Reload a project with `updates` eager-loaded so rename-tracking
-    helpers don't trip `raise_on_sql` when they walk `project.updates`.
+    """Reload a project with `journal_entries` eager-loaded so rename-tracking
+    helpers don't trip `raise_on_sql` when they walk
+    `project.journal_entries`.
 
     Kept local to this module — the file-rename markdown rewrite is the
-    only caller that needs updates eager-loaded without the full
+    only caller that needs journal entries eager-loaded without the full
     tag/link/file bundle that `get_project_by_username_and_slug` pulls.
     """
     from sqlalchemy import select as _select
 
     result = await db.execute(
         _select(Project)
-        .options(selectinload(Project.updates))
+        .options(selectinload(Project.journal_entries))
         .where(Project.id == project_id)
     )
     return result.scalar_one_or_none()
@@ -702,10 +703,10 @@ async def move_item(
         await db.commit()
         # DnD has no form, so there's no opt-out — moves always keep
         # markdown refs pointing at the new location.
-        project_with_updates = await _load_project_with_updates(db, project.id)
-        if project_with_updates is not None:
+        project_with_journal = await _load_project_with_journal(db, project.id)
+        if project_with_journal is not None:
             await apply_file_rename_to_project_markdown(
-                db, project_with_updates, old_full_path, new_full_path
+                db, project_with_journal, old_full_path, new_full_path
             )
         return Response(status_code=204)
 
@@ -731,10 +732,10 @@ async def move_item(
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
         await db.commit()
-        project_with_updates = await _load_project_with_updates(db, project.id)
-        if project_with_updates is not None:
+        project_with_journal = await _load_project_with_journal(db, project.id)
+        if project_with_journal is not None:
             await apply_folder_rename_to_project_markdown(
-                db, project_with_updates, src_path, new_path
+                db, project_with_journal, src_path, new_path
             )
         return Response(status_code=204)
 
@@ -838,10 +839,10 @@ async def rename_folder_route(
 
     ref_count = 0
     if update_refs == "1":
-        project_with_updates = await _load_project_with_updates(db, project.id)
-        if project_with_updates is not None:
+        project_with_journal = await _load_project_with_journal(db, project.id)
+        if project_with_journal is not None:
             ref_count = await apply_folder_rename_to_project_markdown(
-                db, project_with_updates, normalized_old, normalized_new
+                db, project_with_journal, normalized_old, normalized_new
             )
 
     if json_mode:
@@ -1144,7 +1145,7 @@ async def delete_file_version(
     """
     await _require_owned_project(db, user, username, slug)
     # Re-load through the public lookup so the detail-page re-render path
-    # gets every eager-load it needs (tags, updates, files, etc.) without
+    # gets every eager-load it needs (tags, journal, files, etc.) without
     # a second owner check.
     project = await get_project_by_username_and_slug(db, username, slug)
     assert project is not None  # _require_owned_project guarantees existence
@@ -1394,10 +1395,10 @@ async def update_file_metadata(
     ref_count = 0
     path_changed = old_full_path != new_full_path
     if path_changed and update_refs == "1":
-        project_with_updates = await _load_project_with_updates(db, project.id)
-        if project_with_updates is not None:
+        project_with_journal = await _load_project_with_journal(db, project.id)
+        if project_with_journal is not None:
             ref_count = await apply_file_rename_to_project_markdown(
-                db, project_with_updates, old_full_path, new_full_path
+                db, project_with_journal, old_full_path, new_full_path
             )
 
     if json_mode:

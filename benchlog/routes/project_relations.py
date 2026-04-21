@@ -38,7 +38,7 @@ async def _require_owned_project(
 ):
     """Return the caller's project or 404.
 
-    Mirrors `benchlog.routes.updates._require_owned_project` — URL
+    Mirrors `benchlog.routes.journal._require_owned_project` — URL
     username must match the signed-in user case-insensitively, and the
     slug must belong to them. Any mismatch collapses to 404.
     """

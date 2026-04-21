@@ -12,7 +12,7 @@ class LinkType(str, enum.Enum):
     """Link categorisation. Drives the icon + label on rendered link rows.
 
     Visibility inherits the parent project — we don't split links per-link
-    like we do with updates, since a link is essentially part of a
+    like we do with journal entries, since a link is essentially part of a
     project's metadata rather than standalone content.
     """
 

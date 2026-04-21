@@ -1,6 +1,7 @@
 """Whole-project export — /u/{u}/{s}/export returns a zip that round-trips
-the project metadata + file blobs. Visibility of updates is honoured: a
-guest on a public project only gets the public updates, owner gets all.
+the project metadata + file blobs. Visibility of journal entries is
+honoured: a guest on a public project only gets the public entries,
+owner gets all.
 """
 
 import io
@@ -12,11 +13,11 @@ import pytest
 
 from benchlog.config import settings
 from benchlog.models import (
+    JournalEntry,
     LinkType,
     Project,
     ProjectLink,
     ProjectStatus,
-    ProjectUpdate,
     Tag,
 )
 from benchlog.storage import get_storage
@@ -51,7 +52,7 @@ def _unzip(content: bytes) -> dict[str, bytes]:
 
 
 async def _seed_rich_project(db, *, is_public: bool = True) -> Project:
-    """Project with a tag, two updates (one public, one private), a link,
+    """Project with a tag, two journal entries (one public, one private), a link,
     and two files (one at root, one nested)."""
     user = await make_user(db, email="alice@test.com", username="alice")
     project = Project(
@@ -71,13 +72,13 @@ async def _seed_rich_project(db, *, is_public: bool = True) -> Project:
     db.add(ProjectTag(project_id=project.id, tag_id=tag.id))
     db.add_all(
         [
-            ProjectUpdate(
+            JournalEntry(
                 project_id=project.id,
                 title="Day 1",
                 content="Glued the tenons.",
                 is_public=True,
             ),
-            ProjectUpdate(
+            JournalEntry(
                 project_id=project.id,
                 title="Todo",
                 content="Still need to sand.",
@@ -101,7 +102,7 @@ async def _seed_rich_project(db, *, is_public: bool = True) -> Project:
 # ---------- owner export ---------- #
 
 
-async def test_owner_export_includes_every_update_and_every_file(client, db):
+async def test_owner_export_includes_every_entry_and_every_file(client, db):
     await _seed_rich_project(db)
     await login(client, "alice")
     # Two files — one at root, one nested under "models".
@@ -137,9 +138,9 @@ async def test_owner_export_includes_every_update_and_every_file(client, db):
     assert data["owner"]["username"] == "alice"
     assert data["tags"] == ["woodwork"]
 
-    # Owner sees both updates (including private).
-    update_titles = {u["title"] for u in data["updates"]}
-    assert update_titles == {"Day 1", "Todo"}
+    # Owner sees both entries (including private).
+    entry_titles = {e["title"] for e in data["journal_entries"]}
+    assert entry_titles == {"Day 1", "Todo"}
 
     # Both files are in the structured file list.
     file_paths = {(f["path"], f["filename"]) for f in data["files"]}
@@ -153,7 +154,7 @@ async def test_owner_export_includes_every_update_and_every_file(client, db):
 # ---------- guest export ---------- #
 
 
-async def test_guest_export_on_public_project_strips_private_updates(client, db):
+async def test_guest_export_on_public_project_strips_private_entries(client, db):
     await _seed_rich_project(db, is_public=True)
     await login(client, "alice")
     await _upload(
@@ -168,10 +169,10 @@ async def test_guest_export_on_public_project_strips_private_updates(client, db)
     archive = _unzip(resp.content)
     data = json.loads(archive["project.json"].decode("utf-8"))
 
-    # Guest only sees the public update.
-    update_titles = {u["title"] for u in data["updates"]}
-    assert update_titles == {"Day 1"}
-    assert "Todo" not in update_titles
+    # Guest only sees the public entry.
+    entry_titles = {e["title"] for e in data["journal_entries"]}
+    assert entry_titles == {"Day 1"}
+    assert "Todo" not in entry_titles
     # But files are still fully included (files inherit project visibility,
     # no per-file private flag).
     assert "files/public.md" in archive
@@ -194,7 +195,7 @@ async def test_guest_export_on_private_project_404s(client, db):
 
 
 async def test_export_works_on_empty_project(client, db):
-    """A project with no files / updates / links should still export —
+    """A project with no files / entries / links should still export —
     just project.json + README with the basics."""
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add(Project(
@@ -209,12 +210,12 @@ async def test_export_works_on_empty_project(client, db):
     archive = _unzip(resp.content)
     assert set(archive.keys()) == {"project.json", "README.md"}
     data = json.loads(archive["project.json"].decode("utf-8"))
-    assert data["updates"] == []
+    assert data["journal_entries"] == []
     assert data["links"] == []
     assert data["files"] == []
 
 
-# ---------- README + updates.md contents ---------- #
+# ---------- README + journal.md contents ---------- #
 
 
 async def test_readme_includes_title_description_links(client, db):
@@ -227,47 +228,47 @@ async def test_readme_includes_title_description_links(client, db):
     assert "# Bench" in readme
     assert "*by alice*" in readme
     assert "A sturdy workbench" in readme
-    # README references updates.md rather than inlining them.
-    assert "## Updates" in readme
-    assert "[`updates.md`](updates.md)" in readme
-    # Update bodies don't appear in README — they're in updates.md.
+    # README references journal.md rather than inlining them.
+    assert "## Journal" in readme
+    assert "[`journal.md`](journal.md)" in readme
+    # Entry bodies don't appear in README — they're in journal.md.
     assert "Glued the tenons." not in readme
     assert "Still need to sand." not in readme
     assert "## Links" in readme
     assert "[Inspiration](https://example.com/bench)" in readme
 
 
-async def test_updates_md_contains_every_update_for_owner(client, db):
+async def test_journal_md_contains_every_entry_for_owner(client, db):
     await _seed_rich_project(db)
     await login(client, "alice")
 
     resp = await client.get("/u/alice/bench/export")
     archive = _unzip(resp.content)
-    assert "updates.md" in archive
-    updates_md = archive["updates.md"].decode("utf-8")
-    assert "# Updates — Bench" in updates_md
-    assert "Day 1" in updates_md
-    assert "Glued the tenons." in updates_md
-    # Private updates are flagged, not hidden, on an owner export.
-    assert "Todo" in updates_md
-    assert "Still need to sand." in updates_md
-    assert "_(private)_" in updates_md
+    assert "journal.md" in archive
+    journal_md = archive["journal.md"].decode("utf-8")
+    assert "# Journal — Bench" in journal_md
+    assert "Day 1" in journal_md
+    assert "Glued the tenons." in journal_md
+    # Private entries are flagged, not hidden, on an owner export.
+    assert "Todo" in journal_md
+    assert "Still need to sand." in journal_md
+    assert "_(private)_" in journal_md
 
 
-async def test_updates_md_for_guest_strips_private(client, db):
+async def test_journal_md_for_guest_strips_private(client, db):
     await _seed_rich_project(db, is_public=True)
     client.cookies.clear()
 
     resp = await client.get("/u/alice/bench/export")
     archive = _unzip(resp.content)
-    updates_md = archive["updates.md"].decode("utf-8")
-    # Only the public update renders for a guest.
-    assert "Glued the tenons." in updates_md
-    assert "Still need to sand." not in updates_md
-    assert "_(private)_" not in updates_md
+    journal_md = archive["journal.md"].decode("utf-8")
+    # Only the public entry renders for a guest.
+    assert "Glued the tenons." in journal_md
+    assert "Still need to sand." not in journal_md
+    assert "_(private)_" not in journal_md
 
 
-async def test_updates_md_is_omitted_when_no_updates(client, db):
+async def test_journal_md_is_omitted_when_no_entries(client, db):
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add(Project(
         user_id=user.id, title="Silent", slug="silent",
@@ -278,7 +279,7 @@ async def test_updates_md_is_omitted_when_no_updates(client, db):
 
     resp = await client.get("/u/alice/silent/export")
     archive = _unzip(resp.content)
-    assert "updates.md" not in archive
+    assert "journal.md" not in archive
 
 
 # ---------- README: cover + gallery annotations ---------- #

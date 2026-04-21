@@ -9,10 +9,10 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.models import (
     FileVersion,
+    JournalEntry,
     Project,
     ProjectFile,
     ProjectLink,
-    ProjectUpdate,
     RelationType,
     User,
 )
@@ -98,7 +98,9 @@ async def fork_project(
 
     Hard copy semantics:
     - Descriptive fields (title, description, status, cover + crop) copied.
-    - Category memberships, tags, updates, outbound links copied.
+    - Category memberships, tags, journal entries, outbound links copied.
+    - Journal entry slugs copied verbatim — they're per-project unique, so
+      the source's slug is always free in the new project's namespace.
     - Every `ProjectFile` + every `FileVersion` copied, including the
       physical blob (via `benchlog.files.copy_blob`). Thumbnails come
       along for the ride for image versions.
@@ -108,6 +110,7 @@ async def fork_project(
       `fork_of` edge described below)
     - collection memberships
     - `pinned`
+    - `is_pinned` on journal entries — a fresh fork starts with no pins
     - `is_public` — forks default to PRIVATE regardless of source
     - slug stays the same, deduped inside the actor's namespace
 
@@ -123,9 +126,10 @@ async def fork_project(
     - `actor_user` cannot own `source_project` (ForkError: self-fork).
     - `source_project.is_public` must be True (ForkError: not forkable).
 
-    Requires `source_project` to have `tags`, `categories`, `updates`,
-    `links`, and `files` (with `versions` + `current_version`) eager-loaded
-    — the `raise_on_sql` relationships on `Project` would otherwise trip.
+    Requires `source_project` to have `tags`, `categories`,
+    `journal_entries`, `links`, and `files` (with `versions` +
+    `current_version`) eager-loaded — the `raise_on_sql` relationships on
+    `Project` would otherwise trip.
     """
     # Local imports to sidestep a circular chain (files imports projects'
     # siblings; project_relations would pull us into auth).
@@ -147,7 +151,7 @@ async def fork_project(
         .options(
             selectinload(Project.tags),
             selectinload(Project.categories),
-            selectinload(Project.updates),
+            selectinload(Project.journal_entries),
             selectinload(Project.links),
             selectinload(Project.files).selectinload(ProjectFile.versions),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
@@ -184,14 +188,19 @@ async def fork_project(
     # Flush so `new_project.id` is available for child FKs.
     await db.flush()
 
-    # ---- updates ----
-    for update in source_project.updates:
+    # ---- journal entries ----
+    # Slugs are per-project unique, so the source's slug is always free in
+    # the fork's namespace — copy verbatim without reslugifying. Pin state
+    # resets so the fork starts with a clean feed ordering.
+    for entry in source_project.journal_entries:
         db.add(
-            ProjectUpdate(
+            JournalEntry(
                 project_id=new_project.id,
-                title=update.title,
-                content=update.content,
-                is_public=update.is_public,
+                title=entry.title,
+                slug=entry.slug,
+                content=entry.content,
+                is_public=entry.is_public,
+                is_pinned=False,
             )
         )
 
@@ -319,9 +328,9 @@ async def get_project_by_username_and_slug(
     """Look up the canonical `/u/{username}/{slug}` view target.
 
     Username matching is case-insensitive so `/u/Alice/foo` and
-    `/u/alice/foo` land on the same project. Tags, owner, updates,
-    links, and files (with current versions) are eager-loaded so the
-    detail template doesn't trip the `raise_on_sql` guard.
+    `/u/alice/foo` land on the same project. Tags, owner, journal
+    entries, links, and files (with current versions) are eager-loaded
+    so the detail template doesn't trip the `raise_on_sql` guard.
     """
     from benchlog.models import ProjectFile  # local to avoid circular import
 
@@ -331,7 +340,7 @@ async def get_project_by_username_and_slug(
             selectinload(Project.user),
             selectinload(Project.tags),
             selectinload(Project.categories),
-            selectinload(Project.updates),
+            selectinload(Project.journal_entries),
             selectinload(Project.links),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
             selectinload(Project.cover_file).selectinload(ProjectFile.current_version),

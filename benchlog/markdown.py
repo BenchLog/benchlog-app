@@ -1,10 +1,10 @@
-"""Markdown rendering for project descriptions and updates.
+"""Markdown rendering for project descriptions and journal entries.
 
 GFM-like: tables, strikethrough, autolinks, task lists, footnotes.
 
 The file-link rewriter (`rewrite_project_file_links`) resolves links of the
 form `files/path/to/name.ext` inside rendered HTML to project file URLs, so
-update authors can reference files by their virtual path without knowing
+entry authors can reference files by their virtual path without knowing
 their database IDs.
 """
 
@@ -64,6 +64,11 @@ _FILES_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+_JOURNAL_LINK_RE = re.compile(
+    r'(<a\s[^>]*?)href="journal/([^"]*)"',
+    re.IGNORECASE,
+)
+
 
 def rewrite_project_file_links(
     html: str,
@@ -100,20 +105,49 @@ def rewrite_project_file_links(
     return _FILES_LINK_RE.sub(_replace, html)
 
 
+def rewrite_project_journal_links(
+    html: str,
+    username: str,
+    slug: str,
+) -> str:
+    """Rewrite `href="journal/<entry_slug>"` anchors to canonical URLs.
+
+    The autocomplete inserts relative `journal/<slug>` hrefs; this turns
+    them into `/u/{username}/{slug}/journal/<entry_slug>` so they resolve
+    the same from any rendering context (description, sibling entries,
+    AJAX swaps). A dangling slug (entry since deleted or renamed) still
+    routes to a 404 rather than a mystery location.
+    """
+    base = f"/u/{username}/{slug}/journal"
+
+    def _replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        rel = match.group(2)
+        # Strip any stray leading slash; otherwise pass the slug through
+        # as the authoritative last segment.
+        rel = rel.lstrip("/")
+        return f'{prefix}href="{base}/{rel}"'
+
+    return _JOURNAL_LINK_RE.sub(_replace, html)
+
+
 def render_for_project(
     text: str,
     username: str,
     slug: str,
     file_lookup: FileLookup | None = None,
 ) -> str:
-    return rewrite_project_file_links(render(text), username, slug, file_lookup)
+    html = render(text)
+    html = rewrite_project_file_links(html, username, slug, file_lookup)
+    html = rewrite_project_journal_links(html, username, slug)
+    return html
 
 
 def build_file_lookup_from_files(files) -> FileLookup:
     """Build a FileLookup callable from an eager-loaded ProjectFile list.
 
     Used by routes that already have `project.files` loaded (the detail
-    page, updates tab, etc. via `get_project_by_username_and_slug`). For
+    page, journal tab, etc. via `get_project_by_username_and_slug`). For
     routes that don't eager-load, see `benchlog.files.get_project_file_lookup`.
     """
     index: dict[tuple[str, str], str] = {}

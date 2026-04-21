@@ -13,6 +13,7 @@ specific element, keeping the view truthful to "this is how others see me."
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from benchlog.collections import get_public_collections_for_user
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
 from benchlog.models import User
@@ -45,6 +46,11 @@ async def profile_page(
     public_projects = await get_public_projects_for_user(
         db, profile_user.id, limit=PROFILE_PROJECT_LIMIT
     )
+    # Public collections surface on the profile under the projects grid.
+    # Returned as a list of (collection, project_count) tuples.
+    public_collections = await get_public_collections_for_user(
+        db, profile_user.id
+    )
 
     is_owner = viewer is not None and viewer.id == profile_user.id
 
@@ -57,6 +63,7 @@ async def profile_page(
             "profile_user": profile_user,
             "social_links": profile_user.social_links,
             "public_projects": public_projects,
+            "public_collections": public_collections,
             "is_owner": is_owner,
         },
     )

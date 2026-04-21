@@ -33,7 +33,7 @@
                     <img src="{{ url_for('static', path='favicon.svg') }}" alt="" width="40" height="40" class="shrink-0">
                     <span><span class="font-normal">Bench</span><span class="font-bold text-rust">Log</span></span>
                 </a>
-                {% set nav_links = [('/projects', 'My Projects'), ('/explore', 'Explore')] %}
+                {% set nav_links = [('/projects', 'My Projects'), ('/u/' ~ user.username ~ '/collections', 'Collections'), ('/explore', 'Explore')] %}
                 <div class="flex items-center gap-1 mr-auto text-sm">
                     {% for href, label in nav_links %}
                         {% set active = request.url.path == href or request.url.path.startswith(href + '/') %}

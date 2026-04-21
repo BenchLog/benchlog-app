@@ -50,6 +50,9 @@ class User(TimestampMixin, Base):
     projects: Mapped[list["Project"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan", lazy="raise_on_sql"
     )
+    collections: Mapped[list["Collection"]] = relationship(  # noqa: F821
+        back_populates="user", cascade="all, delete-orphan", lazy="raise_on_sql"
+    )
     social_links: Mapped[list["UserSocialLink"]] = relationship(  # noqa: F821
         back_populates="user",
         cascade="all, delete-orphan",

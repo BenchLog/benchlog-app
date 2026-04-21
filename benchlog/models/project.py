@@ -98,6 +98,11 @@ class Project(TimestampMixin, Base):
         back_populates="projects",
         lazy="raise_on_sql",
     )
+    collections: Mapped[list["Collection"]] = relationship(  # noqa: F821
+        secondary="collection_projects",
+        back_populates="projects",
+        lazy="raise_on_sql",
+    )
     updates: Mapped[list["ProjectUpdate"]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",

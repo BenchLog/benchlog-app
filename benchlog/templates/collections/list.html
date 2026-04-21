@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Collections · {{ profile_user.display_name }} · BenchLog{% endblock %}
+{% block content %}
+
+<div class="meta mb-2">
+    <a href="/u/{{ profile_user.username }}" class="hover:text-rust">@{{ profile_user.username }}</a>
+    / Collections
+</div>
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-6">
+    <h1 class="text-3xl">
+        {% if is_owner %}My Collections{% else %}{{ profile_user.display_name }}'s Collections{% endif %}
+    </h1>
+    {% if is_owner %}
+    <a href="/u/{{ profile_user.username }}/collections/new" class="btn-primary text-sm">New collection</a>
+    {% endif %}
+</div>
+
+{% if collection_rows %}
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+    {% for collection, project_count in collection_rows %}
+    <li>
+        {% with owner_username = profile_user.username,
+                show_visibility = is_owner %}
+            {% include "components/collection_card.html" %}
+        {% endwith %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    {% if is_owner %}
+    <p class="text-ink-muted mb-4">You haven't created any collections yet.</p>
+    <a href="/u/{{ profile_user.username }}/collections/new" class="btn-primary text-sm">Start your first collection</a>
+    {% else %}
+    <p class="text-ink-muted">No public collections yet.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

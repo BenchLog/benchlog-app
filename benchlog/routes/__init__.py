@@ -4,6 +4,7 @@ from benchlog.routes import (
     account,
     admin,
     auth,
+    collections,
     explore,
     export,
     files,
@@ -28,6 +29,10 @@ def register_routes(app: FastAPI) -> None:
     # different depths can't actually collide. Keep it in this slot so
     # future 2-segment `/u/...` routes land together.
     app.include_router(profile.router)
+    # Collections lives under /u/{username}/collections/... — register
+    # before `projects` so `/u/{u}/collections/...` doesn't get shadowed
+    # by the `/u/{username}/{slug}` project-detail catch-all.
+    app.include_router(collections.router)
     app.include_router(projects.router)
     app.include_router(updates.router)
     app.include_router(links.router)

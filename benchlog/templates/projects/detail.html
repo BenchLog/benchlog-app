@@ -15,6 +15,454 @@
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
+{% if is_owner %}
+<section class="mb-4" data-collections-picker>
+    <div class="flex flex-wrap items-center gap-2">
+        <span class="meta">Collections:</span>
+        <div class="flex flex-wrap items-center gap-2" data-collections-chips>
+            {% set memberships = [] %}
+            {% for c in owner_collections if c.id in project_collection_ids %}
+                {% set _ = memberships.append(c) %}
+            {% endfor %}
+            {% if memberships %}
+                {% for c in memberships %}
+                <a href="/u/{{ project.user.username }}/collections/{{ c.slug }}"
+                   data-collection-chip="{{ c.id }}"
+                   class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust">
+                    {{ c.name }}
+                </a>
+                {% endfor %}
+            {% else %}
+                <span class="meta italic" data-collections-empty>None yet</span>
+            {% endif %}
+        </div>
+        <button type="button"
+                class="btn-ghost text-xs"
+                data-collections-open
+                aria-haspopup="dialog"
+                aria-controls="collections-modal">
+            <i data-lucide="bookmark-plus" class="w-3.5 h-3.5 inline mr-1"></i>
+            Add to collection…
+        </button>
+    </div>
+</section>
+
+<dialog id="collections-modal"
+        class="modal"
+        data-collections-modal
+        data-project-id="{{ project.id }}"
+        data-project-title="{{ project.title }}"
+        data-toggle-url-prefix="/u/{{ project.user.username }}/collections/"
+        data-create-url="/u/{{ project.user.username }}/collections">
+    {# Combobox-style picker: search existing collections or type a name
+       that doesn't match to create a new one inline. Selected collections
+       appear as pills above the search; clicking × removes membership
+       (same JSON toggle endpoint the chip row uses). Matches the feel
+       of the tag / category pickers elsewhere in the app. #}
+    <form method="dialog" class="modal-body space-y-3">
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">Add to collections</h3>
+            <button type="submit" class="btn-ghost text-sm" aria-label="Close">Close</button>
+        </header>
+
+        {# Options catalog — same JSON-in-script approach the category
+           combobox uses so the client can filter + render without
+           another fetch. #}
+        {% set _coll_payload = [] %}
+        {% for c in owner_collections %}
+            {% set _ = _coll_payload.append({
+                'id': c.id|string,
+                'slug': c.slug,
+                'name': c.name,
+                'is_public': c.is_public,
+            }) %}
+        {% endfor %}
+        <script type="application/json" data-collections-options>{{ _coll_payload|tojson }}</script>
+        <script type="application/json" data-collections-initial>{{ (project_collection_ids|list)|map('string')|list|tojson }}</script>
+
+        <div class="tag-input-inner" data-collections-inner>
+            <div class="contents" data-collections-pills></div>
+            <input type="text"
+                   class="tag-input-search"
+                   data-collections-search
+                   placeholder="Search or type to create…"
+                   aria-label="Search or create a collection"
+                   aria-autocomplete="list"
+                   aria-expanded="false"
+                   autocomplete="off">
+        </div>
+        <div class="tag-input-dropdown"
+             data-collections-dropdown
+             role="listbox"
+             hidden></div>
+
+        <p class="meta hidden" data-collections-error role="alert"></p>
+    </form>
+</dialog>
+
+<script>
+  (() => {
+    const modal = document.querySelector('[data-collections-modal]');
+    const openBtn = document.querySelector('[data-collections-open]');
+    if (!modal || !openBtn) return;
+
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const projectId = modal.dataset.projectId;
+    const urlPrefix = modal.dataset.toggleUrlPrefix;
+    const createUrl = modal.dataset.createUrl;
+    const chipsWrap = document.querySelector('[data-collections-chips]');
+    const emptyLabel = () => chipsWrap?.querySelector('[data-collections-empty]');
+    const errorEl = modal.querySelector('[data-collections-error]');
+    const inner = modal.querySelector('[data-collections-inner]');
+    const pillsEl = modal.querySelector('[data-collections-pills]');
+    const searchEl = modal.querySelector('[data-collections-search]');
+    const dropdownEl = modal.querySelector('[data-collections-dropdown]');
+
+    // Parse server-pre-hydrated options + initial membership set.
+    let options;
+    try {
+      options = JSON.parse(
+        modal.querySelector('[data-collections-options]').textContent
+      );
+    } catch (_) { options = []; }
+    let selected;
+    try {
+      selected = new Set(
+        JSON.parse(modal.querySelector('[data-collections-initial]').textContent)
+      );
+    } catch (_) { selected = new Set(); }
+    let activeIdx = -1;
+
+    const findById = (id) => options.find((o) => o.id === id);
+
+    const showError = (msg) => {
+      if (!errorEl) return;
+      if (msg) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+      } else {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+      }
+    };
+
+    const exactMatchByName = (q) => {
+      const needle = q.trim().toLowerCase();
+      return options.find((o) => o.name.toLowerCase() === needle);
+    };
+
+    const visibleOptions = () => {
+      const q = searchEl.value.trim().toLowerCase();
+      const unadded = options.filter((o) => !selected.has(o.id));
+      if (!q) return unadded.slice(0, 15).map((o) => ({ kind: 'existing', opt: o }));
+      const matches = unadded
+        .filter((o) => o.name.toLowerCase().includes(q))
+        .slice(0, 15)
+        .map((o) => ({ kind: 'existing', opt: o }));
+      // Offer a create option when the typed name isn't already an option
+      // (regardless of whether it's currently a member — otherwise we'd
+      // push people to create duplicates once a collection is added).
+      if (!exactMatchByName(q)) {
+        matches.push({ kind: 'create', name: searchEl.value.trim() });
+      }
+      return matches;
+    };
+
+    const renderPills = () => {
+      pillsEl.innerHTML = '';
+      for (const id of selected) {
+        const opt = findById(id);
+        const label = opt ? opt.name : '(missing)';
+        const pill = document.createElement('span');
+        pill.className = 'tag-pill';
+        pill.dataset.pillCollection = id;
+        const text = document.createElement('span');
+        text.textContent = label;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tag-pill-remove';
+        btn.setAttribute('aria-label', 'Remove ' + label);
+        btn.dataset.removeCollection = id;
+        btn.textContent = '\u00D7';
+        pill.appendChild(text);
+        pill.appendChild(btn);
+        pillsEl.appendChild(pill);
+      }
+    };
+
+    // Position the dropdown with `position: fixed` anchored to the input's
+    // bounding rect — the default `absolute` positioning via
+    // `.tag-input-dropdown` resolves relative to the nearest positioned
+    // ancestor, which inside a <dialog> can leave it behind the backdrop
+    // or misaligned. Fixed-positioning inside the dialog rides the same
+    // top-layer as the modal itself.
+    const positionDropdown = () => {
+      const rect = searchEl.getBoundingClientRect();
+      dropdownEl.style.position = 'fixed';
+      dropdownEl.style.top = `${Math.round(rect.bottom + 4)}px`;
+      dropdownEl.style.left = `${Math.round(rect.left)}px`;
+      dropdownEl.style.width = `${Math.round(rect.width)}px`;
+      dropdownEl.style.zIndex = '1000';
+    };
+
+    const renderDropdown = () => {
+      const items = visibleOptions();
+      dropdownEl.innerHTML = '';
+      if (items.length === 0) {
+        dropdownEl.hidden = true;
+        searchEl.setAttribute('aria-expanded', 'false');
+        activeIdx = -1;
+        return;
+      }
+      if (activeIdx >= items.length) activeIdx = items.length - 1;
+      if (activeIdx < 0) activeIdx = 0;
+      items.forEach((item, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'tag-option' + (i === activeIdx ? ' is-active' : '');
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('aria-selected', i === activeIdx ? 'true' : 'false');
+        if (item.kind === 'existing') {
+          btn.dataset.addCollection = item.opt.id;
+          btn.textContent = item.opt.name;
+        } else {
+          btn.dataset.createCollection = item.name;
+          btn.textContent = 'Create "' + item.name + '"';
+        }
+        dropdownEl.appendChild(btn);
+      });
+      dropdownEl.hidden = false;
+      searchEl.setAttribute('aria-expanded', 'true');
+      positionDropdown();
+    };
+
+    // Chip row on the page above the modal — mirror pill state.
+    const updatePageChips = () => {
+      if (!chipsWrap) return;
+      chipsWrap.innerHTML = '';
+      if (selected.size === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'meta italic';
+        empty.dataset.collectionsEmpty = '';
+        empty.textContent = 'None yet';
+        chipsWrap.appendChild(empty);
+        return;
+      }
+      for (const id of selected) {
+        const opt = findById(id);
+        if (!opt) continue;
+        const a = document.createElement('a');
+        a.href = urlPrefix + opt.slug;
+        a.className = 'inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust';
+        a.dataset.collectionChip = id;
+        a.textContent = opt.name;
+        chipsWrap.appendChild(a);
+      }
+    };
+
+    const syncAll = () => {
+      renderPills();
+      renderDropdown();
+      updatePageChips();
+    };
+
+    async function postToggle(slug, action) {
+      const resp = await fetch(urlPrefix + slug + '/projects', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ project_id: projectId, action }),
+      });
+      if (!resp.ok) throw new Error('toggle failed ' + resp.status);
+    }
+
+    async function postCreate(name) {
+      const body = new URLSearchParams();
+      body.set('_csrf', csrf);
+      body.set('name', name);
+      const resp = await fetch(createUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+      if (!resp.ok) {
+        let detail = 'Could not create collection.';
+        try {
+          const data = await resp.json();
+          if (data?.detail) detail = data.detail;
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      return resp.json();
+    }
+
+    async function addExisting(id) {
+      const opt = findById(id);
+      if (!opt) return;
+      showError('');
+      // Optimistic.
+      selected.add(id);
+      searchEl.value = '';
+      activeIdx = 0;
+      syncAll();
+      try {
+        await postToggle(opt.slug, 'add');
+      } catch (e) {
+        selected.delete(id);
+        syncAll();
+        showError('Could not add to ' + opt.name + '. Try again.');
+      }
+    }
+
+    async function removeMembership(id) {
+      const opt = findById(id);
+      if (!opt) return;
+      showError('');
+      selected.delete(id);
+      syncAll();
+      try {
+        await postToggle(opt.slug, 'remove');
+      } catch (e) {
+        selected.add(id);
+        syncAll();
+        showError('Could not remove from ' + opt.name + '. Try again.');
+      }
+    }
+
+    async function createAndAdd(name) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      showError('');
+      let created;
+      try {
+        created = await postCreate(trimmed);
+      } catch (e) {
+        showError(e.message || 'Could not create collection.');
+        return;
+      }
+      // Push the new one into the options catalog + mark selected.
+      options.push({
+        id: created.id,
+        slug: created.slug,
+        name: created.name,
+        is_public: !!created.is_public,
+      });
+      selected.add(created.id);
+      searchEl.value = '';
+      activeIdx = 0;
+      syncAll();
+      // Server-side: creating the collection doesn't add the project.
+      // Fire the add as a follow-up.
+      try {
+        await postToggle(created.slug, 'add');
+      } catch (e) {
+        selected.delete(created.id);
+        syncAll();
+        showError('Created "' + created.name + '" but couldn\'t add the project. Try again.');
+      }
+    }
+
+    // ---- events ---- //
+
+    openBtn.addEventListener('click', () => {
+      showError('');
+      searchEl.value = '';
+      activeIdx = 0;
+      if (typeof modal.showModal === 'function') {
+        modal.showModal();
+      } else {
+        modal.setAttribute('open', '');
+      }
+      requestAnimationFrame(() => {
+        renderDropdown();
+        searchEl.focus();
+      });
+    });
+
+    inner.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      searchEl.focus();
+    });
+
+    pillsEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-remove-collection]');
+      if (btn) removeMembership(btn.dataset.removeCollection);
+    });
+
+    dropdownEl.addEventListener('mousedown', (e) => {
+      // mousedown (not click) so we fire before the search input's blur.
+      const addBtn = e.target.closest('[data-add-collection]');
+      if (addBtn) {
+        e.preventDefault();
+        addExisting(addBtn.dataset.addCollection);
+        searchEl.focus();
+        return;
+      }
+      const createBtn = e.target.closest('[data-create-collection]');
+      if (createBtn) {
+        e.preventDefault();
+        createAndAdd(createBtn.dataset.createCollection);
+        searchEl.focus();
+      }
+    });
+
+    searchEl.addEventListener('input', () => { activeIdx = 0; renderDropdown(); });
+    searchEl.addEventListener('focus', () => { renderDropdown(); });
+    searchEl.addEventListener('keydown', (e) => {
+      const items = visibleOptions();
+      if (e.key === 'ArrowDown') {
+        if (items.length) { e.preventDefault(); activeIdx = (activeIdx + 1) % items.length; renderDropdown(); }
+      } else if (e.key === 'ArrowUp') {
+        if (items.length) { e.preventDefault(); activeIdx = (activeIdx - 1 + items.length) % items.length; renderDropdown(); }
+      } else if (e.key === 'Enter') {
+        if (items.length && activeIdx >= 0) {
+          const item = items[activeIdx];
+          e.preventDefault();
+          if (item.kind === 'existing') addExisting(item.opt.id);
+          else createAndAdd(item.name);
+        }
+      } else if (e.key === 'Escape') {
+        // First Esc: just clear the filter. Second Esc: dialog handles close.
+        if (searchEl.value) {
+          e.preventDefault();
+          searchEl.value = '';
+          renderDropdown();
+        }
+      } else if (e.key === 'Backspace' && !searchEl.value && selected.size) {
+        // Backspace on empty input removes the last selected pill.
+        e.preventDefault();
+        const last = Array.from(selected).pop();
+        if (last) removeMembership(last);
+      }
+    });
+
+    // Keep the dropdown anchored to the input if the dialog's internal
+    // content scrolls or the viewport resizes.
+    window.addEventListener('scroll', () => {
+      if (!dropdownEl.hidden) positionDropdown();
+    }, true);
+    window.addEventListener('resize', () => {
+      if (!dropdownEl.hidden) positionDropdown();
+    });
+
+    // Hide the dropdown when the dialog closes so it doesn't stay
+    // floating on screen.
+    modal.addEventListener('close', () => {
+      dropdownEl.hidden = true;
+    });
+
+    // Initial render so pills reflect the pre-hydrated membership set.
+    syncAll();
+  })();
+</script>
+{% endif %}
+
 {% if project.description or is_owner %}
 <section class="card" data-description-section>
     <div class="flex items-baseline justify-between mb-3">

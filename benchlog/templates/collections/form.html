@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}{% if collection %}Edit {{ collection.name }}{% else %}New collection{% endif %} · BenchLog{% endblock %}
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+{% set collections_url = '/u/' ~ user.username ~ '/collections' %}
+{% set collection_url = collections_url ~ '/' ~ collection.slug if collection else None %}
+<div class="meta mb-2">
+    <a href="{{ collections_url }}" class="hover:text-rust">Collections</a>
+    {% if collection %} / <a href="{{ collection_url }}" class="hover:text-rust">{{ collection.name }}</a> / Edit{% else %} / New{% endif %}
+</div>
+<h1 class="text-3xl mb-6">{% if collection %}Edit collection{% else %}New collection{% endif %}</h1>
+
+{% if error %}
+<div class="card max-w-2xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
+    {{ error }}
+</div>
+{% endif %}
+
+<form method="post"
+      action="{% if collection %}{{ collection_url }}{% else %}{{ collections_url }}{% endif %}"
+      class="card max-w-2xl space-y-4">
+    {% include "components/_csrf.html" %}
+
+    <div>
+        <label for="name">Name</label>
+        <input id="name" name="name" type="text" required maxlength="200"
+               value="{{ form_values.name }}" autofocus>
+    </div>
+
+    <div>
+        <label for="slug">URL slug</label>
+        <input id="slug" name="slug" type="text" maxlength="120"
+               {% if collection %}required data-original-slug="{{ collection.slug }}"{% endif %}
+               value="{{ form_values.slug }}"
+               placeholder="{% if not collection %}auto-generated from name{% endif %}">
+        <p class="meta mt-1">
+            Letters, numbers, hyphens. Shows up in the URL: <code>/u/{{ user.username }}/collections/<span class="text-ink">your-slug</span></code>
+            {% if not collection %} · leave blank to auto-generate from the name.{% endif %}
+        </p>
+        {% if collection %}
+        <div data-slug-warning hidden
+             class="mt-2 text-sm text-rust-deep border border-rust-deep rounded px-3 py-2 bg-rust/10"
+             role="alert">
+            <strong>Heads up:</strong> changing the slug changes this collection's URL. Any existing links pointing to <code>/u/{{ user.username }}/collections/{{ collection.slug }}</code> will stop working.
+        </div>
+        {% endif %}
+    </div>
+
+    <div>
+        <label for="toastui-source-collection-description">Description</label>
+        {% with name="description", value=form_values.description, id_suffix="collection-description", min_height="240px", placeholder="Optional — a short note on what ties these projects together." %}
+            {% include "components/_toastui_editor.html" %}
+        {% endwith %}
+        <p class="meta mt-1">Markdown is supported.</p>
+    </div>
+
+    <div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="is_public" value="1" {% if form_values.is_public %}checked{% endif %}>
+            Public — shown on your profile
+        </label>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 pt-2">
+        <button type="submit" class="btn-primary text-sm">
+            {% if collection %}Save changes{% else %}Create collection{% endif %}
+        </button>
+        <a href="{% if collection %}{{ collection_url }}{% else %}{{ collections_url }}{% endif %}" class="btn-ghost text-sm">Cancel</a>
+    </div>
+</form>
+
+{% if collection %}
+<form method="post" action="{{ collection_url }}/delete"
+      class="max-w-2xl mt-4"
+      data-confirm
+      data-confirm-title="Delete collection?"
+      data-confirm-body="{{ collection.name }} will be removed. The projects inside stay untouched."
+      data-confirm-ok="Delete collection">
+    {% include "components/_csrf.html" %}
+    <button type="submit" class="btn-danger text-sm">Delete collection</button>
+</form>
+<script>
+  (() => {
+    const input = document.getElementById("slug");
+    const warning = document.querySelector("[data-slug-warning]");
+    if (!input || !warning) return;
+    const original = (input.dataset.originalSlug || "").toLowerCase();
+    const update = () => {
+      warning.hidden = input.value.trim().toLowerCase() === original;
+    };
+    input.addEventListener("input", update);
+    update();
+  })();
+</script>
+{% endif %}
+
+{% endblock %}

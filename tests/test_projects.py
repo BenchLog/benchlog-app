@@ -1658,7 +1658,11 @@ async def test_project_form_renders_known_category_options(client, db):
 
     resp = await client.get("/projects/new")
     assert 'data-category-input' in resp.text
-    assert 'Woodworking \u203a Joinery' in resp.text
+    # Combobox emits the breadcrumb as a JSON array of segments (not the
+    # joined `›` string) so the client JS can render Lucide chevrons
+    # between parts. Assert both segments appear in the options payload.
+    assert '"Woodworking"' in resp.text
+    assert '"Joinery"' in resp.text
 
 
 async def test_create_project_drops_unknown_category_ids_silently(client, db):

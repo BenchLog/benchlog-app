@@ -43,8 +43,16 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # /u/{username}
     if len(parts) == 1:
         return True
+    # /u/{username}/collections — list page (before the generic
+    # 2-segment case so it's explicit in the whitelist).
+    if len(parts) == 2 and parts[1] == "collections":
+        return True
     # /u/{username}/{slug}
     if len(parts) == 2:
+        return True
+    # /u/{username}/collections/{slug} — detail page. Literal "new" is
+    # owner-only (the create form), so it stays auth-gated.
+    if len(parts) == 3 and parts[1] == "collections" and parts[2] != "new":
         return True
     # /u/{username}/{slug}/{updates|links|files|gallery|export}
     if len(parts) == 3 and parts[2] in {

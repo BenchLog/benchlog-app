@@ -1,0 +1,47 @@
+{# Compact card for the collections list page.
+   Args:
+     collection        — required
+     owner_username    — string; used to build the detail link (avoids
+                         touching `collection.user` which is raise_on_sql
+                         and not eager-loaded for list views).
+     project_count     — int; rendered as the "N projects" chip
+     show_visibility   — optional bool; when truthy, show public/private
+                         indicator (owner view only — guests only ever see
+                         public ones). #}
+<article class="card relative hover:border-rust transition-colors">
+    <div class="flex items-start justify-between gap-3 mb-2">
+        <h3 class="text-lg leading-tight text-ink m-0 min-w-0 flex-1">
+            <a href="/u/{{ owner_username }}/collections/{{ collection.slug }}"
+               class="stretched-link no-underline text-ink hover:text-rust"
+               title="{{ collection.name }}">
+                <span class="line-clamp-2">{{ collection.name }}</span>
+            </a>
+        </h3>
+        <span class="meta border border-edge rounded-full px-2 py-0.5 shrink-0">
+            {{ project_count }} {{ 'project' if project_count == 1 else 'projects' }}
+        </span>
+    </div>
+    {% if collection.description %}
+    <p class="text-sm text-ink-muted line-clamp-3">{{ collection.description }}</p>
+    {% else %}
+    <p class="text-sm text-ink-muted italic">No description.</p>
+    {% endif %}
+    <div class="mt-3 meta flex items-center gap-3">
+        <span>Updated {{ collection.updated_at.strftime("%Y-%m-%d") }}</span>
+        {% if show_visibility %}
+            {% if collection.is_public %}
+            <span class="inline-flex items-center gap-1 text-rust-deep"
+                  title="Public — shown on your profile">
+                <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                Public
+            </span>
+            {% else %}
+            <span class="inline-flex items-center gap-1"
+                  title="Private — only you can see this collection">
+                <i data-lucide="lock" class="w-3.5 h-3.5"></i>
+                Private
+            </span>
+            {% endif %}
+        {% endif %}
+    </div>
+</article>

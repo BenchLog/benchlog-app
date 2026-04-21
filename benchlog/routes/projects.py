@@ -12,6 +12,10 @@ from benchlog.categories import (
     get_categories_flat,
     set_project_categories,
 )
+from benchlog.collections import (
+    get_project_collection_memberships,
+    list_user_collections,
+)
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.files import get_project_file_index, get_project_file_lookup
@@ -549,6 +553,18 @@ async def project_detail(
     # labels come from this flat lookup rather than walking `parent`
     # (raise_on_sql guards against that).
     category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
+    # Owner-only: pre-hydrate the add-to-collections modal with the full
+    # list of the owner's collections + a set of which ones currently
+    # contain this project. Passing as context (not a separate fetch)
+    # avoids a round-trip on modal open and keeps the button's "N" chip
+    # accurate on first paint.
+    owner_collections = []
+    project_collection_ids: set = set()
+    if is_owner:
+        owner_collections = await list_user_collections(db, user.id)
+        project_collection_ids = await get_project_collection_memberships(
+            db, user.id, project.id
+        )
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -561,6 +577,8 @@ async def project_detail(
             "category_href_prefix": "/explore",
             "category_breadcrumbs": category_breadcrumbs,
             "file_index": file_index,
+            "owner_collections": owner_collections,
+            "project_collection_ids": project_collection_ids,
         },
     )
 

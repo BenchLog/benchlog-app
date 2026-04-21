@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}{{ collection.name }} · BenchLog{% endblock %}
+{% block head_meta %}
+    {# OG / Twitter preview tags — public collections only. Private
+       collections are owner-scoped; no preview for those. #}
+    {% if collection.is_public %}
+        {% with
+            title = collection.name,
+            description = collection.description|excerpt,
+            url = ('/u/' ~ collection.user.username ~ '/collections/' ~ collection.slug)|absolute_url,
+            og_type = 'article'
+        %}{% include "components/_meta_og.html" %}{% endwith %}
+    {% endif %}
+{% endblock %}
+{% block content %}
+{% set collection_url = '/u/' ~ collection.user.username ~ '/collections/' ~ collection.slug %}
+
+<header class="mb-6">
+    <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <a href="/u/{{ collection.user.username }}/collections" class="hover:text-rust">Collections</a>
+        <span aria-hidden="true">/</span>
+        <span>{{ visible_projects|length }} {{ 'project' if visible_projects|length == 1 else 'projects' }}</span>
+        {% if is_owner %}
+            {% if collection.is_public %}
+            <span aria-hidden="true">·</span>
+            <span class="inline-flex items-center gap-1 text-rust-deep"
+                  title="Public — shown on your profile">
+                <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                Public
+            </span>
+            {% else %}
+            <span aria-hidden="true">·</span>
+            <span class="inline-flex items-center gap-1"
+                  title="Private — only you can see this collection">
+                <i data-lucide="lock" class="w-3.5 h-3.5"></i>
+                Private
+            </span>
+            {% endif %}
+        {% endif %}
+    </div>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+        <h1 class="text-4xl leading-tight">{{ collection.name }}</h1>
+        {% if is_owner %}
+        <div class="flex gap-2 shrink-0">
+            <a href="{{ collection_url }}/edit" class="btn-ghost text-sm">Edit</a>
+        </div>
+        {% endif %}
+    </div>
+    <div class="meta mt-2">
+        {% if not is_owner %}by {{ collection.user.display_name }} · {% endif %}
+        Created {{ collection.created_at.strftime("%Y-%m-%d") }} ·
+        Updated {{ collection.updated_at.strftime("%Y-%m-%d") }}
+    </div>
+</header>
+
+{% if collection.description %}
+<section class="card mb-6">
+    <div class="markdown-body">
+        {{ collection.description|markdown }}
+    </div>
+</section>
+{% endif %}
+
+{% if visible_projects %}
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+    {% for project in visible_projects %}
+    <li class="relative">
+        {% with show_owner = not is_owner %}
+            {% include "components/project_card.html" %}
+        {% endwith %}
+        {% if is_owner %}
+        <form method="post"
+              action="{{ collection_url }}/projects"
+              data-collection-remove
+              data-project-id="{{ project.id }}"
+              class="absolute top-2 right-2 z-20">
+            {% include "components/_csrf.html" %}
+            <button type="submit"
+                    class="btn-ghost text-xs"
+                    title="Remove from this collection"
+                    aria-label="Remove {{ project.title }} from this collection">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+        </form>
+        {% endif %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted">
+        {% if is_owner %}
+            No projects in this collection yet. Open one of your projects and use the Collections picker to add it here.
+        {% else %}
+            No projects to show.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+
+{% if is_owner %}
+<script>
+  (() => {
+    // Remove buttons — fire an AJAX POST to the toggle endpoint so the
+    // owner can prune without a full page reload. Falls back to a plain
+    // form POST when JS is off: the server accepts JSON at that URL and
+    // a form-POST would 400 currently — so JS-on is the happy path.
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    document.querySelectorAll('[data-collection-remove]').forEach((form) => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const pid = form.dataset.projectId;
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrf,
+          },
+          body: JSON.stringify({ project_id: pid, action: 'remove' }),
+        });
+        if (resp.ok) {
+          form.closest('li')?.remove();
+        }
+      });
+    });
+  })();
+</script>
+{% endif %}
+
+{% endblock %}

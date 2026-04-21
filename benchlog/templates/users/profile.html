@@ -79,4 +79,23 @@
     {% endif %}
 </section>
 
+{% if public_collections %}
+<section class="mt-10">
+    <div class="flex items-baseline justify-between mb-4">
+        <h2 class="text-xl m-0">Collections</h2>
+        <a href="/u/{{ profile_user.username }}/collections" class="text-sm text-ink-muted hover:text-rust">See all</a>
+    </div>
+    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+        {% for collection, project_count in public_collections %}
+        <li>
+            {% with owner_username = profile_user.username,
+                    show_visibility = False %}
+                {% include "components/collection_card.html" %}
+            {% endwith %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
 {% endblock %}

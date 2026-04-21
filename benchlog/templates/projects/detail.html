@@ -15,20 +15,20 @@
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
-{% if is_owner %}
+{% if user %}
 <section class="mb-4" data-collections-picker>
     <div class="flex flex-wrap items-center gap-2">
-        <span class="meta">Collections:</span>
+        <span class="meta">In my collections:</span>
         <div class="flex flex-wrap items-center gap-2" data-collections-chips>
             {% set memberships = [] %}
-            {% for c in owner_collections if c.id in project_collection_ids %}
+            {% for c in viewer_collections if c.id in project_collection_ids %}
                 {% set _ = memberships.append(c) %}
             {% endfor %}
             {% if memberships %}
                 {% for c in memberships %}
-                <a href="/u/{{ project.user.username }}/collections/{{ c.slug }}"
+                <a href="/u/{{ user.username }}/collections/{{ c.slug }}"
                    data-collection-chip="{{ c.id }}"
-                   class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust">
+                   class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink no-underline hover:border-rust hover:text-rust">
                     {{ c.name }}
                 </a>
                 {% endfor %}
@@ -52,8 +52,8 @@
         data-collections-modal
         data-project-id="{{ project.id }}"
         data-project-title="{{ project.title }}"
-        data-toggle-url-prefix="/u/{{ project.user.username }}/collections/"
-        data-create-url="/u/{{ project.user.username }}/collections">
+        data-toggle-url-prefix="/u/{{ user.username }}/collections/"
+        data-create-url="/u/{{ user.username }}/collections">
     {# Combobox-style picker: search existing collections or type a name
        that doesn't match to create a new one inline. Selected collections
        appear as pills above the search; clicking × removes membership
@@ -69,7 +69,7 @@
            combobox uses so the client can filter + render without
            another fetch. #}
         {% set _coll_payload = [] %}
-        {% for c in owner_collections %}
+        {% for c in viewer_collections %}
             {% set _ = _coll_payload.append({
                 'id': c.id|string,
                 'slug': c.slug,
@@ -537,10 +537,10 @@
                 </div>
                 <div class="flex flex-wrap items-center gap-2" data-relation-chips>
                     {% for r in relations %}
-                    <span class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted"
+                    <span class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs hover:border-rust"
                           data-relation-chip="{{ r.id }}">
                         <a href="/u/{{ r.target.user.username }}/{{ r.target.slug }}"
-                           class="no-underline hover:text-rust">
+                           class="no-underline text-ink hover:text-rust">
                             {{ r.target.title }}
                             <span class="text-ink-muted">&middot; @{{ r.target.user.username }}</span>
                         </a>
@@ -575,7 +575,7 @@
                 <div class="flex flex-wrap items-center gap-2">
                     {% for r in relations %}
                     <a href="/u/{{ r.source.user.username }}/{{ r.source.slug }}"
-                       class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust">
+                       class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink no-underline hover:border-rust hover:text-rust">
                         {{ r.source.title }}
                         <span class="text-ink-muted">&middot; @{{ r.source.user.username }}</span>
                     </a>
@@ -586,6 +586,22 @@
         </div>
     </div>
     {% endif %}
+</section>
+{% endif %}
+
+{# ---------- Featured in collections ---------- #}
+{% if featured_in_collections %}
+<section class="card mt-6" data-featured-in-collections>
+    <h2 class="text-lg m-0 mb-3">Featured in collections</h2>
+    <div class="flex flex-wrap items-center gap-2">
+        {% for c, count in featured_in_collections %}
+        <a href="/u/{{ c.user.username }}/collections/{{ c.slug }}"
+           class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink no-underline hover:border-rust hover:text-rust">
+            {{ c.name }}
+            <span class="text-ink-muted">&middot; @{{ c.user.username }}</span>
+        </a>
+        {% endfor %}
+    </div>
 </section>
 {% endif %}
 

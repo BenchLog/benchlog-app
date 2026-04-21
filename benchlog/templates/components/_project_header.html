@@ -1,7 +1,9 @@
 {# Project detail header.
    Args:
-     project   — required (with eager-loaded `user`)
-     is_owner  — boolean; hides Edit/management when the viewer is not the owner #}
+     project   — required (with eager-loaded `user`, and `forked_from` + its
+                 `user` when `is_fork` is True)
+     is_owner  — boolean; hides Edit/management when the viewer is not the owner
+     user      — current viewer (User | None); used to gate the Fork button #}
 <header class="mb-6">
     <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {% if is_owner %}
@@ -28,6 +30,18 @@
         </span>
         {% endif %}
     </div>
+    {% if project.is_fork %}
+    <div class="meta mb-2 flex items-center gap-1">
+        <i data-lucide="git-branch" class="w-3.5 h-3.5"></i>
+        {% if project.forked_from %}
+            Forked from
+            <a href="/u/{{ project.forked_from.user.username }}/{{ project.forked_from.slug }}"
+               class="hover:text-rust">@{{ project.forked_from.user.username }}/{{ project.forked_from.slug }}</a>
+        {% else %}
+            Forked from a deleted project
+        {% endif %}
+    </div>
+    {% endif %}
     <div class="flex flex-wrap items-start justify-between gap-3">
         <h1 class="text-4xl leading-tight">{{ project.title }}</h1>
         <div class="flex gap-2 shrink-0">
@@ -37,6 +51,22 @@
                 <i data-lucide="package" class="inline w-3.5 h-3.5 mr-1"></i>
                 Export
             </a>
+            {% if user is not none and user.id != project.user_id and project.is_public %}
+            {# Fork button: logged-in non-owners on public projects only.
+               No self-fork, no anonymous fork — the route enforces the
+               same gate on POST. #}
+            <form method="post"
+                  action="/u/{{ project.user.username }}/{{ project.slug }}/fork"
+                  class="inline">
+                {% include "components/_csrf.html" %}
+                <button type="submit"
+                        class="btn-ghost text-sm"
+                        title="Create a private copy of this project in your workspace">
+                    <i data-lucide="git-branch" class="inline w-3.5 h-3.5 mr-1"></i>
+                    Fork
+                </button>
+            </form>
+            {% endif %}
             {% if is_owner %}
             <a href="/u/{{ project.user.username }}/{{ project.slug }}/edit" class="btn-ghost text-sm">Edit</a>
             {% endif %}

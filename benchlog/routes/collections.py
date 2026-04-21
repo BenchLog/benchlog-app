@@ -34,6 +34,7 @@ from benchlog.collections import (
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.models import Collection, Project, User
+from benchlog.project_relations import visible_to
 from benchlog.projects import normalize_slug
 from benchlog.templating import templates
 from benchlog.users import get_active_user_by_username
@@ -90,15 +91,20 @@ async def _render_form(
     )
 
 
-def _visible_projects(collection: Collection, is_owner: bool):
-    """Filter to only public projects for non-owner viewers.
+def _visible_projects(collection: Collection, viewer_id: uuid.UUID | None):
+    """Filter a collection's memberships to what `viewer_id` is allowed to see.
 
-    A public collection can reference private projects — the collection
-    owner decides to keep it grouped; viewers who aren't the owner just
-    don't see the private ones. Owners always see their full list.
+    Rule: in a collection that isn't yours, you see only public projects —
+    same as every other viewer. In your own collection, your own private
+    projects also show (you stashed them). This avoids the confusing case
+    where a project owner sees their own private project surfaced inside
+    someone else's collection and wonders if others can see it too.
     """
-    if is_owner:
-        return list(collection.projects)
+    if viewer_id is not None and viewer_id == collection.user_id:
+        return [
+            p for p in collection.projects
+            if p.is_public or p.user_id == viewer_id
+        ]
     return [p for p in collection.projects if p.is_public]
 
 
@@ -117,7 +123,10 @@ async def list_collections(
         raise HTTPException(status_code=404)
     is_owner = viewer is not None and viewer.id == profile_user.id
     rows = await list_user_collections_with_counts(
-        db, profile_user.id, public_only=not is_owner
+        db,
+        profile_user.id,
+        public_only=not is_owner,
+        viewer_id=viewer.id if viewer is not None else None,
     )
     return templates.TemplateResponse(
         request,
@@ -248,7 +257,8 @@ async def collection_detail(
     if not is_owner and not collection.is_public:
         raise HTTPException(status_code=404)
 
-    visible = _visible_projects(collection, is_owner)
+    viewer_id = viewer.id if viewer is not None else None
+    visible = _visible_projects(collection, viewer_id)
     # Order by updated_at desc — explicit here so guests and owners see
     # the same order; the relationship itself isn't ordered.
     visible.sort(key=lambda p: p.updated_at, reverse=True)
@@ -420,15 +430,14 @@ async def toggle_project(
     if collection is None:
         raise HTTPException(status_code=404)
 
-    # The project must also be owned by the caller — collections hold
-    # only the owner's own projects. A cross-user project_id gets 404.
+    # Caller can add any project they can see — their own (any visibility)
+    # or someone else's public. Privates-owned-by-another collapse to 404
+    # so existence of the target isn't leaked.
     project = await db.execute(
-        select(Project).where(
-            Project.id == project_id, Project.user_id == user.id
-        )
+        select(Project).where(Project.id == project_id)
     )
     project_obj = project.scalar_one_or_none()
-    if project_obj is None:
+    if project_obj is None or not visible_to(project_obj, user.id):
         raise HTTPException(status_code=404)
 
     changed = await toggle_project_in_collection(

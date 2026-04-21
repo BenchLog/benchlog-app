@@ -14,6 +14,7 @@ from benchlog.categories import (
 )
 from benchlog.collections import (
     get_project_collection_memberships,
+    list_public_collections_containing_project,
     list_user_collections,
 )
 from benchlog.database import get_db
@@ -559,18 +560,23 @@ async def project_detail(
     # labels come from this flat lookup rather than walking `parent`
     # (raise_on_sql guards against that).
     category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
-    # Owner-only: pre-hydrate the add-to-collections modal with the full
-    # list of the owner's collections + a set of which ones currently
-    # contain this project. Passing as context (not a separate fetch)
-    # avoids a round-trip on modal open and keeps the button's "N" chip
-    # accurate on first paint.
-    owner_collections = []
+    # Pre-hydrate the add-to-collections modal with the viewer's own
+    # collections + the set of those that currently contain this project.
+    # Any logged-in viewer can add a visible project to their collections —
+    # so the picker's namespace is always the viewer's, never the project
+    # owner's. Guests don't get the picker, so skip the queries for them.
+    viewer_collections = []
     project_collection_ids: set = set()
-    if is_owner:
-        owner_collections = await list_user_collections(db, user.id)
+    if user is not None:
+        viewer_collections = await list_user_collections(db, user.id)
         project_collection_ids = await get_project_collection_memberships(
             db, user.id, project.id
         )
+    featured_in_collections = await list_public_collections_containing_project(
+        db,
+        project.id,
+        exclude_user_id=user.id if user is not None else None,
+    )
     # Relations (outgoing + incoming), pre-filtered by the viewer's
     # visibility and grouped by type so the template iterates cleanly.
     # Owner always sees their own outgoing relations (even when target
@@ -596,8 +602,9 @@ async def project_detail(
             "category_href_prefix": "/explore",
             "category_breadcrumbs": category_breadcrumbs,
             "file_index": file_index,
-            "owner_collections": owner_collections,
+            "viewer_collections": viewer_collections,
             "project_collection_ids": project_collection_ids,
+            "featured_in_collections": featured_in_collections,
             "outgoing_relation_groups": outgoing_groups,
             "incoming_relation_groups": incoming_groups,
             "user_pickable_relation_types": [

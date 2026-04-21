@@ -74,6 +74,20 @@ class Project(TimestampMixin, Base):
     cover_crop_width: Mapped[float | None] = mapped_column(Float, nullable=True)
     cover_crop_height: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # Fork ancestry. `forked_from_id` points at the immediate parent — only
+    # one hop is tracked, chain depth is unlimited. ON DELETE SET NULL: a
+    # parent deletion doesn't nuke its forks. `is_fork` stays True forever
+    # once set so the detail page can render "Forked from a deleted project"
+    # when the FK has been cleared. Never forked => both null/false.
+    forked_from_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_fork: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # Postgres tsvector over title + description, maintained by the DB via a
     # STORED generated column (`GENERATED ALWAYS AS ... STORED`). Matched by a
     # GIN index declared in `__table_args__`. Nullable defensively — coalesce
@@ -125,5 +139,21 @@ class Project(TimestampMixin, Base):
     cover_file: Mapped["ProjectFile | None"] = relationship(  # noqa: F821
         foreign_keys=[cover_file_id],
         post_update=True,
+        lazy="raise_on_sql",
+    )
+    # Self-referential fork ancestry. `forks` is kept for ORM completeness
+    # even though no template iterates it today — the reverse link is free
+    # once the FK exists.
+    forked_from: Mapped["Project | None"] = relationship(
+        "Project",
+        remote_side="Project.id",
+        foreign_keys=[forked_from_id],
+        back_populates="forks",
+        lazy="raise_on_sql",
+    )
+    forks: Mapped[list["Project"]] = relationship(
+        "Project",
+        back_populates="forked_from",
+        foreign_keys=[forked_from_id],
         lazy="raise_on_sql",
     )

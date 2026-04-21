@@ -49,7 +49,9 @@ async def profile_page(
     # Public collections surface on the profile under the projects grid.
     # Returned as a list of (collection, project_count) tuples.
     public_collections = await get_public_collections_for_user(
-        db, profile_user.id
+        db,
+        profile_user.id,
+        viewer_id=viewer.id if viewer is not None else None,
     )
 
     is_owner = viewer is not None and viewer.id == profile_user.id

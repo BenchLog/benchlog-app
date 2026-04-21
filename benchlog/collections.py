@@ -129,25 +129,36 @@ async def list_user_collections_with_counts(
     user_id: uuid.UUID,
     *,
     public_only: bool = False,
+    viewer_id: uuid.UUID | None = None,
 ) -> list[tuple[Collection, int]]:
-    """Same as `list_user_collections` but zipped with total project count.
+    """Same as `list_user_collections` but zipped with visible project count.
 
-    Powers the list page — cards show "N projects" as a chip regardless of
-    visibility, since the owner wants a quick read on what's inside.
+    Counts match what `_visible_projects` shows on the detail page: in a
+    collection that isn't the viewer's, only public memberships count; in
+    the viewer's own collections, their own private projects count too.
+    Keeping the two rules in lockstep avoids the chip-says-3-but-list-shows-2
+    mismatch.
     """
     collections = await list_user_collections(
         db, user_id, public_only=public_only
     )
     if not collections:
         return []
-    # One grouped COUNT keeps this cheap even with many collections.
+    visibility_clause = Project.is_public.is_(True)
+    # Own-private memberships only count when the viewer owns the collections
+    # being listed — i.e. they're looking at their own collections. Every
+    # collection in this query is owned by `user_id` by construction.
+    if viewer_id is not None and viewer_id == user_id:
+        visibility_clause = visibility_clause | (Project.user_id == viewer_id)
     rows = await db.execute(
         select(
             CollectionProject.collection_id,
             func.count(CollectionProject.project_id),
         )
+        .join(Project, Project.id == CollectionProject.project_id)
         .where(
-            CollectionProject.collection_id.in_([c.id for c in collections])
+            CollectionProject.collection_id.in_([c.id for c in collections]),
+            visibility_clause,
         )
         .group_by(CollectionProject.collection_id)
     )
@@ -257,10 +268,67 @@ async def toggle_project_in_collection(
     return True
 
 
+async def list_public_collections_containing_project(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    exclude_user_id: uuid.UUID | None = None,
+    limit: int = 10,
+) -> list[tuple[Collection, int]]:
+    """Public collections (any user) that include `project_id`, newest first.
+
+    Powers the "Featured in collections" discovery section on project detail.
+    Excludes the viewer's own collections when `exclude_user_id` is set —
+    those are already shown as chips at the top of the page, so including
+    them here would duplicate the signal.
+
+    Returns each collection paired with its *public* visible project count
+    (public-only, from a guest's perspective) so the chip can show "N
+    projects" without a second query. Guest-perspective is the right frame:
+    the count matches what any random visitor would see clicking through.
+    """
+    query = (
+        select(Collection)
+        .options(selectinload(Collection.user))
+        .join(
+            CollectionProject,
+            CollectionProject.collection_id == Collection.id,
+        )
+        .where(
+            CollectionProject.project_id == project_id,
+            Collection.is_public.is_(True),
+        )
+    )
+    if exclude_user_id is not None:
+        query = query.where(Collection.user_id != exclude_user_id)
+    query = query.order_by(Collection.updated_at.desc()).limit(limit)
+    result = await db.execute(query)
+    collections = list(result.scalars().all())
+    if not collections:
+        return []
+    count_rows = await db.execute(
+        select(
+            CollectionProject.collection_id,
+            func.count(CollectionProject.project_id),
+        )
+        .join(Project, Project.id == CollectionProject.project_id)
+        .where(
+            CollectionProject.collection_id.in_([c.id for c in collections]),
+            Project.is_public.is_(True),
+        )
+        .group_by(CollectionProject.collection_id)
+    )
+    counts = {cid: n for cid, n in count_rows.all()}
+    return [(c, counts.get(c.id, 0)) for c in collections]
+
+
 async def get_public_collections_for_user(
-    db: AsyncSession, user_id: uuid.UUID
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    viewer_id: uuid.UUID | None = None,
 ) -> list[tuple[Collection, int]]:
     """Public collections surfaced on the profile page, with project counts."""
     return await list_user_collections_with_counts(
-        db, user_id, public_only=True
+        db, user_id, public_only=True, viewer_id=viewer_id
     )

@@ -2,8 +2,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from benchlog.activity import purge_entry_events, record_event
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.files import (
@@ -18,7 +21,7 @@ from benchlog.journal import (
     unique_entry_slug,
     visible_entries,
 )
-from benchlog.models import JournalEntry, Project, User
+from benchlog.models import ActivityEventType, JournalEntry, Project, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -199,6 +202,14 @@ async def create_entry(
         is_public=public_flag,
     )
     db.add(entry)
+    await db.flush()
+    await record_event(
+        db,
+        actor=user,
+        project=project,
+        event_type=ActivityEventType.journal_entry_posted,
+        payload={"entry_id": str(entry.id)},
+    )
     await db.commit()
     # Land on the Journal tab anchored to the new entry, so the post is
     # immediately visible in context instead of buried on the overview.
@@ -382,11 +393,8 @@ async def update_entry(
         old_slug and new_slug and old_title is not None and old_title != title
     )
     if slug_moved or title_moved:
-        from sqlalchemy.orm import selectinload
-        from sqlalchemy import select as _select
-
         result = await db.execute(
-            _select(Project)
+            select(Project)
             .options(selectinload(Project.journal_entries))
             .where(Project.id == project.id)
         )
@@ -462,7 +470,10 @@ async def delete_entry(
     entry = await _resolve_entry_for_owner(db, project, entry_ref)
     if entry is None:
         raise HTTPException(status_code=404)
+    entry_id = entry.id
     await db.delete(entry)
+    await db.flush()
+    await purge_entry_events(db, entry_id)
     await db.commit()
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/journal", status_code=302

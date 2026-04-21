@@ -54,9 +54,9 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # owner-only (the create form), so it stays auth-gated.
     if len(parts) == 3 and parts[1] == "collections" and parts[2] != "new":
         return True
-    # /u/{username}/{slug}/{journal|links|files|gallery|export}
+    # /u/{username}/{slug}/{journal|links|files|gallery|export|activity}
     if len(parts) == 3 and parts[2] in {
-        "journal", "links", "files", "gallery", "export"
+        "journal", "links", "files", "gallery", "export", "activity"
     }:
         return True
     # /u/{username}/{slug}/journal/{entry_slug} — but not /journal/new

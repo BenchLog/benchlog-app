@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.models import (
+    ActivityEventType,
     FileVersion,
     JournalEntry,
     Project,
@@ -293,6 +294,21 @@ async def fork_project(
         RelationType.fork_of,
         actor_user,
         allow_system_types=True,
+    )
+
+    # Record the fork event on the NEW project (the activity is the fork
+    # existing, not the source being forked) with a payload ref back to
+    # the source. Local import to keep the projects ↔ activity wiring
+    # asymmetric — activity.py imports models; importing back into here
+    # at module load would widen the dependency graph unnecessarily.
+    from benchlog.activity import record_event
+
+    await record_event(
+        db,
+        actor=actor_user,
+        project=new_project,
+        event_type=ActivityEventType.project_forked,
+        payload={"source_project_id": str(source_project.id)},
     )
 
     return new_project

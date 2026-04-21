@@ -1,3 +1,4 @@
+from benchlog.models.activity_event import ActivityEvent, ActivityEventType
 from benchlog.models.audit_event import AuditEvent
 from benchlog.models.base import Base
 from benchlog.models.category import Category, ProjectCategory
@@ -21,6 +22,8 @@ from benchlog.models.user_social_link import UserSocialLink, UserSocialLinkType
 from benchlog.models.webauthn_credential import WebAuthnCredential
 
 __all__ = [
+    "ActivityEvent",
+    "ActivityEventType",
     "AuditEvent",
     "Base",
     "Category",

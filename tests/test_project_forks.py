@@ -425,6 +425,31 @@ async def test_fork_detail_shows_deleted_project_when_parent_gone(client, db):
     assert "Forked from a deleted project" in detail.text
 
 
+async def test_fork_detail_hides_parent_identity_when_parent_goes_private(client, db):
+    # Forks are only allowed from public sources, but the source can
+    # flip private later. The fork's header must NOT keep advertising the
+    # parent's @user/slug after that — it would leak the existence and
+    # canonical URL of the now-private project. The fork owner (viewing
+    # their own fork) isn't the parent's owner, so the placeholder applies.
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    src = await _make_project(db, alice, slug="orig", is_public=True)
+
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(f"/u/alice/{src.slug}/fork", data={"_csrf": token})
+    assert resp.status_code == 302
+
+    src.is_public = False
+    await db.commit()
+
+    # Bob (owns the fork, not the parent) must see the redacted header.
+    detail = await client.get(f"/u/bob/{src.slug}")
+    assert detail.status_code == 200
+    assert "Forked from a private project" in detail.text
+    assert f"@alice/{src.slug}" not in detail.text
+
+
 # ---------- button visibility ---------- #
 
 

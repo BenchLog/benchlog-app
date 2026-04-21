@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from benchlog.activity import list_global_activity
 from benchlog.categories import get_categories_flat
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
@@ -27,6 +28,38 @@ from benchlog.tags import get_public_tag_slugs
 from benchlog.templating import templates
 
 router = APIRouter()
+
+
+ACTIVITY_PAGE_SIZE = 50
+
+
+@router.get("/explore/activity")
+async def explore_activity(
+    request: Request,
+    offset: int = 0,
+    user: User | None = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Global firehose of public-project activity, paginated by offset."""
+    offset = max(offset, 0)
+    events = await list_global_activity(
+        db,
+        viewer_id=user.id if user is not None else None,
+        limit=ACTIVITY_PAGE_SIZE,
+        offset=offset,
+    )
+    has_more = len(events) == ACTIVITY_PAGE_SIZE
+    return templates.TemplateResponse(
+        request,
+        "explore/activity.html",
+        {
+            "user": user,
+            "events": events,
+            "offset": offset,
+            "next_offset": offset + ACTIVITY_PAGE_SIZE if has_more else None,
+            "page_size": ACTIVITY_PAGE_SIZE,
+        },
+    )
 
 
 @router.get("/explore")

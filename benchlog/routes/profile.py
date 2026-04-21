@@ -13,6 +13,7 @@ specific element, keeping the view truthful to "this is how others see me."
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from benchlog.activity import list_user_activity
 from benchlog.collections import get_public_collections_for_user
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
@@ -30,6 +31,10 @@ router = APIRouter()
 # yet" decision. The `/explore` route doesn't paginate either, so bring a
 # pagination design when revisiting both together.
 PROFILE_PROJECT_LIMIT = 50
+
+# Short-form activity list for the profile — deep dives land on the
+# per-project activity tab or the global firehose.
+PROFILE_ACTIVITY_LIMIT = 10
 
 
 @router.get("/u/{username}")
@@ -53,6 +58,12 @@ async def profile_page(
         profile_user.id,
         viewer_id=viewer.id if viewer is not None else None,
     )
+    recent_activity = await list_user_activity(
+        db,
+        profile_user.id,
+        viewer_id=viewer.id if viewer is not None else None,
+        limit=PROFILE_ACTIVITY_LIMIT,
+    )
 
     is_owner = viewer is not None and viewer.id == profile_user.id
 
@@ -66,6 +77,7 @@ async def profile_page(
             "social_links": profile_user.social_links,
             "public_projects": public_projects,
             "public_collections": public_collections,
+            "recent_activity": recent_activity,
             "is_owner": is_owner,
         },
     )

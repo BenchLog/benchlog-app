@@ -1,0 +1,85 @@
+{# One event line.
+   Args:
+     event        — required ActivityEvent with actor + project eager-loaded
+     show_project — bool (default True). False on the per-project activity
+                    tab where the project link would be redundant.
+
+   Design calls:
+   - No markdown rendering; fields like filename are shown as plain text.
+   - Deep-links target cached payload refs (file_id, entry_id). The delete
+     routes purge matching events so links don't dangle — activity is a
+     what's-new feed, not an audit log.
+   - Timestamp is ISO-y `YYYY-MM-DD HH:MM` — no relative-time lib in v1.
+#}
+{% set show_project = show_project if show_project is defined else True %}
+{% set et = event.event_type.value %}
+{% set actor = event.actor %}
+{% set project = event.project %}
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+
+{% set icons = {
+    'project_created': 'plus-circle',
+    'project_became_public': 'globe',
+    'project_forked': 'git-branch',
+    'journal_entry_posted': 'book-open',
+    'file_uploaded': 'file-plus',
+    'file_version_added': 'layers',
+} %}
+
+<div class="flex items-start gap-3 py-3">
+    <i data-lucide="{{ icons[et] }}" class="w-4 h-4 mt-1 shrink-0 text-ink-muted" aria-hidden="true"></i>
+    <div class="min-w-0 flex-1">
+        <div class="text-sm text-ink">
+            <a href="/u/{{ actor.username }}" class="hover:text-rust">@{{ actor.username }}</a>
+            {% if et == 'project_created' %}
+                created a project
+            {% elif et == 'project_became_public' %}
+                made
+                {% if show_project %}
+                    <a href="{{ project_url }}" class="hover:text-rust">@{{ project.user.username }}/{{ project.slug }}</a>
+                {% else %}
+                    this project
+                {% endif %}
+                public
+            {% elif et == 'project_forked' %}
+                forked
+                {% if show_project %}
+                    <a href="{{ project_url }}" class="hover:text-rust">@{{ project.user.username }}/{{ project.slug }}</a>
+                {% endif %}
+                from another project
+            {% elif et == 'journal_entry_posted' %}
+                {% set entry_id = event.payload.get('entry_id') if event.payload else None %}
+                posted
+                {% if entry_id %}
+                    <a href="{{ project_url }}/journal#entry-{{ entry_id }}" class="hover:text-rust">a journal entry</a>
+                {% else %}
+                    a journal entry
+                {% endif %}
+            {% elif et == 'file_uploaded' %}
+                {% set file_id = event.payload.get('file_id') if event.payload else None %}
+                {% set filename = event.payload.get('filename') if event.payload else None %}
+                uploaded
+                {% if file_id %}
+                    <a href="{{ project_url }}/files/{{ file_id }}" class="hover:text-rust">{{ filename or 'a file' }}</a>
+                {% else %}
+                    {{ filename or 'a file' }}
+                {% endif %}
+            {% elif et == 'file_version_added' %}
+                {% set file_id = event.payload.get('file_id') if event.payload else None %}
+                {% set vn = event.payload.get('version_number') if event.payload else None %}
+                added
+                {% if file_id %}
+                    <a href="{{ project_url }}/files/{{ file_id }}" class="hover:text-rust">a new version{% if vn %} (v{{ vn }}){% endif %}</a>
+                {% else %}
+                    a new file version
+                {% endif %}
+            {% else %}
+                did something
+            {% endif %}
+            {% if show_project and et not in ['project_became_public', 'project_forked'] %}
+                on <a href="{{ project_url }}" class="hover:text-rust">@{{ project.user.username }}/{{ project.slug }}</a>
+            {% endif %}
+        </div>
+        <div class="meta mt-0.5">{{ event.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+    </div>
+</div>

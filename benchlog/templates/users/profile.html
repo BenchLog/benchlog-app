@@ -98,4 +98,17 @@
 </section>
 {% endif %}
 
+{% if recent_activity %}
+<section class="mt-10">
+    <h2 class="text-xl mb-4">Recent activity</h2>
+    <ul class="divide-y divide-edge list-none p-0 m-0">
+        {% for event in recent_activity %}
+        <li>
+            {% include "components/_activity_line.html" %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
 {% endblock %}

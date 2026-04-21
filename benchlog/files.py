@@ -315,6 +315,10 @@ async def get_project_entry_index(
     Returns `[{"slug": str, "title": str}, …]` sorted by `(title)` and
     capped at ``_ENTRY_INDEX_MAX`` entries. Untitled entries are skipped
     — they have no slug and therefore no deep-link target.
+
+    NOTE: does NOT filter by `is_public`. Only call from owner-gated
+    surfaces (new/edit forms, owner's description editor). Rendering this
+    on a non-owner page would leak private entry slugs + titles.
     """
     # Local import to sidestep the import cycle (models imports Base,
     # files imports models; journal_entry lands here at runtime without

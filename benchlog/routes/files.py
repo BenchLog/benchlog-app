@@ -25,6 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.background import BackgroundTask
 
+from benchlog.activity import (
+    purge_file_events,
+    purge_file_version_events,
+    record_event,
+)
 from benchlog.config import settings
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
@@ -50,7 +55,7 @@ from benchlog.files import (
     safe_filename,
     store_upload,
 )
-from benchlog.models import FileVersion, Project, ProjectFile, User
+from benchlog.models import ActivityEventType, FileVersion, Project, ProjectFile, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -446,7 +451,8 @@ async def upload_file(
     existing = await get_existing_file(
         db, project.id, normalized_path, filename
     )
-    if existing is None:
+    is_new_file = existing is None
+    if is_new_file:
         new_file = ProjectFile(
             project_id=project.id,
             path=normalized_path,
@@ -494,6 +500,28 @@ async def upload_file(
     db.add(version)
     await db.flush()
     target_file.current_version_id = version.id
+    if is_new_file:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=ActivityEventType.file_uploaded,
+            payload={
+                "file_id": str(target_file.id),
+                "filename": target_file.filename,
+            },
+        )
+    else:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=ActivityEventType.file_version_added,
+            payload={
+                "file_id": str(target_file.id),
+                "version_number": version_number,
+            },
+        )
     await db.commit()
 
     if json_mode:
@@ -1110,6 +1138,16 @@ async def upload_new_version(
     db.add(version)
     await db.flush()
     file.current_version_id = version.id
+    await record_event(
+        db,
+        actor=user,
+        project=project,
+        event_type=ActivityEventType.file_version_added,
+        payload={
+            "file_id": str(file.id),
+            "version_number": version_number,
+        },
+    )
     await db.commit()
 
     return RedirectResponse(
@@ -1179,7 +1217,10 @@ async def delete_file_version(
         )
 
     storage = get_storage()
+    target_version_number = target.version_number
     await db.delete(target)
+    await db.flush()
+    await purge_file_version_events(db, file_id, target_version_number)
     await db.commit()
 
     # Best-effort blob cleanup. Matches the pattern in delete_file — the DB
@@ -1719,6 +1760,8 @@ async def delete_file(
     await db.flush()
 
     await db.delete(file)
+    await db.flush()
+    await purge_file_events(db, file_id)
     await db.commit()
 
     # Best-effort blob cleanup. If a delete fails (file gone, permission),

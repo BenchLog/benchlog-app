@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from benchlog.activity import list_project_activity, record_event
 from benchlog.categories import (
     get_categories_flat,
     set_project_categories,
@@ -26,6 +27,7 @@ from benchlog.files import (
 )
 from benchlog.markdown import render_for_project
 from benchlog.models import (
+    ActivityEventType,
     Project,
     ProjectCategory,
     ProjectFile,
@@ -540,6 +542,13 @@ async def create_project(
     db.add(project)
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
     await set_project_categories(db, project, values["categories"])
+    await db.flush()
+    await record_event(
+        db,
+        actor=user,
+        project=project,
+        event_type=ActivityEventType.project_created,
+    )
     await db.commit()
     return RedirectResponse(f"/u/{user.username}/{final_slug}", status_code=302)
 
@@ -657,6 +666,36 @@ async def _breadcrumbs_for(db: AsyncSession, cats) -> dict[str, str]:
     return {str(c.id): by_id.get(str(c.id), c.name) for c in cats}
 
 
+@router.get("/u/{username}/{slug}/activity")
+async def project_activity(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User | None = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-project activity feed — reuses the project_detail visibility gate."""
+    project = await get_project_by_username_and_slug(db, username, slug)
+    if project is None:
+        raise HTTPException(status_code=404)
+    is_owner = user is not None and project.user_id == user.id
+    if not is_owner and not project.is_public:
+        raise HTTPException(status_code=404)
+    events = await list_project_activity(
+        db, project.id, viewer_id=user.id if user is not None else None
+    )
+    return templates.TemplateResponse(
+        request,
+        "projects/activity.html",
+        {
+            "user": user,
+            "project": project,
+            "is_owner": is_owner,
+            "events": events,
+        },
+    )
+
+
 @router.get("/u/{username}/{slug}/edit")
 async def edit_project_form(
     username: str,
@@ -749,6 +788,7 @@ async def update_project(
     ):
         return await fail(f"\u201c{normalized}\u201d is already used by another of your projects.")
 
+    was_public = project.is_public
     project.title = values["title"]
     project.slug = normalized
     project.description = values["description"].strip() or None
@@ -757,6 +797,13 @@ async def update_project(
     project.is_public = values["is_public"]
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
     await set_project_categories(db, project, values["categories"])
+    if not was_public and project.is_public:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=ActivityEventType.project_became_public,
+        )
     await db.commit()
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}", status_code=302

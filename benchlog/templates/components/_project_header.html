@@ -31,12 +31,20 @@
         {% endif %}
     </div>
     {% if project.is_fork %}
+    {# Forks may link to a parent that has since flipped private. Don't
+       advertise the parent's slug/owner in that case — show the same
+       redacted placeholder as deleted parents. Visibility uses the same
+       rule as every other surface: public OR viewer owns it. #}
+    {% set parent = project.forked_from %}
+    {% set parent_visible = parent is not none and (parent.is_public or (user is not none and parent.user_id == user.id)) %}
     <div class="meta mb-2 flex items-center gap-1">
         <i data-lucide="git-branch" class="w-3.5 h-3.5"></i>
-        {% if project.forked_from %}
+        {% if parent_visible %}
             Forked from
-            <a href="/u/{{ project.forked_from.user.username }}/{{ project.forked_from.slug }}"
-               class="hover:text-rust">@{{ project.forked_from.user.username }}/{{ project.forked_from.slug }}</a>
+            <a href="/u/{{ parent.user.username }}/{{ parent.slug }}"
+               class="hover:text-rust">@{{ parent.user.username }}/{{ parent.slug }}</a>
+        {% elif parent is not none %}
+            Forked from a private project
         {% else %}
             Forked from a deleted project
         {% endif %}

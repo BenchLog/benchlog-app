@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Activity · Explore · BenchLog{% endblock %}
+{% block content %}
+<div class="mb-4">
+    <h1 class="text-3xl">Activity</h1>
+    <p class="text-ink-muted">Recent public activity across the site.</p>
+</div>
+
+<nav class="mb-6 border-b border-edge" aria-label="Explore sections">
+    {% set is_activity = request.url.path == '/explore/activity' %}
+    <ul class="flex flex-wrap -mb-px list-none p-0 m-0">
+        <li>
+            <a href="/explore"
+               class="inline-flex items-center px-4 py-2 border-b-2 text-sm transition-colors
+                      {% if not is_activity %}border-rust text-ink font-medium{% else %}border-transparent text-ink-muted hover:border-edge hover:text-ink{% endif %}">
+                Projects
+            </a>
+        </li>
+        <li>
+            <a href="/explore/activity"
+               {% if is_activity %}aria-current="page"{% endif %}
+               class="inline-flex items-center px-4 py-2 border-b-2 text-sm transition-colors
+                      {% if is_activity %}border-rust text-ink font-medium{% else %}border-transparent text-ink-muted hover:border-edge hover:text-ink{% endif %}">
+                Activity
+            </a>
+        </li>
+    </ul>
+</nav>
+
+{% if events %}
+<ul class="divide-y divide-edge list-none p-0 m-0">
+    {% for event in events %}
+    <li>
+        {% include "components/_activity_line.html" %}
+    </li>
+    {% endfor %}
+</ul>
+{% if next_offset is not none %}
+<div class="mt-6">
+    <a href="/explore/activity?offset={{ next_offset }}" class="btn-ghost text-sm">Load older</a>
+</div>
+{% endif %}
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted">
+        {% if offset %}
+            No older activity.
+        {% else %}
+            No public activity yet.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+{% endblock %}

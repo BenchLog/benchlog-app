@@ -1,0 +1,23 @@
+{% extends "projects/_layout.html" %}
+{% block title %}Activity · {{ project.title }} · BenchLog{% endblock %}
+{% block project_content %}
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+    <h2 class="text-xl">Activity</h2>
+</div>
+
+{% if events %}
+<ul class="divide-y divide-edge list-none p-0 m-0">
+    {% for event in events %}
+    <li>
+        {% with show_project = False %}
+            {% include "components/_activity_line.html" %}
+        {% endwith %}
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted">No activity yet.</p>
+</div>
+{% endif %}
+{% endblock %}

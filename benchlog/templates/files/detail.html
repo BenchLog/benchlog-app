@@ -5,22 +5,25 @@
 {% set file_url = project_url ~ '/files/' ~ file.id %}
 {% set file_fullpath = (file.path ~ '/' ~ file.filename) if file.path else file.filename %}
 
-<nav class="mb-2 flex items-baseline gap-1.5 max-w-full text-sm text-ink-muted"
+<nav class="mb-2 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-ink-muted"
      aria-label="File location">
-    <a href="{{ project_url }}/files" class="meta hover:text-rust shrink-0">Files</a>
+    <a href="{{ project_url }}/files" class="meta hover:text-rust">Files</a>
     {% if file.path %}
         {% for segment in file.path.split('/') %}
-        <span class="shrink-0 text-ink-muted/70" aria-hidden="true">›</span>
-        <span class="shrink-0">{{ segment }}</span>
+        <span class="text-ink-muted/70" aria-hidden="true">›</span>
+        <span>{{ segment }}</span>
         {% endfor %}
     {% endif %}
-    <span class="shrink-0 text-ink-muted/70" aria-hidden="true">›</span>
-    <span class="min-w-0 overflow-x-auto whitespace-nowrap text-ink"
+    <span class="text-ink-muted/70" aria-hidden="true">›</span>
+    {# `break-all` lets UUID-like filenames wrap at any character so we never
+       need a horizontal scrollbar; the title attribute keeps the full name
+       hoverable for screen readers + truncated indicators. #}
+    <span class="min-w-0 break-all text-ink"
           title="{{ file.filename }}">{{ file.filename }}</span>
 </nav>
 
 <div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
-    <h2 class="text-2xl min-w-0 max-w-full overflow-x-auto whitespace-nowrap flex-1"
+    <h2 class="text-2xl min-w-0 break-all flex-1"
         title="{{ file.filename }}">{{ file.filename }}</h2>
     <div class="flex flex-wrap items-center gap-2 shrink-0">
         <a href="{{ file_url }}/download" class="btn-primary text-sm">Download</a>

@@ -4,9 +4,9 @@ URL scheme matches journal/links: `/u/{username}/{slug}/files/...`. Visibility
 inherits the parent project (no per-file flag, like links). Mutation routes
 are owner-only with the same `_require_owned_project` pattern.
 
-Route ordering matters: literal-suffix routes (`/files/new`, `/files/reorder`)
-declared BEFORE `{file_id}`-parameterized routes, otherwise FastAPI matches
-the literal as a UUID param and 422s.
+Route ordering matters: literal-suffix routes (`/files/move`, `/files/folder/*`,
+`/files/download-zip`) declared BEFORE `{file_id}`-parameterized routes,
+otherwise FastAPI matches the literal as a UUID param and 422s.
 """
 
 import mimetypes
@@ -45,7 +45,6 @@ from benchlog.files import (
     get_existing_file,
     get_file_by_id,
     highlight_code,
-    list_files_in_folder,
     next_version_number,
     normalize_virtual_path,
     preview_kind,
@@ -99,10 +98,6 @@ async def _load_project_with_journal(
         .where(Project.id == project_id)
     )
     return result.scalar_one_or_none()
-
-
-def _form_values(*, path: str = "", description: str = "") -> dict:
-    return {"path": path, "description": description}
 
 
 async def _load_file_with_versions(
@@ -370,33 +365,6 @@ async def files_tab(
 
 
 # ---------- create (upload) ---------- #
-#
-# Literal `/new` MUST come before `{file_id}` routes to avoid FastAPI
-# 422-ing on UUID coercion of "new".
-
-
-@router.get("/u/{username}/{slug}/files/new")
-async def new_file_form(
-    username: str,
-    slug: str,
-    request: Request,
-    path: str = "",
-    user: User = Depends(require_user),
-    db: AsyncSession = Depends(get_db),
-):
-    project = await _require_owned_project(db, user, username, slug)
-    return templates.TemplateResponse(
-        request,
-        "files/form.html",
-        {
-            "user": user,
-            "project": project,
-            "file": None,
-            "form_values": _form_values(path=path),
-            "max_upload_size": settings.max_upload_size,
-            "error": None,
-        },
-    )
 
 
 @router.post("/u/{username}/{slug}/files")
@@ -406,6 +374,7 @@ async def upload_file(
     request: Request,
     path: str = Form(""),
     description: str = Form(""),
+    show_in_gallery: str = Form(""),
     upload: UploadFile = File(...),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
@@ -414,23 +383,20 @@ async def upload_file(
 
     description = description.strip()
     json_mode = _wants_json(request)
+    # `show_in_gallery` defaults True on the model; only opt-outs ("0") need
+    # a client override. The Gallery tab passes "1" for symmetry, which is
+    # equivalent to the default — either way, any "truthy" value keeps it
+    # visible, and only an explicit "0" hides it on creation.
+    gallery_opt_out = show_in_gallery == "0"
 
-    def fail(msg: str, *, values: dict | None = None, status: int = 400):
+    def fail(msg: str, *, status: int = 400):
+        # All upload flows go through fetch + drop zones now; there's no
+        # HTML form to re-render. json_mode requests get HTTPException so
+        # FastAPI produces the usual JSON error envelope; non-JSON posts
+        # (still valid for programmatic use) get a matching JSON body.
         if json_mode:
             raise HTTPException(status_code=status, detail=msg)
-        return templates.TemplateResponse(
-            request,
-            "files/form.html",
-            {
-                "user": user,
-                "project": project,
-                "file": None,
-                "form_values": values or _form_values(path=path, description=description),
-                "max_upload_size": settings.max_upload_size,
-                "error": msg,
-            },
-            status_code=status,
-        )
+        return JSONResponse({"detail": msg}, status_code=status)
 
     try:
         normalized_path = normalize_virtual_path(path)
@@ -471,6 +437,7 @@ async def upload_file(
             path=normalized_path,
             filename=filename,
             description=description or None,
+            show_in_gallery=not gallery_opt_out,
         )
         db.add(new_file)
         await db.flush()  # populate new_file.id for the storage path
@@ -791,39 +758,6 @@ async def move_item(
 # doesn't try to coerce "folder" to a UUID.
 
 
-@router.get("/u/{username}/{slug}/files/folder/edit")
-async def edit_folder_form(
-    username: str,
-    slug: str,
-    request: Request,
-    path: str,
-    user: User = Depends(require_user),
-    db: AsyncSession = Depends(get_db),
-):
-    project = await _require_owned_project(db, user, username, slug)
-    try:
-        normalized = normalize_virtual_path(path)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if not normalized:
-        raise HTTPException(status_code=400, detail="Folder path is required.")
-    files = await list_files_in_folder(db, project.id, normalized)
-    if not files:
-        raise HTTPException(status_code=404)
-    return templates.TemplateResponse(
-        request,
-        "files/folder_form.html",
-        {
-            "user": user,
-            "project": project,
-            "folder_path": normalized,
-            "file_count": len(files),
-            "form_values": {"new_path": normalized},
-            "error": None,
-        },
-    )
-
-
 @router.post("/u/{username}/{slug}/files/folder/rename")
 async def rename_folder_route(
     username: str,
@@ -846,26 +780,16 @@ async def rename_folder_route(
 
     json_mode = _wants_json(request)
 
-    async def fail(msg: str, *, status: int = 400):
+    def fail(msg: str, *, status: int = 400):
+        # Folder rename is only invoked from the inline modal (fetch
+        # + Accept: json) now. Non-JSON callers still get a matching JSON
+        # error envelope so the response is usable programmatically.
         if json_mode:
             raise HTTPException(status_code=status, detail=msg)
-        files = await list_files_in_folder(db, project.id, normalized_old)
-        return templates.TemplateResponse(
-            request,
-            "files/folder_form.html",
-            {
-                "user": user,
-                "project": project,
-                "folder_path": normalized_old,
-                "file_count": len(files),
-                "form_values": {"new_path": new_path},
-                "error": msg,
-            },
-            status_code=status,
-        )
+        return JSONResponse({"detail": msg}, status_code=status)
 
     if not normalized_new:
-        return await fail("New folder path is required.")
+        return fail("New folder path is required.")
     if normalized_new == normalized_old:
         if json_mode:
             return Response(status_code=204)
@@ -875,7 +799,7 @@ async def rename_folder_route(
     try:
         await rename_folder(db, project.id, normalized_old, normalized_new)
     except ValueError as e:
-        return await fail(str(e), status=409)
+        return fail(str(e), status=409)
     await db.commit()
 
     ref_count = 0
@@ -1377,37 +1301,6 @@ async def restore_file_version(
 # ---------- edit metadata ---------- #
 
 
-@router.get("/u/{username}/{slug}/files/{file_id}/edit")
-async def edit_file_form(
-    username: str,
-    slug: str,
-    file_id: uuid.UUID,
-    request: Request,
-    user: User = Depends(require_user),
-    db: AsyncSession = Depends(get_db),
-):
-    project = await _require_owned_project(db, user, username, slug)
-    file = await get_file_by_id(db, project.id, file_id)
-    if file is None:
-        raise HTTPException(status_code=404)
-    return templates.TemplateResponse(
-        request,
-        "files/form.html",
-        {
-            "user": user,
-            "project": project,
-            "file": file,
-            "form_values": {
-                "path": file.path,
-                "filename": file.filename,
-                "description": file.description or "",
-            },
-            "max_upload_size": settings.max_upload_size,
-            "error": None,
-        },
-    )
-
-
 @router.post("/u/{username}/{slug}/files/{file_id}")
 async def update_file_metadata(
     username: str,
@@ -1430,25 +1323,11 @@ async def update_file_metadata(
     json_mode = _wants_json(request)
 
     def fail(msg: str, *, status: int = 400):
+        # The file-edit modal is the only UI caller now; non-JSON posts
+        # get a matching JSON error envelope for programmatic use.
         if json_mode:
             raise HTTPException(status_code=status, detail=msg)
-        return templates.TemplateResponse(
-            request,
-            "files/form.html",
-            {
-                "user": user,
-                "project": project,
-                "file": file,
-                "form_values": {
-                    "path": path,
-                    "filename": filename,
-                    "description": description,
-                },
-                "max_upload_size": settings.max_upload_size,
-                "error": msg,
-            },
-            status_code=status,
-        )
+        return JSONResponse({"detail": msg}, status_code=status)
 
     try:
         normalized_path = normalize_virtual_path(path)

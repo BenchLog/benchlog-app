@@ -31,7 +31,7 @@
                     <i data-lucide="download" class="w-3 h-3"></i>
                 </a>
                 {% if is_owner %}
-                <a href="{{ files_base }}/{{ file.id }}/edit"
+                <button type="button"
                    class="file-tree-action-btn"
                    data-file-edit-trigger
                    data-file-submit-url="{{ files_base }}/{{ file.id }}"
@@ -39,7 +39,7 @@
                    data-file-description="{{ file.description or '' }}"
                    title="Edit" aria-label="Edit {{ file.filename }}">
                     <i data-lucide="pencil" class="w-3 h-3"></i>
-                </a>
+                </button>
                 <form method="post" action="{{ files_base }}/{{ file.id }}/delete"
                       data-confirm
                       data-confirm-title="Delete file?"
@@ -89,14 +89,14 @@
                     <i data-lucide="download" class="w-3 h-3"></i>
                 </a>
                 {% if is_owner %}
-                <a href="{{ files_base }}/folder/edit?path={{ folder.path | urlencode }}"
+                <button type="button"
                    class="file-tree-action-btn"
                    data-folder-edit-trigger
                    data-folder-submit-url="{{ files_base }}/folder/rename"
                    data-folder-current-path="{{ folder.path }}"
                    title="Edit folder" aria-label="Edit folder {{ folder.path }}">
                     <i data-lucide="pencil" class="w-3 h-3"></i>
-                </a>
+                </button>
                 <form method="post" action="{{ files_base }}/folder/delete"
                       data-confirm
                       data-confirm-title="Delete folder?"
@@ -240,36 +240,7 @@
 {% endif %}
 
 {% if is_owner %}
-<dialog class="modal" data-file-edit-modal>
-    <form data-file-edit-form class="space-y-4">
-        <div class="flex items-baseline justify-between gap-3">
-            <h2 class="text-lg font-display m-0">Edit file</h2>
-            <button type="button" class="btn-ghost text-xs" data-file-edit-cancel
-                    aria-label="Close">
-                <i data-lucide="x" class="w-4 h-4"></i>
-            </button>
-        </div>
-        <div>
-            <label for="file-edit-fullpath">Path</label>
-            <input id="file-edit-fullpath" name="fullpath" type="text" required
-                   autocomplete="off" spellcheck="false" maxlength="1280">
-            <p class="meta mt-1">Folder + filename. Use <code>/</code> for nested folders.</p>
-        </div>
-        <div>
-            <label for="file-edit-description">Description <span class="meta ml-2">optional</span></label>
-            <textarea id="file-edit-description" name="description" rows="3" maxlength="2000"></textarea>
-        </div>
-        <label class="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" name="update_refs" value="1" checked data-file-edit-update-refs>
-            Also update markdown references in this project's description and journal entries
-        </label>
-        <p class="text-rust-deep text-sm m-0" data-file-edit-error hidden></p>
-        <div class="flex flex-wrap justify-end gap-2 pt-1">
-            <button type="button" class="btn-ghost text-sm" data-file-edit-cancel>Cancel</button>
-            <button type="submit" class="btn-primary text-sm">Save</button>
-        </div>
-    </form>
-</dialog>
+{% include "components/_file_edit_modal.html" %}
 
 <dialog class="modal" data-folder-edit-modal>
     <form data-folder-edit-form class="space-y-4">
@@ -300,6 +271,7 @@
 {% endif %}
 
 {% if is_owner %}
+<script src="{{ url_for('static', path='js/file-upload.js') }}"></script>
 <script>
 (() => {
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -307,119 +279,15 @@
   const uploadStatusEl = document.querySelector('[data-upload-status]');
   const filePickerInput = document.querySelector('[data-file-picker-input]');
   const emptyDropZone = document.querySelector('[data-empty-drop-zone]');
-
-  function setUploadStatus(text) {
-    if (!uploadStatusEl) return;
-    uploadStatusEl.hidden = false;
-    uploadStatusEl.textContent = text;
-  }
-
-  function isExternalFileDrag(e) {
-    return Array.from(e.dataTransfer.types || []).includes('Files');
-  }
-
-  // Recursively flatten dropped files + folders into a single list of
-  // {file, relativePath} pairs. webkitGetAsEntry covers the folder case
-  // in every modern browser; fall back to dataTransfer.files for the
-  // rare browser without it (and for FileList-from-picker which has no
-  // items array).
-  async function collectDroppedFiles(dataTransfer) {
-    const out = [];
-    const items = dataTransfer.items;
-    if (items && items.length && items[0].webkitGetAsEntry) {
-      const entries = [];
-      for (const item of items) {
-        const entry = item.webkitGetAsEntry?.();
-        if (entry) entries.push(entry);
-      }
-      for (const entry of entries) {
-        await walkEntry(entry, '', out);
-      }
-    } else {
-      for (const file of dataTransfer.files) {
-        out.push({ file, relativePath: '' });
-      }
-    }
-    return out;
-  }
-
-  async function walkEntry(entry, prefix, out) {
-    if (entry.isFile) {
-      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-      out.push({ file, relativePath: prefix });
-    } else if (entry.isDirectory) {
-      const reader = entry.createReader();
-      const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
-      while (true) {
-        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
-        if (!batch.length) break;
-        for (const child of batch) {
-          await walkEntry(child, childPrefix, out);
-        }
-      }
-    }
-  }
-
-  async function runWithConcurrency(items, limit, fn) {
-    let i = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (i < items.length) {
-        const idx = i++;
-        await fn(items[idx], idx);
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  async function uploadOne(item, basePath) {
-    const finalPath = [basePath, item.relativePath].filter(Boolean).join('/');
-    const formData = new FormData();
-    formData.append('_csrf', csrfToken);
-    formData.append('path', finalPath);
-    formData.append('description', '');
-    formData.append('upload', item.file, item.file.name);
-    try {
-      const resp = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Accept': 'application/json' },
-      });
-      if (resp.ok) return { ok: true };
-      let msg = `${item.file.name} (${resp.status})`;
-      try {
-        const payload = await resp.json();
-        if (payload.detail) msg = `${item.file.name} — ${payload.detail}`;
-      } catch {}
-      return { ok: false, msg };
-    } catch {
-      return { ok: false, msg: `${item.file.name} — network error` };
-    }
-  }
+  const fileUpload = window.benchlogFileUpload;
+  const isExternalFileDrag = fileUpload.isExternalFileDrag;
 
   async function handleExternalDrop(dataTransfer, basePath) {
-    setUploadStatus('Reading dropped items…');
-    const items = await collectDroppedFiles(dataTransfer);
-    if (!items.length) {
-      if (uploadStatusEl) uploadStatusEl.hidden = true;
-      return;
-    }
-    let done = 0;
-    const failures = [];
-    setUploadStatus(`Uploading 0 / ${items.length}…`);
-    await runWithConcurrency(items, 4, async (item) => {
-      const result = await uploadOne(item, basePath);
-      done += 1;
-      if (!result.ok) failures.push(result.msg);
-      setUploadStatus(
-        `Uploaded ${done - failures.length} / ${items.length}` +
-          (failures.length ? `, ${failures.length} failed` : '')
-      );
+    return fileUpload.handleDrop(dataTransfer, {
+      uploadUrl,
+      basePath,
+      statusEl: uploadStatusEl,
     });
-    if (failures.length) {
-      alert(`Some files failed to upload:\n\n${failures.join('\n')}`);
-    }
-    setUploadStatus('Refreshing…');
-    location.reload();
   }
 
   // Top-right "Upload file" button + empty-state drop zone both route
@@ -432,7 +300,11 @@
 
   filePickerInput?.addEventListener('change', () => {
     if (!filePickerInput.files.length) return;
-    handleExternalDrop({ items: null, files: filePickerInput.files }, '');
+    fileUpload.handleFiles(filePickerInput.files, {
+      uploadUrl,
+      basePath: '',
+      statusEl: uploadStatusEl,
+    });
     filePickerInput.value = '';
   });
 
@@ -564,71 +436,11 @@
     el.title = localized;
   });
 
-  // ---------- Edit modals (file + folder) ----------
+  // ---------- Folder edit modal ----------
   //
-  // Pencil clicks are intercepted to open a <dialog> with pre-filled inputs.
-  // Submit goes through fetch with `Accept: application/json` so the server
-  // returns 204 / 4xx+JSON instead of HTML redirects — lets us show errors
-  // inline and reload only on success. Without JS the pencil's href still
-  // navigates to the existing full edit page, so behaviour degrades cleanly.
-  const fileEditModal = document.querySelector('[data-file-edit-modal]');
-  const fileEditForm = fileEditModal?.querySelector('[data-file-edit-form]');
-  const fileEditError = fileEditModal?.querySelector('[data-file-edit-error]');
-  let fileEditSubmitUrl = null;
-
-  if (fileEditModal) {
-    document.querySelectorAll('[data-file-edit-trigger]').forEach((trigger) => {
-      trigger.addEventListener('click', (e) => {
-        e.preventDefault();
-        fileEditSubmitUrl = trigger.dataset.fileSubmitUrl;
-        fileEditForm.fullpath.value = trigger.dataset.fileFullpath || '';
-        fileEditForm.description.value = trigger.dataset.fileDescription || '';
-        // Default the opt-out back on each open — a user's previous
-        // unchecked state shouldn't silently carry into the next rename.
-        if (fileEditForm.update_refs) fileEditForm.update_refs.checked = true;
-        fileEditError.hidden = true;
-        fileEditError.textContent = '';
-        fileEditModal.showModal();
-        requestAnimationFrame(() => {
-          fileEditForm.fullpath.focus();
-          fileEditForm.fullpath.select();
-        });
-      });
-    });
-
-    fileEditModal.querySelectorAll('[data-file-edit-cancel]').forEach((btn) => {
-      btn.addEventListener('click', () => fileEditModal.close());
-    });
-
-    fileEditForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if (!fileEditSubmitUrl) return;
-      const fullpath = fileEditForm.fullpath.value.trim();
-      if (!fullpath) {
-        showError(fileEditError, 'Path is required.');
-        return;
-      }
-      const lastSlash = fullpath.lastIndexOf('/');
-      const path = lastSlash >= 0 ? fullpath.slice(0, lastSlash) : '';
-      const filename = lastSlash >= 0 ? fullpath.slice(lastSlash + 1) : fullpath;
-
-      const body = new URLSearchParams();
-      body.set('_csrf', csrfToken);
-      body.set('path', path);
-      body.set('filename', filename);
-      body.set('description', fileEditForm.description.value);
-      // Mirrors the full-page form's opt-out: when the checkbox is ticked
-      // (default) send `update_refs=1` so the server rewrites markdown
-      // references alongside the rename. Unchecked → field absent → route
-      // treats as off.
-      if (fileEditForm.update_refs?.checked) {
-        body.set('update_refs', '1');
-      }
-
-      await submitEdit(fileEditSubmitUrl, body, fileEditError);
-    });
-  }
-
+  // File-edit modal is provided by `components/_file_edit_modal.html`
+  // (shared between the Files tab + file detail page). The folder-edit
+  // modal stays inline here since it's only used by the tree view.
   const folderEditModal = document.querySelector('[data-folder-edit-modal]');
   const folderEditForm = folderEditModal?.querySelector('[data-folder-edit-form]');
   const folderEditError = folderEditModal?.querySelector('[data-folder-edit-error]');
@@ -681,19 +493,19 @@
     el.hidden = false;
   }
 
-  // After the dialog closes, focus naturally returns to the pencil that
-  // opened it — which keeps the row-actions visible via `:focus-within`
-  // until the user clicks elsewhere. Nudge focus off the trigger so the
-  // hover-only behaviour resumes immediately.
-  [fileEditModal, folderEditModal].forEach((modal) => {
-    if (!modal) return;
-    modal.addEventListener('close', () => {
+  // After the folder-edit dialog closes, focus naturally returns to the
+  // pencil that opened it — which keeps the row-actions visible via
+  // `:focus-within` until the user clicks elsewhere. Nudge focus off the
+  // trigger so the hover-only behaviour resumes immediately. (The shared
+  // file-edit modal handles the same behaviour for itself.)
+  if (folderEditModal) {
+    folderEditModal.addEventListener('close', () => {
       const active = document.activeElement;
       if (active instanceof HTMLElement && active.closest('.file-tree-row-actions')) {
         active.blur();
       }
     });
-  });
+  }
 
   async function submitEdit(url, body, errorEl) {
     try {

@@ -3,6 +3,7 @@
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 {% set file_url = project_url ~ '/files/' ~ file.id %}
+{% set file_fullpath = (file.path ~ '/' ~ file.filename) if file.path else file.filename %}
 
 <nav class="mb-2 flex items-baseline gap-1.5 max-w-full text-sm text-ink-muted"
      aria-label="File location">
@@ -24,7 +25,11 @@
     <div class="flex flex-wrap items-center gap-2 shrink-0">
         <a href="{{ file_url }}/download" class="btn-primary text-sm">Download</a>
         {% if is_owner %}
-        <a href="{{ file_url }}/edit" class="btn-ghost text-sm">Edit</a>
+        <button type="button" class="btn-ghost text-sm"
+                data-file-edit-trigger
+                data-file-submit-url="{{ file_url }}"
+                data-file-fullpath="{{ file_fullpath }}"
+                data-file-description="{{ file.description or '' }}">Edit</button>
         {% endif %}
     </div>
 </div>
@@ -233,22 +238,27 @@
 {% if is_owner %}
 <section class="mb-4">
     <h3 class="text-lg mb-2">Upload new version</h3>
-    <form method="post" action="{{ file_url }}/version"
-          enctype="multipart/form-data" class="card max-w-2xl space-y-4">
-        {% include "components/_csrf.html" %}
-        <div>
-            <label for="upload">Replacement file</label>
-            <input id="upload" name="upload" type="file" required>
-        </div>
-        <div>
-            <label for="changelog">What changed? <span class="meta ml-2">optional</span></label>
-            <textarea id="changelog" name="changelog" rows="2" maxlength="2000"
-                      placeholder="e.g. fixed the mounting hole offset"></textarea>
-        </div>
-        <div class="pt-2">
-            <button type="submit" class="btn-primary text-sm">Upload version</button>
-        </div>
-    </form>
+    <div class="file-upload-status" data-version-upload-status hidden
+         role="status" aria-live="polite"></div>
+    {#
+        Drop zone replaces the old form. One file per version — multi-drop
+        shows an error toast, the native picker is single-file. After the
+        upload lands the page reloads; the owner can then click Edit on the
+        new version row to add a changelog note (the version-edit modal
+        below is already wired for that).
+    #}
+    <div class="file-empty-drop-zone max-w-2xl" data-version-upload-dropzone
+         role="button" tabindex="0"
+         aria-label="Upload a new version — click to pick, or drag a file here">
+        <i data-lucide="upload-cloud" class="w-8 h-8 mb-2 text-ink-muted"></i>
+        <p class="text-ink m-0">Drag a file here to upload a new version</p>
+        <p class="meta m-0 mt-1">or click to pick — one file per version</p>
+    </div>
+    <input type="file" class="hidden" data-version-upload-input>
+    <p class="meta mt-2">
+        Add a &ldquo;what changed&rdquo; note later with the Edit button
+        on the new version row.
+    </p>
 </section>
 
 <dialog class="modal" data-version-edit-modal>
@@ -276,71 +286,169 @@
     </form>
 </dialog>
 
+{% include "components/_file_edit_modal.html" %}
+
+<script src="{{ url_for('static', path='js/file-upload.js') }}"></script>
 <script>
 (() => {
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+
+  // ---------- Version edit modal ----------
   const modal = document.querySelector('[data-version-edit-modal]');
-  if (!modal) return;
-  const form = modal.querySelector('[data-version-edit-form]');
-  const label = modal.querySelector('[data-version-edit-label]');
-  const errorEl = modal.querySelector('[data-version-edit-error]');
-  let submitUrl = null;
+  if (modal) {
+    const form = modal.querySelector('[data-version-edit-form]');
+    const label = modal.querySelector('[data-version-edit-label]');
+    const errorEl = modal.querySelector('[data-version-edit-error]');
+    let submitUrl = null;
 
-  function showError(msg) {
-    errorEl.textContent = msg;
-    errorEl.hidden = false;
-  }
+    const showError = (msg) => {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+    };
 
-  document.querySelectorAll('[data-version-edit-trigger]').forEach((trigger) => {
-    trigger.addEventListener('click', (e) => {
-      e.preventDefault();
-      submitUrl = trigger.dataset.versionSubmitUrl;
-      label.textContent = trigger.dataset.versionNumber || '';
-      form.changelog.value = trigger.dataset.versionChangelog || '';
-      errorEl.hidden = true;
-      errorEl.textContent = '';
-      modal.showModal();
-      requestAnimationFrame(() => {
-        form.changelog.focus();
-        form.changelog.select();
+    document.querySelectorAll('[data-version-edit-trigger]').forEach((trigger) => {
+      trigger.addEventListener('click', (e) => {
+        e.preventDefault();
+        submitUrl = trigger.dataset.versionSubmitUrl;
+        label.textContent = trigger.dataset.versionNumber || '';
+        form.changelog.value = trigger.dataset.versionChangelog || '';
+        errorEl.hidden = true;
+        errorEl.textContent = '';
+        modal.showModal();
+        requestAnimationFrame(() => {
+          form.changelog.focus();
+          form.changelog.select();
+        });
       });
     });
-  });
 
-  modal.querySelectorAll('[data-version-edit-cancel]').forEach((btn) => {
-    btn.addEventListener('click', () => modal.close());
-  });
+    modal.querySelectorAll('[data-version-edit-cancel]').forEach((btn) => {
+      btn.addEventListener('click', () => modal.close());
+    });
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!submitUrl) return;
-    const body = new URLSearchParams();
-    body.set('_csrf', csrfToken);
-    body.set('changelog', form.changelog.value);
-    try {
-      const resp = await fetch(submitUrl, {
-        method: 'POST',
-        headers: {
-          'X-CSRF-Token': csrfToken,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-        body: body.toString(),
-      });
-      if (resp.status === 204 || resp.status === 200 || resp.redirected) {
-        location.reload();
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!submitUrl) return;
+      const body = new URLSearchParams();
+      body.set('_csrf', csrfToken);
+      body.set('changelog', form.changelog.value);
+      try {
+        const resp = await fetch(submitUrl, {
+          method: 'POST',
+          headers: {
+            'X-CSRF-Token': csrfToken,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+          },
+          body: body.toString(),
+        });
+        if (resp.status === 204 || resp.status === 200 || resp.redirected) {
+          location.reload();
+          return;
+        }
+        let msg = `Save failed (${resp.status}).`;
+        try {
+          const payload = await resp.json();
+          if (payload && payload.detail) msg = payload.detail;
+        } catch {}
+        showError(msg);
+      } catch {
+        showError('Save failed — check your connection.');
+      }
+    });
+  }
+
+  // ---------- New-version drop zone ----------
+  //
+  // One file per version. Multi-drop → show an error toast and abort
+  // (a single version replaces a single file). Native picker is
+  // single-file. Uploads go to /files/{id}/version which takes a
+  // `upload` form-data field (changelog is optional and skipped from
+  // the drop-zone flow; fill it in via the version-edit modal on the
+  // row after the page reloads).
+  const dropzone = document.querySelector('[data-version-upload-dropzone]');
+  const dropInput = document.querySelector('[data-version-upload-input]');
+  const statusEl = document.querySelector('[data-version-upload-status]');
+  const versionUploadUrl = {{ (file_url ~ '/version') | tojson }};
+
+  if (dropzone && dropInput && window.benchlogFileUpload) {
+    const { isExternalFileDrag } = window.benchlogFileUpload;
+
+    const setStatus = (text) => {
+      if (!statusEl) return;
+      statusEl.hidden = false;
+      statusEl.textContent = text;
+    };
+
+    async function uploadSingle(file) {
+      setStatus(`Uploading ${file.name}…`);
+      const formData = new FormData();
+      formData.append('_csrf', csrfToken);
+      formData.append('upload', file, file.name);
+      try {
+        const resp = await fetch(versionUploadUrl, {
+          method: 'POST',
+          body: formData,
+          headers: { 'Accept': 'application/json' },
+        });
+        if (resp.ok || resp.redirected) {
+          setStatus('Refreshing…');
+          location.reload();
+          return;
+        }
+        let msg = `Upload failed (${resp.status})`;
+        try {
+          const payload = await resp.json();
+          if (payload.detail) msg = payload.detail;
+        } catch {}
+        setStatus(msg);
+        alert(msg);
+      } catch {
+        const msg = 'Upload failed — check your connection.';
+        setStatus(msg);
+        alert(msg);
+      }
+    }
+
+    function handleFileList(list) {
+      if (!list || !list.length) return;
+      if (list.length > 1) {
+        const msg = 'Only one file per new version — drop a single file.';
+        setStatus(msg);
+        alert(msg);
         return;
       }
-      let msg = `Save failed (${resp.status}).`;
-      try {
-        const payload = await resp.json();
-        if (payload && payload.detail) msg = payload.detail;
-      } catch {}
-      showError(msg);
-    } catch {
-      showError('Save failed — check your connection.');
+      uploadSingle(list[0]);
     }
-  });
+
+    dropzone.addEventListener('click', () => dropInput.click());
+    dropzone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        dropInput.click();
+      }
+    });
+    dropzone.addEventListener('dragover', (e) => {
+      if (!isExternalFileDrag(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      dropzone.classList.add('is-drop-active');
+    });
+    dropzone.addEventListener('dragleave', () => {
+      dropzone.classList.remove('is-drop-active');
+    });
+    dropzone.addEventListener('drop', (e) => {
+      if (!isExternalFileDrag(e)) return;
+      e.preventDefault();
+      dropzone.classList.remove('is-drop-active');
+      handleFileList(e.dataTransfer.files);
+    });
+
+    dropInput.addEventListener('change', () => {
+      handleFileList(dropInput.files);
+      dropInput.value = '';
+    });
+  }
 })();
 </script>
 {% endif %}

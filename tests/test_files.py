@@ -543,8 +543,11 @@ async def test_non_owner_cannot_upload_or_delete_or_edit(client, db):
     )
     assert resp.status_code == 404
 
-    # Bob tries to load the edit form.
-    resp = await client.get(f"/u/alice/bench/files/{file.id}/edit")
+    # Bob tries to rename the file via the edit endpoint — owner check 404s.
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}",
+        data={"_csrf": token, "path": "", "filename": "bob.md", "description": ""},
+    )
     assert resp.status_code == 404
 
 
@@ -652,7 +655,7 @@ async def test_owner_can_rename_and_move_file(client, db):
     )
     file = (await db.execute(select(ProjectFile))).scalar_one()
 
-    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
     resp = await client.post(
         f"/u/alice/bench/files/{file.id}",
         data={
@@ -688,7 +691,7 @@ async def test_rename_blocks_collision(client, db):
     files = (await db.execute(select(ProjectFile))).scalars().all()
     a = next(f for f in files if f.filename == "a.md")
 
-    token = await csrf_token(client, f"/u/alice/bench/files/{a.id}/edit")
+    token = await csrf_token(client, f"/u/alice/bench/files/{a.id}")
     resp = await client.post(
         f"/u/alice/bench/files/{a.id}",
         data={"_csrf": token, "filename": "b.md", "path": "", "description": ""},
@@ -2015,7 +2018,7 @@ async def test_folder_rename_rewrites_paths_on_all_descendants(client, db):
         csrf_path="/u/alice/bench",
     )
 
-    token = await csrf_token(client, "/u/alice/bench/files/folder/edit?path=models")
+    token = await csrf_token(client, "/u/alice/bench/files")
     resp = await client.post(
         "/u/alice/bench/files/folder/rename",
         data={"_csrf": token, "old_path": "models", "new_path": "archive/legacy"},
@@ -2052,7 +2055,7 @@ async def test_folder_rename_rejects_collision(client, db):
         csrf_path="/u/alice/bench",
     )
 
-    token = await csrf_token(client, "/u/alice/bench/files/folder/edit?path=models")
+    token = await csrf_token(client, "/u/alice/bench/files")
     resp = await client.post(
         "/u/alice/bench/files/folder/rename",
         data={"_csrf": token, "old_path": "models", "new_path": "archive"},
@@ -2095,7 +2098,7 @@ async def test_folder_delete_removes_every_descendant_file_and_blob(client, db):
     blob_paths = [Path(get_storage().full_path(v.storage_path)) for v in versions]
     assert all(p.exists() for p in blob_paths)
 
-    token = await csrf_token(client, "/u/alice/bench/files/folder/edit?path=models")
+    token = await csrf_token(client, "/u/alice/bench/files")
     resp = await client.post(
         "/u/alice/bench/files/folder/delete",
         data={"_csrf": token, "path": "models"},
@@ -2147,15 +2150,6 @@ async def test_non_owner_cannot_rename_or_delete_folder(client, db):
     assert f.path == "models"
 
 
-async def test_folder_edit_form_404s_for_unknown_folder(client, db):
-    user = await make_user(db, email="alice@test.com", username="alice")
-    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
-    await db.commit()
-    await login(client, "alice")
-    resp = await client.get("/u/alice/bench/files/folder/edit?path=ghost")
-    assert resp.status_code == 404
-
-
 async def test_folder_edit_button_renders_for_owner_only(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     await make_user(db, email="bob@test.com", username="bob")
@@ -2172,14 +2166,15 @@ async def test_folder_edit_button_renders_for_owner_only(client, db):
         csrf_path="/u/alice/bench",
     )
 
-    # Owner sees the folder edit affordance linking to the folder edit page.
+    # Owner sees the inline folder edit trigger referencing the folder path.
     resp = await client.get("/u/alice/bench/files")
-    assert "/files/folder/edit?path=models" in resp.text
+    assert 'data-folder-edit-trigger' in resp.text
+    assert 'data-folder-current-path="models"' in resp.text
 
     # Guest (after clearing cookies) does not.
     client.cookies.clear()
     resp = await client.get("/u/alice/bench/files")
-    assert "/files/folder/edit?path=" not in resp.text
+    assert "data-folder-edit-trigger" not in resp.text
 
 
 # ---------- drag-and-drop move ---------- #
@@ -2482,8 +2477,10 @@ async def test_file_rows_render_edit_and_delete_actions_for_owner(client, db):
 
     resp = await client.get("/u/alice/bench/files")
     body = resp.text
-    # Edit action links to the existing edit page.
-    assert f'/files/{file.id}/edit"' in body
+    # Edit action opens the inline modal via a data-attribute trigger
+    # that carries the submit URL (the /files/{id} POST endpoint).
+    assert 'data-file-edit-trigger' in body
+    assert f'data-file-submit-url="/u/alice/bench/files/{file.id}"' in body
     # Delete action is a form targeting the existing delete route.
     assert f'action="/u/alice/bench/files/{file.id}/delete"' in body
     assert 'data-confirm' in body
@@ -3065,7 +3062,7 @@ async def test_file_edit_html_fallback_still_works_without_accept_json(client, d
     )
     file = (await db.execute(select(ProjectFile))).scalar_one()
 
-    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
     resp = await client.post(
         f"/u/alice/bench/files/{file.id}",
         data={
@@ -3731,7 +3728,7 @@ async def test_file_rename_updates_description_and_journal(client, db):
     )
     file = (await db.execute(select(ProjectFile))).scalar_one()
 
-    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
     resp = await client.post(
         f"/u/alice/bench/files/{file.id}",
         data={
@@ -3770,7 +3767,7 @@ async def test_file_rename_without_update_refs_leaves_markdown_alone(client, db)
     )
     file = (await db.execute(select(ProjectFile))).scalar_one()
 
-    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}/edit")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
     resp = await client.post(
         f"/u/alice/bench/files/{file.id}",
         data={
@@ -3790,7 +3787,14 @@ async def test_file_rename_without_update_refs_leaves_markdown_alone(client, db)
     detail = await client.get(resp.headers["location"])
     # Flash says "File renamed" but does NOT mention reference count.
     assert "File renamed" in detail.text
-    assert "Updated" not in detail.text or "markdown references" not in detail.text
+    # The rename-ref count phrase only appears when markdown was rewritten —
+    # since update_refs was unchecked, it shouldn't be in the flash toast.
+    # (The modal's checkbox label contains "markdown references", so the
+    # substring alone isn't a reliable signal — check the ref-count phrase.)
+    assert "markdown reference" not in detail.text.replace(
+        "markdown references in this project",
+        "",  # strip the modal label
+    )
 
 
 async def test_folder_rename_updates_all_refs_across_files(client, db):
@@ -3809,7 +3813,7 @@ async def test_folder_rename_updates_all_refs_across_files(client, db):
     )
 
     token = await csrf_token(
-        client, "/u/alice/bench/files/folder/edit?path=models"
+        client, "/u/alice/bench/files"
     )
     resp = await client.post(
         "/u/alice/bench/files/folder/rename",
@@ -3887,7 +3891,7 @@ async def test_rename_only_touches_the_renaming_project(client, db):
         await db.execute(select(ProjectFile).where(ProjectFile.project_id == p1.id))
     ).scalar_one()
 
-    token = await csrf_token(client, f"/u/alice/one/files/{file.id}/edit")
+    token = await csrf_token(client, f"/u/alice/one/files/{file.id}")
     resp = await client.post(
         f"/u/alice/one/files/{file.id}",
         data={
@@ -4041,3 +4045,182 @@ async def test_files_tab_stats_empty_project(client, db):
     assert resp.status_code == 200
     assert "0 files" in resp.text
     assert "0 B" in resp.text
+
+
+# ---------- inline affordances on detail + gallery surfaces ---------- #
+
+
+async def test_file_detail_renders_inline_edit_modal_for_owner(client, db):
+    """The detail page Edit button is a modal trigger, not a navigation
+    link. The shared `_file_edit_modal.html` component is included."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="spec.md", content=b"x", mime="text/markdown",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    body = resp.text
+    assert resp.status_code == 200
+    # Shared modal markup is included.
+    assert "data-file-edit-modal" in body
+    assert "data-file-edit-form" in body
+    # The Edit button is a modal trigger with the expected data attrs.
+    assert "data-file-edit-trigger" in body
+    assert f'data-file-submit-url="/u/alice/bench/files/{file.id}"' in body
+    # Old navigation link is gone.
+    assert f'href="/u/alice/bench/files/{file.id}/edit"' not in body
+
+
+async def test_file_detail_renders_version_upload_dropzone_for_owner(client, db):
+    """The new-version surface is a drop zone, not a plain static form.
+    The old <input name="changelog"> is gone from this section — callers
+    add the changelog post-upload via the version-edit modal."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="spec.md", content=b"x", mime="text/markdown",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    body = resp.text
+    assert resp.status_code == 200
+    assert "data-version-upload-dropzone" in body
+    assert "data-version-upload-input" in body
+    # The section no longer has a plain <textarea name="changelog"> —
+    # the only changelog textarea on the page is inside the
+    # version-edit modal (post-upload). Check there's no standalone
+    # version-upload form with changelog input.
+    assert 'action="/u/alice/bench/files/' + str(file.id) + '/version"' not in body
+
+
+async def test_file_detail_inline_affordances_hidden_from_guest(client, db):
+    """Non-owner view of a public project has no edit trigger or drop zone."""
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(
+        user_id=alice.id, title="Bench", slug="bench",
+        status=ProjectStatus.in_progress, is_public=True,
+    ))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="spec.md", content=b"x", mime="text/markdown",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    client.cookies.clear()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    assert "data-file-edit-trigger" not in resp.text
+    assert "data-version-upload-dropzone" not in resp.text
+
+
+async def test_gallery_renders_upload_trigger_and_input_for_owner(client, db):
+    """Owner Gallery tab has the shared upload trigger + hidden input that
+    wires into the shared file-upload module with show_in_gallery=1."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await client.get("/u/alice/bench/gallery")
+    body = resp.text
+    assert resp.status_code == 200
+    assert "data-gallery-upload-trigger" in body
+    assert "data-gallery-upload-input" in body
+    # The old nav link to /files/new is gone.
+    assert "/files/new" not in body
+
+
+async def test_gallery_upload_affordances_hidden_from_guest(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(
+        user_id=alice.id, title="Bench", slug="bench",
+        status=ProjectStatus.in_progress, is_public=True,
+    ))
+    await db.commit()
+
+    resp = await client.get("/u/alice/bench/gallery")
+    body = resp.text
+    assert resp.status_code == 200
+    assert "data-gallery-upload-trigger" not in body
+    assert "data-gallery-upload-input" not in body
+
+
+async def test_gallery_upload_honors_show_in_gallery_flag(client, db):
+    """POST /files with show_in_gallery=1 keeps the default (visible), and
+    with show_in_gallery=0 hides the new image from the gallery tab."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    # show_in_gallery=1 (the Gallery tab's default behaviour).
+    token = await csrf_token(client, "/u/alice/bench")
+    files = {"upload": ("visible.png", _png_bytes(), "image/png")}
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": "", "show_in_gallery": "1"},
+        files=files,
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 204
+
+    # show_in_gallery=0 (explicit opt-out — kept for future UI surfaces).
+    token = await csrf_token(client, "/u/alice/bench")
+    files = {"upload": ("hidden.png", _png_bytes(), "image/png")}
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": "", "show_in_gallery": "0"},
+        files=files,
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 204
+
+    rows = {
+        f.filename: f.show_in_gallery
+        for f in (await db.execute(select(ProjectFile))).scalars().all()
+    }
+    assert rows == {"visible.png": True, "hidden.png": False}
+
+
+async def test_deleted_get_routes_are_404(client, db):
+    """The old form pages have been deleted — their GET URLs should 404."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    # /files/new used to render the upload form. Now the literal "new"
+    # falls through to /files/{file_id}, which 422s on UUID coercion
+    # — both 404 and 422 are acceptable "route is gone" signals.
+    resp = await client.get("/u/alice/bench/files/new")
+    assert resp.status_code in {404, 422}
+
+    # /files/folder/edit used to render the folder rename form. With
+    # the GET route gone, nothing matches the URL.
+    resp = await client.get("/u/alice/bench/files/folder/edit?path=anything")
+    assert resp.status_code in {404, 405, 422}
+
+    # /files/{id}/edit used to render the file metadata form.
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="spec.md", content=b"x", mime="text/markdown",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/edit")
+    # The trailing /edit segment no longer matches a route.
+    assert resp.status_code == 404

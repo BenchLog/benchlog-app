@@ -30,8 +30,8 @@ def _is_public_project_view(method: str, path: str) -> bool:
     - `/u/{username}/{slug}/files/{id}/download|thumb` — file content endpoints
 
     Route-level visibility checks enforce private-project 404s. Anything
-    with a mutation suffix (`/edit`, `/delete`, `/new`, `/version`) stays
-    auth-gated.
+    with a mutation suffix (`/delete`, `/version`, `/move`, `/cover`)
+    stays auth-gated.
     """
     if method != "GET":
         return False
@@ -62,8 +62,8 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # /u/{username}/{slug}/journal/{entry_slug} — but not /journal/new
     if len(parts) == 4 and parts[2] == "journal" and parts[3] != "new":
         return True
-    # /u/{username}/{slug}/files/{id} — but not /files/new
-    if len(parts) == 4 and parts[2] == "files" and parts[3] != "new":
+    # /u/{username}/{slug}/files/{id}
+    if len(parts) == 4 and parts[2] == "files":
         return True
     # /u/{username}/{slug}/files/{id}/{download|thumb}
     if (

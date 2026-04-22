@@ -1,0 +1,140 @@
+{#
+    Shared file-edit modal. Include on any page that has triggers with
+    `data-file-edit-trigger` (+ `data-file-submit-url`, `data-file-fullpath`,
+    `data-file-description`). The inline <script> binds itself by querying
+    its own DOM and guards against double-binding when the component is
+    included more than once on a page via `data-file-edit-modal-initialized`.
+
+    The modal posts to the trigger's submit URL as
+    `application/x-www-form-urlencoded` with `Accept: application/json` so
+    errors land inline (4xx + detail JSON) and success (2xx/204) reloads.
+#}
+<dialog class="modal" data-file-edit-modal>
+    <form data-file-edit-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0">Edit file</h2>
+            <button type="button" class="btn-ghost text-xs" data-file-edit-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div>
+            <label for="file-edit-fullpath">Path</label>
+            <input id="file-edit-fullpath" name="fullpath" type="text" required
+                   autocomplete="off" spellcheck="false" maxlength="1280">
+            <p class="meta mt-1">Folder + filename. Use <code>/</code> for nested folders.</p>
+        </div>
+        <div>
+            <label for="file-edit-description">Description <span class="meta ml-2">optional</span></label>
+            <textarea id="file-edit-description" name="description" rows="3" maxlength="2000"></textarea>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="update_refs" value="1" checked data-file-edit-update-refs>
+            Also update markdown references in this project's description and journal entries
+        </label>
+        <p class="text-rust-deep text-sm m-0" data-file-edit-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-file-edit-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">Save</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+(() => {
+  // Idempotent: if a page includes the component twice (or re-renders it
+  // partially) the script only wires itself up once per document.
+  if (document.documentElement.dataset.fileEditModalInitialized === "1") return;
+  document.documentElement.dataset.fileEditModalInitialized = "1";
+
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const modal = document.querySelector('[data-file-edit-modal]');
+  if (!modal) return;
+  const form = modal.querySelector('[data-file-edit-form]');
+  const errorEl = modal.querySelector('[data-file-edit-error]');
+  let submitUrl = null;
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.hidden = false;
+  }
+
+  document.querySelectorAll('[data-file-edit-trigger]').forEach((trigger) => {
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      submitUrl = trigger.dataset.fileSubmitUrl;
+      form.fullpath.value = trigger.dataset.fileFullpath || '';
+      form.description.value = trigger.dataset.fileDescription || '';
+      // Default the opt-in back on each open — a prior unchecked state
+      // shouldn't silently carry into the next rename.
+      if (form.update_refs) form.update_refs.checked = true;
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+      modal.showModal();
+      requestAnimationFrame(() => {
+        form.fullpath.focus();
+        form.fullpath.select();
+      });
+    });
+  });
+
+  modal.querySelectorAll('[data-file-edit-cancel]').forEach((btn) => {
+    btn.addEventListener('click', () => modal.close());
+  });
+
+  // When the dialog closes focus naturally returns to the trigger; nudge
+  // off it so any `:focus-within` row-actions reveal stops lingering.
+  modal.addEventListener('close', () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest('.file-tree-row-actions')) {
+      active.blur();
+    }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!submitUrl) return;
+    const fullpath = form.fullpath.value.trim();
+    if (!fullpath) {
+      showError('Path is required.');
+      return;
+    }
+    const lastSlash = fullpath.lastIndexOf('/');
+    const path = lastSlash >= 0 ? fullpath.slice(0, lastSlash) : '';
+    const filename = lastSlash >= 0 ? fullpath.slice(lastSlash + 1) : fullpath;
+
+    const body = new URLSearchParams();
+    body.set('_csrf', csrfToken);
+    body.set('path', path);
+    body.set('filename', filename);
+    body.set('description', form.description.value);
+    if (form.update_refs?.checked) {
+      body.set('update_refs', '1');
+    }
+
+    try {
+      const resp = await fetch(submitUrl, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: body.toString(),
+      });
+      if (resp.status === 204 || resp.status === 200 || resp.redirected) {
+        location.reload();
+        return;
+      }
+      let msg = `Save failed (${resp.status}).`;
+      try {
+        const payload = await resp.json();
+        if (payload && payload.detail) msg = payload.detail;
+      } catch {}
+      showError(msg);
+    } catch {
+      showError('Save failed — check your connection.');
+    }
+  });
+})();
+</script>

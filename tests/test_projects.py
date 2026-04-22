@@ -222,7 +222,7 @@ async def test_edit_project_updates_fields(client, db):
             "status": "completed",
             "pinned": "1",
         },
-        csrf_path="/u/alice/original/edit",
+        csrf_path="/projects/new",
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "/u/alice/original"
@@ -550,7 +550,7 @@ async def test_owner_can_toggle_public_via_edit(client, db):
             "status": "idea",
             "is_public": "1",
         },
-        csrf_path="/u/alice/toggleable/edit",
+        csrf_path="/projects/new",
     )
     await db.refresh(project)
     assert project.is_public is True
@@ -565,7 +565,7 @@ async def test_owner_can_toggle_public_via_edit(client, db):
             "description": "",
             "status": "idea",
         },
-        csrf_path="/u/alice/toggleable/edit",
+        csrf_path="/projects/new",
     )
     await db.refresh(project)
     assert project.is_public is False
@@ -697,7 +697,7 @@ async def test_edit_can_rename_slug_and_redirects_to_new_url(client, db):
             "description": "",
             "status": "idea",
         },
-        csrf_path="/u/alice/desk-lamp/edit",
+        csrf_path="/projects/new",
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "/u/alice/brass-lamp"
@@ -732,7 +732,7 @@ async def test_edit_blank_slug_shows_error(client, db):
         client,
         "/u/alice/has-slug",
         {"title": "Has slug", "slug": "", "description": "", "status": "idea"},
-        csrf_path="/u/alice/has-slug/edit",
+        csrf_path="/projects/new",
     )
     assert resp.status_code == 400
     assert "Slug is required." in resp.text
@@ -764,7 +764,7 @@ async def test_edit_slug_collision_within_user_shows_error(client, db):
         client,
         "/u/alice/second",
         {"title": "Second", "slug": "first", "description": "", "status": "idea"},
-        csrf_path="/u/alice/second/edit",
+        csrf_path="/projects/new",
     )
     assert resp.status_code == 400
     assert "already used by another of your projects" in resp.text
@@ -773,7 +773,33 @@ async def test_edit_slug_collision_within_user_shows_error(client, db):
     assert 'value="first"' in resp.text
 
 
-async def test_edit_form_includes_slug_change_warning(client, db):
+async def test_detail_includes_slug_change_modal_warning_for_owner(client, db):
+    # Slug-change warning now lives in a modal surfaced from the More
+    # actions menu — only rendered for the owner on the detail page.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Has slug",
+            slug="has-slug",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/u/alice/has-slug")
+    assert resp.status_code == 200
+    # Modal markup is present; JS toggles the warning text when the slug
+    # input diverges from the original.
+    assert "data-slug-modal" in resp.text
+    assert 'data-original-slug="has-slug"' in resp.text
+    assert "will stop working" in resp.text
+
+
+async def test_edit_page_route_is_gone(client, db):
+    # The standalone edit page has been replaced by inline controls — any
+    # GET to /edit should now 404.
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add(
         Project(
@@ -787,11 +813,7 @@ async def test_edit_form_includes_slug_change_warning(client, db):
 
     await login(client, "alice")
     resp = await client.get("/u/alice/has-slug/edit")
-    assert resp.status_code == 200
-    # Hidden-by-default warning markup is present; JS toggles it on slug edit.
-    assert "data-slug-warning" in resp.text
-    assert 'data-original-slug="has-slug"' in resp.text
-    assert "will stop working" in resp.text
+    assert resp.status_code == 404
 
 
 async def test_new_project_form_has_no_slug_change_warning(client, db):
@@ -828,7 +850,7 @@ async def test_edit_keeping_existing_slug_saves_without_collision(client, db):
             "description": "",
             "status": "idea",
         },
-        csrf_path="/u/alice/keep-me/edit",
+        csrf_path="/projects/new",
     )
     assert resp.status_code == 302
 
@@ -1620,7 +1642,7 @@ async def test_edit_project_categories_replace_semantics(client, db):
             "status": "idea",
             "category": [str(b.id), str(c.id)],
         },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        csrf_path="/projects/new",
     )
     # Identity map holds pre-request state with expire_on_commit=False.
     db.expunge_all()
@@ -1955,6 +1977,53 @@ async def test_project_header_shows_full_breadcrumb_chips(client, db):
     resp = await client.get("/u/alice/printer")
     # Full breadcrumb in the chip body for the detail header.
     assert "3D Printing \u203a FDM" in resp.text
+
+
+async def test_project_header_breadcrumbs_on_every_tab(client, db):
+    """Every tab that renders ``projects/_layout.html`` must pass the same
+    ``category_breadcrumbs`` into the header — otherwise a category like
+    ``3D Printing › FDM`` collapses to just ``FDM`` on the journal/
+    files tabs while showing the full trail on overview. This regression
+    fires any time a new tab forgets the shared header context dict.
+    """
+    from benchlog.categories import set_project_categories
+
+    parent = await _seed_cat(db, slug="3d-printing", name="3D Printing")
+    fdm = await _seed_cat(db, slug="fdm", name="FDM", parent_id=parent.id)
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    project = Project(
+        user_id=user.id,
+        title="Printer",
+        slug="printer",
+        status=ProjectStatus.idea,
+        is_public=True,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    await set_project_categories(db, project, [str(fdm.id)])
+    await db.commit()
+
+    # Hit each non-overview tab — the shared header must render the full
+    # breadcrumb (title= attr on the chip + both segments in the body).
+    expected_title = 'title="3D Printing › FDM"'
+    for path in (
+        "/u/alice/printer/journal",
+        "/u/alice/printer/files",
+        "/u/alice/printer/gallery",
+        "/u/alice/printer/links",
+        "/u/alice/printer/activity",
+    ):
+        resp = await client.get(path)
+        assert resp.status_code == 200, f"{path} returned {resp.status_code}"
+        assert expected_title in resp.text, (
+            f"{path} missing breadcrumb tooltip — category_breadcrumbs not threaded"
+        )
+        assert ">3D Printing<" in resp.text, f"{path} missing parent segment"
+        assert ">FDM<" in resp.text, f"{path} missing leaf segment"
 
 
 async def test_card_hides_category_row_when_empty(client, db):

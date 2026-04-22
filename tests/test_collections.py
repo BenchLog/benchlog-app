@@ -511,6 +511,54 @@ async def test_project_detail_modal_data_loaded(client, db):
     assert str(out_collection.id) not in initial
 
 
+async def test_collections_picker_emits_combobox_config(client, db):
+    """The shared combobox partial renders its config as a JSON script
+    block. Verify the collections picker bootstraps with the expected
+    option set (every collection owned by the viewer) and initial
+    selection (collections this project already lives in)."""
+    import json
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = await _make_project(db, user, title="Thing", slug="thing")
+    in_collection = Collection(user_id=user.id, name="In", slug="in")
+    in_collection.projects = [project]
+    out_collection = Collection(user_id=user.id, name="Out", slug="out")
+    db.add_all([in_collection, out_collection])
+    await db.commit()
+    await db.refresh(in_collection)
+    await db.refresh(out_collection)
+
+    await login(client, "alice")
+    resp = await client.get("/u/alice/thing")
+    assert resp.status_code == 200
+
+    configs = re.findall(
+        r'<script type="application/json" data-combobox-config>'
+        r'([^<]*)</script>',
+        resp.text,
+    )
+    # At least one config block on the page (we're not the only combobox
+    # on detail pages — there's tags + categories too).
+    assert configs, "expected at least one data-combobox-config block"
+    # Pick the one that looks like the collections picker — it carries
+    # collection slug metadata on every option.
+    coll_cfg = None
+    for raw in configs:
+        cfg = json.loads(raw)
+        if cfg.get("kind") == "collection":
+            coll_cfg = cfg
+            break
+    assert coll_cfg is not None, "collections combobox config not found"
+    labels = {o["label"] for o in coll_cfg["options"]}
+    assert labels == {"In", "Out"}
+    # Initial selection contains only the membership project.
+    initial = set(coll_cfg["selected"])
+    assert str(in_collection.id) in initial
+    assert str(out_collection.id) not in initial
+    # Allowed-to-create is on (users can type a name to create + add).
+    assert coll_cfg["allowCreate"] is True
+
+
 async def test_detail_edit_toggle_renders_for_owner_only(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     await make_user(db, email="bob@test.com", username="bob")
@@ -769,6 +817,57 @@ async def test_picker_not_rendered_for_guests(client, db):
     assert resp.status_code == 200
     assert "data-collections-picker" not in resp.text
     assert "data-collections-modal" not in resp.text
+
+
+async def test_picker_rendered_on_every_project_tab_for_logged_in_user(client, db):
+    # The picker lives in the shared project header, so it should render on
+    # every sub-tab (files / journal / gallery / activity / links) and on
+    # nested detail pages — not just the overview. Regression guard for
+    # the detail-only placement that shipped initially.
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await _make_project(
+        db, bob, title="BobsPiece", slug="bobs-piece", is_public=True
+    )
+    db.add(Collection(user_id=alice.id, name="Inspiration", slug="inspiration"))
+    await db.commit()
+
+    await login(client, "alice")
+    for tab in (
+        "/u/bob/bobs-piece",
+        "/u/bob/bobs-piece/files",
+        "/u/bob/bobs-piece/journal",
+        "/u/bob/bobs-piece/gallery",
+        "/u/bob/bobs-piece/links",
+        "/u/bob/bobs-piece/activity",
+    ):
+        resp = await client.get(tab)
+        assert resp.status_code == 200, tab
+        assert "data-collections-picker" in resp.text, tab
+        assert "data-collections-modal" in resp.text, tab
+        assert 'data-toggle-url-prefix="/u/alice/collections/"' in resp.text, tab
+
+
+async def test_picker_hidden_on_every_project_tab_for_guests(client, db):
+    # Mirror of the above for anonymous viewers — no collections picker on
+    # any tab, and none of its scaffolding markup leaks either.
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await _make_project(
+        db, bob, title="BobsPiece", slug="bobs-piece", is_public=True
+    )
+
+    for tab in (
+        "/u/bob/bobs-piece",
+        "/u/bob/bobs-piece/files",
+        "/u/bob/bobs-piece/journal",
+        "/u/bob/bobs-piece/gallery",
+        "/u/bob/bobs-piece/links",
+        "/u/bob/bobs-piece/activity",
+    ):
+        resp = await client.get(tab)
+        assert resp.status_code == 200, tab
+        assert "data-collections-picker" not in resp.text, tab
+        assert "data-collections-modal" not in resp.text, tab
 
 
 async def test_non_owner_can_add_visible_project_end_to_end(client, db):

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{% if project %}Edit {{ project.title }}{% else %}New project{% endif %} · BenchLog{% endblock %}
+{% block title %}New project · BenchLog{% endblock %}
 {% block head_extra %}
     <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
     <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
@@ -7,12 +7,13 @@
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
 {% endblock %}
 {% block content %}
-{% set project_url = '/u/' ~ user.username ~ '/' ~ project.slug if project else None %}
+{# This template is create-only. Project-detail edits happen inline via the
+   `/settings` endpoint — see `components/_project_header.html` and
+   `static/js/project-inline-edit.js`. #}
 <div class="meta mb-2">
-    <a href="/projects" class="hover:text-rust">My Projects</a>
-    {% if project %} / <a href="{{ project_url }}" class="hover:text-rust">{{ project.title }}</a> / Edit{% else %} / New{% endif %}
+    <a href="/projects" class="hover:text-rust">My Projects</a> / New
 </div>
-<h1 class="text-3xl mb-6">{% if project %}Edit project{% else %}New project{% endif %}</h1>
+<h1 class="text-3xl mb-6">New project</h1>
 
 {% if error %}
 <div class="card max-w-2xl mb-4 border-rust-deep text-rust-deep bg-rust/10" role="alert">
@@ -20,9 +21,7 @@
 </div>
 {% endif %}
 
-<form method="post"
-      action="{% if project %}{{ project_url }}{% else %}/projects{% endif %}"
-      class="card max-w-2xl space-y-4">
+<form method="post" action="/projects" class="card max-w-2xl space-y-4">
     {% include "components/_csrf.html" %}
 
     <div>
@@ -34,20 +33,12 @@
     <div>
         <label for="slug">URL slug</label>
         <input id="slug" name="slug" type="text" maxlength="256"
-               {% if project %}required data-original-slug="{{ project.slug }}"{% endif %}
                value="{{ form_values.slug }}"
-               placeholder="{% if not project %}auto-generated from title{% endif %}">
+               placeholder="auto-generated from title">
         <p class="meta mt-1">
             Letters, numbers, hyphens. Shows up in the URL: <code>/u/{{ user.username }}/<span class="text-ink">your-slug</span></code>
-            {% if not project %} · leave blank to auto-generate from the title.{% endif %}
+            · leave blank to auto-generate from the title.
         </p>
-        {% if project %}
-        <div data-slug-warning hidden
-             class="mt-2 text-sm text-rust-deep border border-rust-deep rounded px-3 py-2 bg-rust/10"
-             role="alert">
-            <strong>Heads up:</strong> changing the slug changes this project's URL. Any existing links or bookmarks pointing to <code>/u/{{ user.username }}/{{ project.slug }}</code> will stop working.
-        </div>
-        {% endif %}
     </div>
 
     <div>
@@ -114,36 +105,8 @@
     </div>
 
     <div class="flex flex-wrap items-center gap-2 pt-2">
-        <button type="submit" class="btn-primary text-sm">
-            {% if project %}Save changes{% else %}Create project{% endif %}
-        </button>
-        <a href="{% if project %}{{ project_url }}{% else %}/projects{% endif %}" class="btn-ghost text-sm">Cancel</a>
+        <button type="submit" class="btn-primary text-sm">Create project</button>
+        <a href="/projects" class="btn-ghost text-sm">Cancel</a>
     </div>
 </form>
-
-{% if project %}
-<form method="post" action="{{ project_url }}/delete"
-      class="max-w-2xl mt-4"
-      data-confirm
-      data-confirm-title="Delete project?"
-      data-confirm-body="{{ project.title }} and everything attached to it will be permanently removed."
-      data-confirm-ok="Delete project">
-    {% include "components/_csrf.html" %}
-    <button type="submit" class="btn-danger text-sm">Delete project</button>
-</form>
-<script>
-  (() => {
-    const input = document.getElementById("slug");
-    const warning = document.querySelector("[data-slug-warning]");
-    if (!input || !warning) return;
-    const original = (input.dataset.originalSlug || "").toLowerCase();
-    const update = () => {
-      warning.hidden = input.value.trim().toLowerCase() === original;
-    };
-    input.addEventListener("input", update);
-    update();
-  })();
-</script>
-{% endif %}
-
 {% endblock %}

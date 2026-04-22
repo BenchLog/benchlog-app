@@ -158,18 +158,13 @@ async def test_edit_replaces_tag_set(client, db):
     ).scalar_one()
     assert sorted(t.slug for t in project.tags) == ["bar", "foo"]
 
-    # Replace tags on edit — drops foo, keeps bar, adds baz
+    # Replace tags via the inline /settings endpoint — drops foo, keeps
+    # bar, adds baz.
     await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": "Iterating",
-            "slug": project.slug,
-            "description": "",
-            "status": "idea",
-            "tags": "bar, baz",
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"tags": "bar, baz"},
+        csrf_path="/projects/new",
     )
 
     await db.refresh(project, ["tags"])
@@ -195,15 +190,9 @@ async def test_edit_clearing_tags_detaches_all(client, db):
 
     await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": "Tagged",
-            "slug": project.slug,
-            "description": "",
-            "status": "idea",
-            "tags": "",
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"tags": ""},
+        csrf_path="/projects/new",
     )
 
     await db.refresh(project, ["tags"])
@@ -352,8 +341,10 @@ async def test_edit_form_prefills_tag_input(client, db):
         await db.execute(select(Project).where(Project.user_id == user.id))
     ).scalar_one()
 
-    resp = await client.get(f"/u/alice/{project.slug}/edit")
-    # Comma-separated current tags populate the input value
+    # The tag combobox is now rendered inside the detail-page tag-edit
+    # modal for owners; hitting the detail route hydrates it with the
+    # current slugs.
+    resp = await client.get(f"/u/alice/{project.slug}")
     assert 'value="foo, bar"' in resp.text or 'value="bar, foo"' in resp.text
 
 
@@ -585,28 +576,35 @@ async def test_form_embeds_known_tags_for_combobox(client, db):
     assert 'data-tag-hidden' in resp.text
     assert 'data-tag-search' in resp.text
 
-    # Edit form embeds the same list.
+    # Detail page embeds the same combobox inside the tag-edit modal.
     project = (
         await db.execute(select(Project).where(Project.user_id == user.id))
     ).scalar_one()
-    resp = await client.get(f"/u/alice/{project.slug}/edit")
+    resp = await client.get(f"/u/alice/{project.slug}")
     assert 'data-tag-input' in resp.text
     assert 'foo' in resp.text and 'bar' in resp.text
 
 
 async def test_form_combobox_exposes_undo_redo_handlers(client, db):
     """Sanity check that the pill-level undo/redo JS was not regressed
-    away. Full interaction is JS-driven; we just verify the hooks ship."""
+    away. Full interaction is JS-driven; we just verify the hooks ship in
+    the shared combobox module that the form's inline script mounts."""
+    from pathlib import Path
+
     await make_user(db, email="alice@test.com", username="alice")
     await login(client, "alice")
 
     resp = await client.get("/projects/new")
+    # Form page includes the external module.
+    assert "js/combobox.js" in resp.text
+
+    module_src = Path("benchlog/static/js/combobox.js").read_text()
     # History stack functions
-    assert "pushHistory" in resp.text
-    assert "history.past" in resp.text
+    assert "pushHistory" in module_src
+    assert "history.past" in module_src
     # Modifier-key branch for Cmd/Ctrl+Z and Ctrl+Y
-    assert "metaKey" in resp.text
-    assert "ctrlKey" in resp.text
+    assert "metaKey" in module_src
+    assert "ctrlKey" in module_src
 
 
 async def test_filter_bar_tag_autocomplete_scopes_per_context(client, db):
@@ -707,6 +705,53 @@ async def test_form_combobox_renders_with_no_known_tags(client, db):
     assert 'data-tag-input' in resp.text
     assert 'data-known-tags=""' in resp.text
     assert 'data-tag-search' in resp.text
+
+
+async def test_project_form_emits_combobox_configs(client, db):
+    """The create/edit project form renders both the tag and category
+    comboboxes via the shared partial — verify each bootstraps with a
+    JSON config block carrying the right options + selected set."""
+    import json
+    import re
+
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    # Seed a tag via a real project so the known-tags suggestions are
+    # non-empty on /projects/new.
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Seed",
+            "description": "",
+            "status": "idea",
+            "tags": "alpha, beta",
+        },
+        csrf_path="/projects/new",
+    )
+
+    resp = await client.get("/projects/new")
+    assert resp.status_code == 200
+
+    configs_raw = re.findall(
+        r'<script type="application/json" data-combobox-config>'
+        r'([^<]*)</script>',
+        resp.text,
+    )
+    configs = [json.loads(raw) for raw in configs_raw]
+    tag_cfg = next((c for c in configs if c.get("kind") == "tag"), None)
+    cat_cfg = next((c for c in configs if c.get("kind") == "category"), None)
+    assert tag_cfg is not None, "tag combobox config not rendered"
+    assert cat_cfg is not None, "category combobox config not rendered"
+    # Tags: create allowed, alpha + beta surfaced as options, nothing selected.
+    assert tag_cfg["allowCreate"] is True
+    labels = {o["label"] for o in tag_cfg["options"]}
+    assert {"alpha", "beta"}.issubset(labels)
+    assert tag_cfg["selected"] == []
+    # Categories: no create (curated taxonomy), nothing selected.
+    assert cat_cfg["allowCreate"] is False
+    assert cat_cfg["selected"] == []
 
 
 async def test_deleting_project_removes_associations_not_tag_rows(client, db):

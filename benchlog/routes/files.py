@@ -59,6 +59,7 @@ from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
 )
+from benchlog.routes.projects import load_project_header_ctx
 from benchlog.storage import get_storage
 from benchlog.templating import templates
 
@@ -299,6 +300,7 @@ async def gallery_tab(
             visible_images.append(f)
         elif is_owner:
             hidden_images.append(f)
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "projects/gallery.html",
@@ -308,6 +310,7 @@ async def gallery_tab(
             "is_owner": is_owner,
             "visible_images": visible_images,
             "hidden_images": hidden_images,
+            **header_ctx,
         },
     )
 
@@ -345,6 +348,7 @@ async def files_tab(
             .where(ProjectFile.project_id == project.id)
         )
     ).scalar_one()
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "projects/files.html",
@@ -360,6 +364,7 @@ async def files_tab(
             "total_storage_bytes": int(total_storage_bytes or 0),
             "notice": request.session.pop("flash_notice", None),
             "error": request.session.pop("flash_error", None),
+            **header_ctx,
         },
     )
 
@@ -878,6 +883,7 @@ async def file_detail(
         is_owner,
         notice=request.session.pop("flash_notice", None),
         error=request.session.pop("flash_error", None),
+        db=db,
     )
 
 
@@ -891,6 +897,7 @@ async def _render_file_detail(
     error: str | None = None,
     status_code: int = 200,
     notice: str | None = None,
+    db: AsyncSession | None = None,
 ):
     """Factored out of `file_detail` so mutation routes can re-render with a
     flash-style error on validation failure (matches form-fallback pattern
@@ -918,6 +925,19 @@ async def _render_file_detail(
                     # lookup came back empty — treat as plain text.
                     kind = "text"
 
+    # Shared header context (category breadcrumbs + viewer's collections +
+    # membership set). Error re-renders from mutation routes pass `db=None`
+    # and fall back to empty values; those responses use 4xx status codes
+    # so the mis-rendered picker on a validation failure page is an
+    # acceptable cost for keeping the signature light.
+    header_ctx: dict = {
+        "viewer_collections": [],
+        "project_collection_ids": set(),
+        "category_breadcrumbs": {},
+    }
+    if db is not None:
+        header_ctx = await load_project_header_ctx(db, user, project)
+
     return templates.TemplateResponse(
         request,
         "files/detail.html",
@@ -933,6 +953,7 @@ async def _render_file_detail(
             "language": language,
             "error": error,
             "notice": notice,
+            **header_ctx,
         },
         status_code=status_code,
     )

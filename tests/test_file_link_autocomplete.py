@@ -172,22 +172,6 @@ async def test_file_index_includes_is_image_flag(db):
 # ---------- template rendering ---------- #
 
 
-async def test_project_form_renders_file_index(client, db):
-    alice = await make_user(db, email="alice@test.com", username="alice")
-    project = await _seed_project(db, alice)
-    await _seed_file(db, project, path="models", filename="widget.stl")
-    await _seed_file(db, project, path="", filename="hero.png", mime_type="image/png")
-
-    await login(client, "alice")
-    resp = await client.get("/u/alice/bench/edit")
-    assert resp.status_code == 200
-    index = _extract_file_index(resp.text)
-    assert index is not None, "data-toastui-file-index missing on edit form"
-    names = [(e["path"], e["filename"]) for e in index]
-    assert ("", "hero.png") in names
-    assert ("models", "widget.stl") in names
-
-
 async def test_project_detail_renders_file_index_for_owner(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     project = await _seed_project(db, alice)

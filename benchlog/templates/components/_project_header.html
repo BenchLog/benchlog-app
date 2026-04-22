@@ -4,7 +4,12 @@
                  `user` when `is_fork` is True)
      is_owner  — boolean; hides Edit/management when the viewer is not the owner
      user      — current viewer (User | None); used to gate the Fork button #}
-<header class="mb-6">
+{% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
+{% set settings_url = project_url ~ '/settings' %}
+<header class="mb-6" data-project-header
+        data-project-url="{{ project_url }}"
+        data-settings-url="{{ settings_url }}"
+        data-is-owner="{{ '1' if is_owner else '' }}">
     <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {% if is_owner %}
             <a href="/projects" class="hover:text-rust">My Projects</a>
@@ -12,8 +17,61 @@
             <a href="/explore" class="hover:text-rust">Explore</a>
         {% endif %}
         <span aria-hidden="true">/</span>
+
+        {% if is_owner %}
+        {# Status chip — dropdown for owners. Click → pick → POST status=. #}
+        <details class="relative inline-flex" data-menu data-status-menu>
+            <summary class="list-none cursor-pointer inline-flex items-center gap-1 hover:text-rust"
+                     title="Change status">
+                <span data-status-label>{{ project.status.value.replace('_', ' ') }}</span>
+                <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+            </summary>
+            <div role="menu" class="absolute left-0 top-full mt-1 min-w-36 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-10">
+                {% for value, label in status_chip_options %}
+                <button type="button"
+                        role="menuitem"
+                        data-status-option="{{ value }}"
+                        class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust">
+                    {{ label }}
+                </button>
+                {% endfor %}
+            </div>
+        </details>
+        {% else %}
         <span>{{ project.status.value.replace('_', ' ') }}</span>
-        {% if project.pinned and is_owner %}
+        {% endif %}
+
+        {% if is_owner %}
+        {# Pinned chip — always rendered for owners; pin-vs-pin-off visual. #}
+        <span aria-hidden="true">·</span>
+        <details class="relative inline-flex" data-menu data-pinned-menu>
+            <summary class="list-none cursor-pointer inline-flex items-center gap-1 {% if project.pinned %}text-rust{% else %}hover:text-rust{% endif %}"
+                     title="{% if project.pinned %}Pinned to the top of your projects list{% else %}Pin to the top of your projects list{% endif %}">
+                <i data-lucide="pin" class="w-3.5 h-3.5"
+                   data-pinned-icon
+                   {% if not project.pinned %}style="opacity:0.6"{% endif %}></i>
+                <span data-pinned-label>{% if project.pinned %}Pinned{% else %}Pin to top{% endif %}</span>
+                <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+            </summary>
+            <div role="menu" class="absolute left-0 top-full mt-1 min-w-40 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-10">
+                {# Only the "other" state is visible — both are kept in
+                   the DOM so the JS toggle can just swap the hidden
+                   class without rebuilding the menu. #}
+                <button type="button"
+                        role="menuitem"
+                        data-pinned-option="1"
+                        class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if project.pinned %} hidden{% endif %}">
+                    Pin to top
+                </button>
+                <button type="button"
+                        role="menuitem"
+                        data-pinned-option="0"
+                        class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if not project.pinned %} hidden{% endif %}">
+                    Unpin
+                </button>
+            </div>
+        </details>
+        {% elif project.pinned %}
         <span aria-hidden="true">·</span>
         <span class="inline-flex items-center gap-1 text-rust"
               title="Pinned to the top of your projects list">
@@ -21,7 +79,35 @@
             Pinned
         </span>
         {% endif %}
-        {% if project.is_public %}
+
+        {% if is_owner %}
+        {# Public chip — always rendered for owners; lock vs globe. #}
+        <span aria-hidden="true">·</span>
+        <details class="relative inline-flex" data-menu data-public-menu>
+            <summary class="list-none cursor-pointer inline-flex items-center gap-1 {% if project.is_public %}text-rust-deep{% else %}hover:text-rust{% endif %}"
+                     title="{% if project.is_public %}Public — anyone with the link can view{% else %}Private — only you can see this project{% endif %}">
+                <i data-lucide="{% if project.is_public %}globe{% else %}lock{% endif %}"
+                   class="w-3.5 h-3.5"
+                   data-public-icon></i>
+                <span data-public-label>{% if project.is_public %}Public{% else %}Private{% endif %}</span>
+                <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+            </summary>
+            <div role="menu" class="absolute left-0 top-full mt-1 min-w-40 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-10">
+                <button type="button"
+                        role="menuitem"
+                        data-public-option="1"
+                        class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if project.is_public %} hidden{% endif %}">
+                    Make public
+                </button>
+                <button type="button"
+                        role="menuitem"
+                        data-public-option="0"
+                        class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if not project.is_public %} hidden{% endif %}">
+                    Make private
+                </button>
+            </div>
+        </details>
+        {% elif project.is_public %}
         <span aria-hidden="true">·</span>
         <span class="inline-flex items-center gap-1 text-rust-deep"
               title="Public — anyone with the link can view, and it appears on Explore">
@@ -51,7 +137,24 @@
     </div>
     {% endif %}
     <div class="flex flex-wrap items-start justify-between gap-3">
-        <h1 class="text-4xl leading-tight">{{ project.title }}</h1>
+        <div class="flex-1 min-w-0">
+            {# Title — click-to-edit for owners. Read view is an <h1>; edit
+               view is an inline <input> with matching typography. JS
+               swaps them on click / blur / Enter / Esc. #}
+            <h1 class="text-4xl leading-tight {% if is_owner %}project-title-editable{% endif %}"
+                data-project-title-read
+                {% if is_owner %}title="Click to edit"{% endif %}>{{ project.title }}</h1>
+            {% if is_owner %}
+            <input type="text"
+                   name="title"
+                   maxlength="256"
+                   class="hidden text-4xl leading-tight w-full rounded border border-edge bg-paper px-2 py-1"
+                   data-project-title-edit
+                   data-original-title="{{ project.title }}"
+                   value="{{ project.title }}">
+            <p class="hidden text-sm text-rust-deep mt-1" data-project-title-error role="alert"></p>
+            {% endif %}
+        </div>
         <div class="flex gap-2 shrink-0">
             {% if user is not none and user.id != project.user_id and project.is_public %}
             {# Fork button: logged-in non-owners on public projects only.
@@ -69,29 +172,45 @@
                 </button>
             </form>
             {% endif %}
-            {% if is_owner %}
-            <a href="/u/{{ project.user.username }}/{{ project.slug }}/edit" class="btn-ghost text-sm">Edit</a>
-            {% endif %}
-            {# "More actions" dropdown — Export today, archive / duplicate
-               tomorrow. Uses the same <details data-menu> pattern as the
-               header user menu; the base.html click/Escape handler closes
-               it. Visible to anyone who can see the project (same gate as
-               the export route itself — public projects are exportable by
-               anyone, private projects are owner-only). #}
-            <details class="relative" data-menu>
+            {# "More actions" dropdown — export plus owner-only slug rename + delete. #}
+            <details class="relative" data-menu data-more-actions-menu>
                 <summary class="btn-ghost text-sm list-none cursor-pointer"
                          title="More actions">
                     <i data-lucide="more-horizontal" class="w-3.5 h-3.5"></i>
                     <span class="sr-only">More actions</span>
                 </summary>
                 <div role="menu" class="absolute right-0 mt-2 min-w-48 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-10">
-                    <a href="/u/{{ project.user.username }}/{{ project.slug }}/export"
+                    <a href="{{ project_url }}/export"
                        role="menuitem"
                        class="flex items-center gap-2 px-3 py-2 text-ink-muted hover:bg-edge/60 hover:text-rust"
                        title="Download a zip with every file, all metadata, and a README">
                         <i data-lucide="package" class="w-3.5 h-3.5"></i>
                         Export
                     </a>
+                    {% if is_owner %}
+                    <button type="button"
+                            role="menuitem"
+                            data-slug-modal-open
+                            class="w-full flex items-center gap-2 px-3 py-2 text-ink-muted hover:bg-edge/60 hover:text-rust text-left">
+                        <i data-lucide="link" class="w-3.5 h-3.5"></i>
+                        Change URL slug…
+                    </button>
+                    <div class="border-t border-edge my-1"></div>
+                    <form method="post" action="{{ project_url }}/delete"
+                          class="block"
+                          data-confirm
+                          data-confirm-title="Delete project?"
+                          data-confirm-body="{{ project.title }} and everything attached to it will be permanently removed."
+                          data-confirm-ok="Delete project">
+                        {% include "components/_csrf.html" %}
+                        <button type="submit"
+                                role="menuitem"
+                                class="w-full flex items-center gap-2 px-3 py-2 text-rust-deep hover:bg-edge/60 text-left">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            Delete project…
+                        </button>
+                    </form>
+                    {% endif %}
                 </div>
             </details>
         </div>
@@ -101,21 +220,160 @@
         Created {{ project.created_at.strftime("%Y-%m-%d") }} ·
         Updated {{ project.updated_at.strftime("%Y-%m-%d") }}
     </div>
-    {% if project.tags %}
-    <div class="mt-3">
-        {% with tags = project.tags, href_prefix = tag_href_prefix or '/explore' %}
-            {% include "components/_tag_chips.html" %}
-        {% endwith %}
+
+    {# Metadata rows — Tags / Categories / Collections. Each row uses the
+       same structure: a fixed-width "meta" label column, a flex-wrap of
+       chips, and an owner-only Manage affordance at the end. Keeps the
+       three chip rows visually aligned so scanning down the left edge
+       tells you at a glance what each row is. #}
+    <div class="mt-4 space-y-2.5 project-meta-rows">
+
+    {# Tags row — always render the wrapper for owners so the Manage
+       button has a home even when no tags are attached. Chips are
+       read-only links: add and remove both happen inside the modal,
+       which keeps the chip × style consistent with the in-input pill
+       × everywhere else. #}
+    {% if project.tags or is_owner %}
+    <div class="project-meta-row" data-project-tags-row>
+        <span class="project-meta-row-label meta">Tags</span>
+        <div class="project-meta-row-chips">
+            {% for tag in project.tags %}
+            <a href="{{ tag_href_prefix or '/explore' }}?tag={{ tag.slug }}"
+               class="inline-flex items-center rounded-full border border-edge bg-rust/10 text-rust-deep px-2 py-0.5 text-xs font-mono tracking-wide no-underline hover:border-rust">
+                #{{ tag.slug }}
+            </a>
+            {% endfor %}
+        </div>
+        {% if is_owner %}
+        <button type="button"
+                class="project-meta-row-manage"
+                data-project-tags-open
+                title="Manage tags">
+            <i data-lucide="settings-2" class="w-3 h-3"></i>
+            <span>Manage</span>
+        </button>
+        {% endif %}
     </div>
     {% endif %}
-    {% if project.categories %}
-    <div class="mt-2">
-        {% with categories = project.categories,
-                breadcrumbs = category_breadcrumbs or {},
-                href_prefix = category_href_prefix or '/explore',
-                mode = "full" %}
-            {% include "components/_category_chips.html" %}
-        {% endwith %}
+
+    {# Categories row. #}
+    {% if project.categories or is_owner %}
+    <div class="project-meta-row" data-project-categories-row>
+        <span class="project-meta-row-label meta">Categories</span>
+        <div class="project-meta-row-chips">
+            {% for cat in project.categories %}
+            {% set _cid = cat.id|string %}
+            {% set _breadcrumb = (category_breadcrumbs.get(_cid) if category_breadcrumbs else None) or cat.name %}
+            <a href="{{ category_href_prefix or '/explore' }}?category={{ cat.id }}"
+               title="{{ _breadcrumb }}"
+               class="inline-flex items-center gap-1 rounded-full border border-edge text-ink-muted px-2 py-0.5 text-xs tracking-wide no-underline hover:border-ink hover:text-ink">
+                {% for part in _breadcrumb.split(' › ') %}
+                    {% if not loop.first %}<i data-lucide="chevron-right" class="w-3 h-3 opacity-70" aria-hidden="true"></i>{% endif %}
+                    <span>{{ part }}</span>
+                {% endfor %}
+            </a>
+            {% endfor %}
+        </div>
+        {% if is_owner %}
+        <button type="button"
+                class="project-meta-row-manage"
+                data-project-categories-open
+                title="Manage categories">
+            <i data-lucide="settings-2" class="w-3 h-3"></i>
+            <span>Manage</span>
+        </button>
+        {% endif %}
     </div>
     {% endif %}
+
+    {# Add-to-collections picker — chips + Manage + modal. Gated on
+       `user` inside the partial so guests render nothing. Lives after
+       the tags/categories rows so the collections row sits in the same
+       visual cluster as the other chip rows. #}
+    {% include "components/_project_collections_picker.html" %}
+
+    </div>
 </header>
+
+{% if is_owner %}
+{# Slug change modal. #}
+<dialog id="project-slug-modal" class="modal" data-slug-modal>
+    <form method="dialog" class="space-y-3" data-slug-modal-form>
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">Change URL slug</h3>
+            <button type="submit" class="btn-ghost text-sm" aria-label="Close">Close</button>
+        </header>
+        <div>
+            <label class="meta" for="project-slug-modal-input">URL slug</label>
+            <input id="project-slug-modal-input"
+                   type="text"
+                   name="slug"
+                   maxlength="256"
+                   required
+                   data-slug-modal-input
+                   data-original-slug="{{ project.slug }}"
+                   value="{{ project.slug }}"
+                   class="mt-1 w-full rounded border border-edge bg-paper px-2 py-1 text-sm">
+            <p class="meta mt-1">
+                <code>/u/{{ project.user.username }}/<span class="text-ink">{{ project.slug }}</span></code>
+            </p>
+            <div data-slug-modal-warning hidden
+                 class="mt-2 text-sm text-rust-deep border border-rust-deep rounded px-3 py-2 bg-rust/10"
+                 role="alert">
+                <strong>Heads up:</strong> changing the slug changes this project's URL. Any existing links pointing to <code>/u/{{ project.user.username }}/{{ project.slug }}</code> will stop working.
+            </div>
+            <p class="hidden text-sm text-rust-deep mt-2" data-slug-modal-error role="alert"></p>
+        </div>
+        <div class="flex justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-slug-modal-cancel>Cancel</button>
+            <button type="button" class="btn-primary text-sm" data-slug-modal-save>Save</button>
+        </div>
+    </form>
+</dialog>
+
+{# Tags add-modal — shares the combobox partial. Saves on each
+   change inside the combobox; no Save/Cancel buttons. Close just
+   dismisses the modal — the latest combobox state is already on
+   the server by then. #}
+<dialog id="project-tags-modal" class="modal" data-tags-modal>
+    <form method="dialog" class="space-y-3" data-tags-modal-form>
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">Manage tags</h3>
+            {# Status pill lives in the header so it's visible while the
+               combobox dropdown is open below; the dropdown's max-h means
+               anything beneath the input gets covered while picking. #}
+            <span class="meta hidden ml-auto" data-tags-modal-status aria-live="polite"></span>
+            <button type="submit" class="btn-ghost text-sm" aria-label="Close">Close</button>
+        </header>
+        {% set _selected_tags = [] %}
+        {% for t in project.tags %}{% set _ = _selected_tags.append(t.slug) %}{% endfor %}
+        {% with name="tags", selected=_selected_tags, suggestions=known_tags, placeholder="Search or add a tag…", multi_value=False %}
+            {% include "components/_tag_combobox.html" %}
+        {% endwith %}
+        <p class="meta m-0">Press Enter or comma to commit. Click × on a pill to remove.</p>
+        <p class="hidden text-sm text-rust-deep" data-tags-modal-error role="alert"></p>
+    </form>
+</dialog>
+
+{# Categories add-modal — same auto-save shape as tags. #}
+<dialog id="project-categories-modal" class="modal" data-categories-modal>
+    <form method="dialog" class="space-y-3" data-categories-modal-form>
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">Manage categories</h3>
+            <span class="meta hidden ml-auto" data-categories-modal-status aria-live="polite"></span>
+            <button type="submit" class="btn-ghost text-sm" aria-label="Close">Close</button>
+        </header>
+        {% set _selected_cat_ids = [] %}
+        {% for c in project.categories %}{% set _ = _selected_cat_ids.append(c.id|string) %}{% endfor %}
+        {% with name="categories",
+                selected_ids=_selected_cat_ids,
+                options=known_categories,
+                placeholder="Search categories…" %}
+            {% include "components/_category_combobox.html" %}
+        {% endwith %}
+        <p class="meta m-0">The taxonomy is curated — pick any that apply.</p>
+        <p class="hidden text-sm text-rust-deep" data-categories-modal-error role="alert"></p>
+    </form>
+</dialog>
+
+{% endif %}

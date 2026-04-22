@@ -384,6 +384,57 @@ html[data-theme="dark"] {
 }
 
 /*
+ * Project-header metadata rows — Tags / Categories / Collections all share
+ * the same label → chips → manage layout so the three rows scan together.
+ * `.project-meta-row-label` is a fixed-width uppercase label column; the
+ * chip flow middle grows; the owner-only Manage button sits at the end.
+ * The label collapses under the chips on narrow screens so long breadcrumb
+ * chips never squeeze it into unreadability.
+ */
+@utility project-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.75rem;
+  row-gap: 0.375rem;
+}
+@utility project-meta-row-label {
+  flex: 0 0 auto;
+  min-width: 6rem;
+}
+@utility project-meta-row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+@utility project-meta-row-manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0.125rem 0.5rem;
+  background-color: transparent;
+  color: var(--color-ink-muted);
+  border: 1px dashed color-mix(in srgb, var(--color-edge) 85%, transparent);
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  &:hover {
+    color: var(--color-ink);
+    border-color: var(--color-ink-muted);
+    border-style: solid;
+  }
+}
+
+/*
  * Finder-style file list — a real <table>. Folders are rows with a toggle
  * button that hides descendant rows via a tiny JS helper on the Files tab.
  * Kept dense (small text, tight padding) so deep trees stay scannable.
@@ -1959,3 +2010,18 @@ dialog.modal[open] {
     border-top-color: var(--color-ink) !important;
   }
 }
+
+/*
+ * Click-to-edit title affordance — dotted underline on hover only, so the
+ * headline still reads as a headline at rest. Pointer cursor pairs with the
+ * visual hint to communicate interactivity.
+ */
+.project-title-editable {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 120ms ease;
+}
+.project-title-editable:hover {
+  border-bottom-color: color-mix(in srgb, var(--color-rust) 50%, transparent);
+}
+

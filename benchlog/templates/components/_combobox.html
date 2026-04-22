@@ -1,0 +1,68 @@
+{#
+  Shared combobox markup — pills + search + dropdown + hidden inputs.
+
+  Hosts pass a `combobox_id` (unique per-page) and a `combobox_config`
+  dict (rendered as JSON) describing the options catalog, selected set,
+  and behavior flags. JS from `/static/js/combobox.js` reads the config
+  from the adjacent `<script type="application/json">` block and mounts
+  the widget on DOMContentLoaded.
+
+  Expected `combobox_config` keys (see `combobox.js` for the full shape):
+    - options: list[{value, label, ...}]
+    - selected: list[value]
+    - name: hidden input name
+    - multi: bool — emit one <input> per value vs single CSV
+    - placeholder: input placeholder
+    - allowCreate: bool
+    - existingOnly: bool
+    - commitOnSpace: bool (tags only)
+    - changeEventName: str (default "combobox-change")
+    - extraChangeEvents: list[str] — additional event names to dispatch
+      for back-compat with the per-widget event names
+      (tag-input-change, category-input-change).
+
+  Hosts that need async side-effects (onAdd / onRemove / onCreate /
+  onStatus) splice those into the config object in their own inline
+  script before calling benchlogMountCombobox. Pure markdown-form uses
+  (tag/category) don't need them.
+
+  Args (at include time):
+    combobox_id          — required; unique DOM id for the root div
+    combobox_config      — required; dict rendered to JSON
+    combobox_selected    — list of initial values (for hidden input pre-render)
+    combobox_name        — form field name (for hidden input pre-render)
+    combobox_multi       — bool (for hidden input pre-render)
+    combobox_placeholder — input placeholder text
+    combobox_extra_attrs — optional dict of data-* attrs to spread on the root
+#}
+{% set _cb_id = combobox_id %}
+{% set _cb_config = combobox_config %}
+{% set _cb_selected = combobox_selected or [] %}
+{% set _cb_name = combobox_name or "value" %}
+{% set _cb_multi = combobox_multi if combobox_multi is defined else False %}
+{% set _cb_placeholder = combobox_placeholder or "Search…" %}
+<div id="{{ _cb_id }}" class="relative" data-combobox
+     {% if combobox_extra_attrs %}{% for k, v in combobox_extra_attrs.items() %}{{ k }}="{{ v }}" {% endfor %}{% endif %}>
+    <script type="application/json" data-combobox-config>{{ _cb_config|tojson }}</script>
+    {% if _cb_multi %}
+    <div class="hidden" data-combobox-hidden-multi>
+        {% for v in _cb_selected %}
+        <input type="hidden" name="{{ _cb_name }}" value="{{ v }}">
+        {% endfor %}
+    </div>
+    {% else %}
+    <input type="hidden" name="{{ _cb_name }}" data-combobox-hidden value="{{ _cb_selected|join(', ') }}">
+    {% endif %}
+    <div class="tag-input-inner" data-combobox-inner>
+        <div class="contents" data-combobox-pills></div>
+        <input type="text"
+               class="tag-input-search"
+               data-combobox-search
+               placeholder="{{ _cb_placeholder }}"
+               aria-label="{{ _cb_placeholder }}"
+               aria-autocomplete="list"
+               aria-expanded="false"
+               autocomplete="off">
+    </div>
+    <div class="tag-input-dropdown" data-combobox-dropdown role="listbox" hidden></div>
+</div>

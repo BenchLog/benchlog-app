@@ -1,0 +1,315 @@
+{# Add-to-collections picker — chips row + Manage button + modal.
+
+   Rendered on every project tab so any logged-in viewer can manage
+   collection membership without bouncing back to the overview.
+
+   Gated on `{% if user %}` — guests never see the picker and the helper
+   skips the DB round-trip for them.
+
+   Required context (supplied by `routes/projects.load_project_header_ctx`):
+     user                    — current viewer (User | None)
+     project                 — the project being viewed
+     viewer_collections      — list of Collection rows owned by the viewer
+     project_collection_ids  — set of Collection ids among the viewer's that
+                               currently contain this project
+
+   The combobox itself delegates to the shared `_combobox.html` partial.
+   This file wires the async add/remove/create hooks through to the
+   viewer's collections endpoints.
+#}
+{% if user %}
+<div class="project-meta-row" data-collections-picker>
+    <span class="project-meta-row-label meta">Collections</span>
+    <div class="project-meta-row-chips" data-collections-chips>
+        {% set memberships = [] %}
+        {% for c in viewer_collections if c.id in project_collection_ids %}
+            {% set _ = memberships.append(c) %}
+        {% endfor %}
+        {% if memberships %}
+            {% for c in memberships %}
+            <a href="/u/{{ user.username }}/collections/{{ c.slug }}"
+               data-collection-chip="{{ c.id }}"
+               class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust">
+                {{ c.name }}
+            </a>
+            {% endfor %}
+        {% else %}
+            <span class="meta italic" data-collections-empty>None yet</span>
+        {% endif %}
+    </div>
+    <button type="button"
+            class="project-meta-row-manage"
+            data-collections-open
+            aria-haspopup="dialog"
+            aria-controls="collections-modal"
+            title="Manage collections">
+        <i data-lucide="settings-2" class="w-3 h-3"></i>
+        <span>Manage</span>
+    </button>
+</div>
+
+{# Options catalog — mirrors `get_categories_flat` JSON-in-script
+   pattern so the client can filter + render without another fetch.
+   Kept OUTSIDE the <dialog> so tests that scan the body for the
+   data-collections-options / data-collections-initial blocks continue
+   to find them (also makes them available to scripts that need to
+   bootstrap page chips before the modal opens). #}
+{% set _coll_payload = [] %}
+{% for c in viewer_collections %}
+    {% set _ = _coll_payload.append({
+        'id': c.id|string,
+        'slug': c.slug,
+        'name': c.name,
+        'is_public': c.is_public,
+    }) %}
+{% endfor %}
+<script type="application/json" data-collections-options>{{ _coll_payload|tojson }}</script>
+<script type="application/json" data-collections-initial>{{ (project_collection_ids|list)|map('string')|list|tojson }}</script>
+
+<dialog id="collections-modal"
+        class="modal"
+        data-collections-modal
+        data-project-id="{{ project.id }}"
+        data-project-title="{{ project.title }}"
+        data-toggle-url-prefix="/u/{{ user.username }}/collections/"
+        data-create-url="/u/{{ user.username }}/collections">
+    <form method="dialog" class="modal-body space-y-3">
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">Manage collections</h3>
+            {# Status pill — mirrors the tag/category modals. #}
+            <span class="meta hidden ml-auto" data-collections-modal-status aria-live="polite"></span>
+            <button type="submit" class="btn-ghost text-sm" aria-label="Close">Close</button>
+        </header>
+
+        {% set _coll_combo_options = [] %}
+        {% for c in viewer_collections %}
+            {% set _ = _coll_combo_options.append({
+                'value': c.id|string,
+                'label': c.name,
+                'slug': c.slug,
+                'is_public': c.is_public,
+            }) %}
+        {% endfor %}
+        {% set _coll_selected = (project_collection_ids|list)|map('string')|list %}
+        {% set _coll_uid = "collcb-" ~ range(100000, 999999) | random %}
+        {% set _coll_config = {
+            "options": _coll_combo_options,
+            "selected": _coll_selected,
+            "name": "collection",
+            "multi": False,
+            "placeholder": "Search or type to create…",
+            "allowCreate": True,
+            "existingOnly": False,
+            "kind": "collection",
+            "changeEventName": "combobox-change",
+        } %}
+        {% set _coll_extra_attrs = {
+            "data-collections-input": "",
+        } %}
+        {% with combobox_id = _coll_uid,
+                combobox_config = _coll_config,
+                combobox_selected = _coll_selected,
+                combobox_name = "collection",
+                combobox_multi = False,
+                combobox_placeholder = "Search or type to create…",
+                combobox_extra_attrs = _coll_extra_attrs %}
+            {% include "components/_combobox.html" %}
+        {% endwith %}
+
+        <p class="meta m-0">Pick from the list, or type a name to create a new collection. Click × on a pill to remove.</p>
+        <p class="meta hidden" data-collections-error role="alert"></p>
+    </form>
+</dialog>
+
+<script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const modal = document.querySelector('[data-collections-modal]');
+    const openBtn = document.querySelector('[data-collections-open]');
+    if (!modal || !openBtn) return;
+    // Guard against accidental double-include.
+    if (modal.dataset.collectionsModalInitialized === '1') return;
+    modal.dataset.collectionsModalInitialized = '1';
+
+    const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+    const projectId = modal.dataset.projectId;
+    const urlPrefix = modal.dataset.toggleUrlPrefix;
+    const createUrl = modal.dataset.createUrl;
+    const errorEl = modal.querySelector('[data-collections-error]');
+    const statusEl = modal.querySelector('[data-collections-modal-status]');
+    const root = document.getElementById("{{ _coll_uid }}");
+    if (!root) return;
+    const cfgEl = root.querySelector("[data-combobox-config]");
+    if (!cfgEl) return;
+    const cfg = JSON.parse(cfgEl.textContent);
+
+    const showError = (msg) => {
+      if (!errorEl) return;
+      if (msg) {
+        errorEl.textContent = msg;
+        errorEl.classList.remove('hidden');
+      } else {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+      }
+    };
+    let statusClearTimer = null;
+    const setStatus = (state, msg) => {
+      if (!statusEl) return;
+      clearTimeout(statusClearTimer);
+      statusEl.classList.remove('hidden', 'text-rust-deep');
+      if (state === 'saving') {
+        statusEl.textContent = 'Saving…';
+      } else if (state === 'saved') {
+        statusEl.textContent = 'Saved';
+        statusClearTimer = setTimeout(() => {
+          statusEl.textContent = '';
+          statusEl.classList.add('hidden');
+        }, 1200);
+      } else if (state === 'error') {
+        statusEl.textContent = msg || "Couldn't save";
+        statusEl.classList.add('text-rust-deep');
+      }
+    };
+
+    async function postToggle(slug, action) {
+      const resp = await fetch(urlPrefix + slug + '/projects', {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': csrf,
+        },
+        body: JSON.stringify({ project_id: projectId, action }),
+      });
+      if (!resp.ok) throw new Error('toggle failed ' + resp.status);
+    }
+    async function postCreate(name) {
+      const body = new URLSearchParams();
+      body.set('_csrf', csrf);
+      body.set('name', name);
+      const resp = await fetch(createUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+      if (!resp.ok) {
+        let detail = 'Could not create collection.';
+        try {
+          const data = await resp.json();
+          if (data?.detail) detail = data.detail;
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      return resp.json();
+    }
+
+    // Keep the page chip row in sync with the combobox on every mutation.
+    // Re-query chipsWrap each call so a stale captured reference (e.g.
+    // partial re-render replaced the element) can't silently break sync.
+    // Declared here so hooks below + the mount's onChange callback can
+    // both reach it via closure; `handle` is assigned after mount but
+    // only dereferenced when these run, which is after user interaction.
+    const updatePageChips = () => {
+      const wrap = document.querySelector('[data-collections-chips]');
+      if (!wrap) return;
+      const selected = handle.getSelected();
+      wrap.innerHTML = '';
+      if (selected.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'meta italic';
+        empty.dataset.collectionsEmpty = '';
+        empty.textContent = 'None yet';
+        wrap.appendChild(empty);
+        return;
+      }
+      selected.forEach((id) => {
+        const opt = handle.findOption(id);
+        if (!opt || !opt.slug) return;
+        const a = document.createElement('a');
+        a.href = urlPrefix + opt.slug;
+        a.className =
+          'inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust';
+        a.dataset.collectionChip = id;
+        a.textContent = opt.label;
+        wrap.appendChild(a);
+      });
+    };
+
+    cfg.onStatus = setStatus;
+    // Driven directly by the combobox on every mutation — no reliance on
+    // event bubbling through the dialog. The event still fires for any
+    // listener that wants it, but this path is the authoritative one.
+    cfg.onChange = () => updatePageChips();
+    cfg.onAdd = async (value, option) => {
+      showError('');
+      if (!option || !option.slug) return { ok: false, error: 'unknown collection' };
+      try {
+        await postToggle(option.slug, 'add');
+        return { ok: true };
+      } catch (e) {
+        showError('Could not add to ' + option.label + '. Try again.');
+        return { ok: false, error: "Couldn't save" };
+      }
+    };
+    cfg.onRemove = async (value) => {
+      showError('');
+      const option = handle.findOption(value);
+      if (!option || !option.slug) return { ok: false, error: 'unknown collection' };
+      try {
+        await postToggle(option.slug, 'remove');
+        return { ok: true };
+      } catch (e) {
+        showError('Could not remove from ' + option.label + '. Try again.');
+        return { ok: false, error: "Couldn't save" };
+      }
+    };
+    cfg.onCreate = async (text) => {
+      showError('');
+      let created;
+      try {
+        created = await postCreate(text);
+      } catch (e) {
+        showError(e.message || 'Could not create collection.');
+        return { ok: false, error: e.message || "Couldn't save" };
+      }
+      // Creating a collection does NOT add the project — the server-side
+      // create endpoint just makes the row. Fire the add as a follow-up
+      // so the membership pill actually reflects reality.
+      try {
+        await postToggle(created.slug, 'add');
+      } catch (e) {
+        showError('Created "' + created.name + '" but couldn\'t add the project. Try again.');
+        return { ok: false, error: "Couldn't add to new collection" };
+      }
+      return {
+        ok: true,
+        value: created.id,
+        option: {
+          value: created.id,
+          label: created.name,
+          slug: created.slug,
+          is_public: !!created.is_public,
+        },
+      };
+    };
+
+    const handle = window.benchlogMountCombobox(root, cfg);
+
+    // Sync once at mount so the chip row always matches the combobox's
+    // initial selection, even if Jinja and the JS got out of step. Every
+    // subsequent update flows through `cfg.onChange` above.
+    updatePageChips();
+
+    openBtn.addEventListener('click', () => {
+      showError('');
+      if (typeof modal.showModal === 'function') modal.showModal();
+      else modal.setAttribute('open', '');
+      // Match the tag/category modals: no auto-focus, no auto-dropdown
+      // on open. The user focuses the search input to see options.
+    });
+  });
+</script>
+{% endif %}

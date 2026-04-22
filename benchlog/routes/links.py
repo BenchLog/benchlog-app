@@ -18,6 +18,7 @@ from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
 )
+from benchlog.routes.projects import load_project_header_ctx
 from benchlog.templating import templates
 
 router = APIRouter()
@@ -65,6 +66,7 @@ async def links_tab(
     # journal entries), since a link is part of a project's metadata.
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "projects/links.html",
@@ -72,6 +74,7 @@ async def links_tab(
             "user": user,
             "project": project,
             "is_owner": is_owner,
+            **header_ctx,
         },
     )
 

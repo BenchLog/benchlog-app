@@ -120,15 +120,11 @@ async def test_edit_project_without_visibility_flip_records_nothing(client, db):
     await login(client, "alice")
     resp = await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": "Renamed",
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"title": "Renamed"},
+        csrf_path="/projects/new",
     )
-    assert resp.status_code == 302
+    assert resp.status_code == 204
 
     events = await _events(db, project_id=project.id)
     assert events == []
@@ -141,16 +137,11 @@ async def test_flip_to_public_records_event(client, db):
     await login(client, "alice")
     resp = await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": project.title,
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-            "is_public": "on",
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"is_public": "1"},
+        csrf_path="/projects/new",
     )
-    assert resp.status_code == 302
+    assert resp.status_code == 204
 
     events = await _events(db, project_id=project.id)
     assert [e.event_type for e in events] == [
@@ -165,15 +156,11 @@ async def test_flip_to_private_records_nothing(client, db):
     await login(client, "alice")
     resp = await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": project.title,
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"is_public": "0"},
+        csrf_path="/projects/new",
     )
-    assert resp.status_code == 302
+    assert resp.status_code == 204
 
     events = await _events(db, project_id=project.id)
     assert events == []
@@ -187,37 +174,23 @@ async def test_public_toggle_true_false_true_records_two_events(client, db):
     # Off -> On
     await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": project.title,
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-            "is_public": "on",
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"is_public": "1"},
+        csrf_path="/projects/new",
     )
     # On -> Off
     await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": project.title,
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"is_public": "0"},
+        csrf_path="/projects/new",
     )
     # Off -> On again
     await post_form(
         client,
-        f"/u/alice/{project.slug}",
-        {
-            "title": project.title,
-            "slug": project.slug,
-            "status": ProjectStatus.idea.value,
-            "is_public": "on",
-        },
-        csrf_path=f"/u/alice/{project.slug}/edit",
+        f"/u/alice/{project.slug}/settings",
+        {"is_public": "1"},
+        csrf_path="/projects/new",
     )
 
     events = await _events(db, project_id=project.id)
@@ -750,14 +723,9 @@ async def _seed_every_event_type(client, db, alice, bob):
     # Flip to public
     await post_form(
         client,
-        "/u/alice/shared",
-        {
-            "title": "Shared",
-            "slug": "shared",
-            "status": ProjectStatus.idea.value,
-            "is_public": "on",
-        },
-        csrf_path="/u/alice/shared/edit",
+        "/u/alice/shared/settings",
+        {"is_public": "1"},
+        csrf_path="/projects/new",
     )
     # Journal
     await post_form(
@@ -794,14 +762,9 @@ async def _seed_every_event_type(client, db, alice, bob):
     # Bob makes his fork public so the global firehose lights up.
     await post_form(
         client,
-        "/u/bob/shared",
-        {
-            "title": "Shared",
-            "slug": "shared",
-            "status": ProjectStatus.idea.value,
-            "is_public": "on",
-        },
-        csrf_path="/u/bob/shared/edit",
+        "/u/bob/shared/settings",
+        {"is_public": "1"},
+        csrf_path="/projects/new",
     )
 
 

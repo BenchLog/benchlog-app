@@ -2,7 +2,7 @@ import re
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,6 +53,44 @@ from benchlog.tags import get_user_tag_slugs, parse_tag_input, set_project_tags
 from benchlog.templating import templates
 
 router = APIRouter()
+
+
+async def load_project_header_ctx(
+    db: AsyncSession, viewer: User | None, project: Project
+) -> dict:
+    """Return the full context the shared project header partial needs.
+
+    Every route that renders ``projects/_layout.html`` (overview, journal,
+    files, gallery, links, activity — plus nested detail pages that reuse
+    the same header) passes this dict straight into the template so the
+    header renders identically on every tab.
+
+    Keys:
+      ``viewer_collections`` — list[Collection] owned by the viewer. Empty
+        list when the viewer is a guest (the partial's ``{% if user %}``
+        gate hides the picker entirely in that case).
+      ``project_collection_ids`` — set of viewer collection IDs that
+        currently contain this project.
+      ``category_breadcrumbs`` — ``{category_id_str: 'Parent › Child'}``
+        for every category attached to the project. Always returned (empty
+        dict when the project has no categories) so the template never
+        has to branch on missing context — the header falls back to
+        ``cat.name`` only when the breadcrumb lookup genuinely misses.
+    """
+    if viewer is None:
+        viewer_collections: list = []
+        project_collection_ids: set = set()
+    else:
+        viewer_collections = await list_user_collections(db, viewer.id)
+        project_collection_ids = await get_project_collection_memberships(
+            db, viewer.id, project.id
+        )
+    category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
+    return {
+        "viewer_collections": viewer_collections,
+        "project_collection_ids": project_collection_ids,
+        "category_breadcrumbs": category_breadcrumbs,
+    }
 
 
 STATUS_VALUES = [s.value for s in ProjectStatus]
@@ -590,22 +628,10 @@ async def project_detail(
     # (owner-only), so skip the queries entirely for guests / non-owners.
     file_index = await get_project_file_index(db, project.id) if is_owner else None
     entry_index = await get_project_entry_index(db, project.id) if is_owner else None
-    # Full category breadcrumbs for the header chips — `Parent › Child`
-    # labels come from this flat lookup rather than walking `parent`
-    # (raise_on_sql guards against that).
-    category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
-    # Pre-hydrate the add-to-collections modal with the viewer's own
-    # collections + the set of those that currently contain this project.
-    # Any logged-in viewer can add a visible project to their collections —
-    # so the picker's namespace is always the viewer's, never the project
-    # owner's. Guests don't get the picker, so skip the queries for them.
-    viewer_collections = []
-    project_collection_ids: set = set()
-    if user is not None:
-        viewer_collections = await list_user_collections(db, user.id)
-        project_collection_ids = await get_project_collection_memberships(
-            db, user.id, project.id
-        )
+    # Shared-header context — category breadcrumbs + viewer's collections
+    # + membership set. Packed into a single dict so every project tab
+    # route can unpack the same shape into the template.
+    header_ctx = await load_project_header_ctx(db, user, project)
     featured_in_collections = await list_public_collections_containing_project(
         db,
         project.id,
@@ -624,6 +650,13 @@ async def project_detail(
     incoming_visible = filter_visible(incoming_raw, "source", viewer_id)
     outgoing_groups = _group_relations_by_type(outgoing_visible)
     incoming_groups = _group_relations_by_type(incoming_visible)
+    # Owner-only pickers need their vocabularies hydrated. Skip the extra
+    # queries for guests / non-owners where the inline edit UI isn't rendered.
+    known_tags: list[str] = []
+    known_categories: list[dict] = []
+    if is_owner:
+        known_tags = await get_user_tag_slugs(db, user.id)
+        known_categories = await get_categories_flat(db)
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -634,14 +667,15 @@ async def project_detail(
             "is_owner": is_owner,
             "tag_href_prefix": "/explore",
             "category_href_prefix": "/explore",
-            "category_breadcrumbs": category_breadcrumbs,
+            **header_ctx,
             "file_index": file_index,
             "entry_index": entry_index,
-            "viewer_collections": viewer_collections,
-            "project_collection_ids": project_collection_ids,
             "featured_in_collections": featured_in_collections,
             "outgoing_relation_groups": outgoing_groups,
             "incoming_relation_groups": incoming_groups,
+            "known_tags": known_tags,
+            "known_categories": known_categories,
+            "status_chip_options": _status_options(),
             "user_pickable_relation_types": [
                 (t.value, t.label, t.icon)
                 for t in (
@@ -699,6 +733,7 @@ async def project_activity(
     events = await list_project_activity(
         db, project.id, viewer_id=user.id if user is not None else None
     )
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "projects/activity.html",
@@ -707,18 +742,22 @@ async def project_activity(
             "project": project,
             "is_owner": is_owner,
             "events": events,
+            **header_ctx,
         },
     )
 
 
-@router.get("/u/{username}/{slug}/edit")
-async def edit_project_form(
-    username: str,
-    slug: str,
-    request: Request,
-    user: User = Depends(require_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def _require_owned_project(
+    db: AsyncSession, user: User, username: str, slug: str
+) -> Project:
+    """Owner-scoped project fetch, 404 for everyone else.
+
+    Same shape used by `update_project` and `delete_project` — centralized
+    here so the new inline-edit endpoint shares a single validator. Eager
+    loads the two association collections every caller ends up touching
+    (tags and categories) since `Project.tags` / `Project.categories` are
+    `raise_on_sql`.
+    """
     if username.lower() != user.username.lower():
         raise HTTPException(status_code=404)
     result = await db.execute(
@@ -732,14 +771,145 @@ async def edit_project_form(
     project = result.scalar_one_or_none()
     if project is None:
         raise HTTPException(status_code=404)
-    return await _render_form(
-        request,
-        user,
-        db,
-        project=project,
-        form_values=_form_values_from_project(project),
-        error=request.session.pop("flash_error", None),
-    )
+    return project
+
+
+@router.post("/u/{username}/{slug}/settings")
+async def update_project_settings(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Partial-update endpoint for inline project-detail edits.
+
+    Accepts ANY subset of:
+      title, slug, status, tags (comma-separated), categories (repeated
+      form field), is_public, pinned, set_public, set_pinned.
+
+    Semantics:
+      - Only fields present in the form are considered; anything missing
+        stays as-is (sentinel: missing key → no change).
+      - Booleans use an explicit convention: `is_public` / `pinned` can be
+        sent as "1"/"true"/"on" for True or "0"/"false"/"off" for False.
+        The value's presence is what triggers the update — omit the key
+        entirely to leave the field alone.
+      - Returns 204 No Content on success with no body.
+      - When the slug changes, returns 200 with JSON
+        `{"redirect": "/u/<user>/<new-slug>"}` so the client can navigate.
+      - Returns 400 JSON `{"detail": "..."}` on validation failure.
+
+    Emits `project_became_public` ONLY on a False→True transition of
+    `is_public`, matching `update_project`'s behavior.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    form = await request.form()
+    TRUE_VALUES = {"1", "true", "on", "yes"}
+    FALSE_VALUES = {"0", "false", "off", "no", ""}
+
+    def _coerce_bool(raw) -> bool | None:
+        if raw is None:
+            return None
+        text = str(raw).strip().lower()
+        if text in TRUE_VALUES:
+            return True
+        if text in FALSE_VALUES:
+            return False
+        return None
+
+    was_public = project.is_public
+    slug_changed = False
+
+    # Title — present and non-empty to update; present and empty is a 400
+    # (mirrors the full form).
+    if "title" in form:
+        new_title = str(form.get("title") or "").strip()
+        if not new_title:
+            return JSONResponse({"detail": "Title is required."}, status_code=400)
+        if len(new_title) > 256:
+            return JSONResponse(
+                {"detail": "Title must be 256 characters or fewer."}, status_code=400
+            )
+        project.title = new_title
+
+    # Slug — normalize, dedupe against this user's other projects.
+    if "slug" in form:
+        raw_slug = str(form.get("slug") or "").strip()
+        normalized = normalize_slug(raw_slug)
+        if not normalized:
+            return JSONResponse(
+                {"detail": "Slug must contain letters or numbers."}, status_code=400
+            )
+        if normalized != project.slug:
+            if await is_slug_taken(
+                db, user.id, normalized, exclude_project_id=project.id
+            ):
+                return JSONResponse(
+                    {
+                        "detail": f"“{normalized}” is already used by another of your projects."
+                    },
+                    status_code=400,
+                )
+            project.slug = normalized
+            slug_changed = True
+
+    # Status — must parse to a known enum value.
+    if "status" in form:
+        raw_status = str(form.get("status") or "")
+        parsed = _parse_status(raw_status)
+        if parsed is None:
+            return JSONResponse(
+                {"detail": "Unknown status."}, status_code=400
+            )
+        project.status = parsed
+
+    # Booleans: is_public / pinned. Accept either the field itself (with
+    # true/false-ish values) or a `set_X` flag — either way, presence +
+    # truthy/falsy coercion.
+    if "is_public" in form:
+        coerced = _coerce_bool(form.get("is_public"))
+        if coerced is None:
+            return JSONResponse(
+                {"detail": "Invalid value for is_public."}, status_code=400
+            )
+        project.is_public = coerced
+    if "pinned" in form:
+        coerced = _coerce_bool(form.get("pinned"))
+        if coerced is None:
+            return JSONResponse(
+                {"detail": "Invalid value for pinned."}, status_code=400
+            )
+        project.pinned = coerced
+
+    # Tags: comma-separated string, parsed via parse_tag_input.
+    if "tags" in form:
+        raw_tags = str(form.get("tags") or "")
+        await set_project_tags(db, project, parse_tag_input(raw_tags))
+
+    # Categories: repeated form values. Accept both `categories` and
+    # `category` names — the combobox partial emits `category` by default.
+    categories_present = "categories" in form or "category" in form
+    if categories_present:
+        raw_cats = form.getlist("categories") or form.getlist("category")
+        await set_project_categories(db, project, _clean_category_list(raw_cats))
+
+    if not was_public and project.is_public:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=ActivityEventType.project_became_public,
+        )
+
+    await db.commit()
+
+    if slug_changed:
+        return JSONResponse(
+            {"redirect": f"/u/{user.username}/{project.slug}"}, status_code=200
+        )
+    # 204 No Content — client refreshes its local view without touching URL.
+    return Response(status_code=204)
 
 
 @router.post("/u/{username}/{slug}")

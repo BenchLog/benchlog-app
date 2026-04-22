@@ -27,6 +27,7 @@ from benchlog.projects import (
     get_user_project_by_slug,
     normalize_slug,
 )
+from benchlog.routes.projects import load_project_header_ctx
 from benchlog.templating import templates
 
 router = APIRouter()
@@ -100,6 +101,7 @@ async def journal_tab(
     is_owner = user is not None and project.user_id == user.id
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "projects/journal.html",
@@ -108,6 +110,7 @@ async def journal_tab(
             "project": project,
             "is_owner": is_owner,
             "entries": visible_entries(project.journal_entries, is_owner),
+            **header_ctx,
         },
     )
 
@@ -242,6 +245,7 @@ async def entry_detail(
     if entry is None or not can_view_entry(entry, is_owner):
         raise HTTPException(status_code=404)
 
+    header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
         "journal/detail.html",
@@ -250,6 +254,7 @@ async def entry_detail(
             "project": project,
             "entry": entry,
             "is_owner": is_owner,
+            **header_ctx,
         },
     )
 

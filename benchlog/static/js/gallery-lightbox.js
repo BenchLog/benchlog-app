@@ -30,7 +30,6 @@
 
     const viewport = dialog.querySelector("[data-lightbox-viewport]");
     const imageEl = dialog.querySelector("[data-lightbox-image]");
-    const captionEl = dialog.querySelector("[data-lightbox-caption]");
     const filenameEl = dialog.querySelector("[data-lightbox-filename]");
     const descriptionEl = dialog.querySelector("[data-lightbox-description]");
     const counterEl = dialog.querySelector("[data-lightbox-counter]");

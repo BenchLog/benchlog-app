@@ -13,7 +13,7 @@ specific element, keeping the view truthful to "this is how others see me."
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from benchlog.activity import list_user_activity
+from benchlog.activity import ACTIVITY_PAGE_SIZE, list_user_activity
 from benchlog.collections import get_public_collections_for_user
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
@@ -33,8 +33,47 @@ router = APIRouter()
 PROFILE_PROJECT_LIMIT = 50
 
 # Short-form activity list for the profile — deep dives land on the
-# per-project activity tab or the global firehose.
+# per-project activity tab or the full user-activity dashboard.
 PROFILE_ACTIVITY_LIMIT = 10
+
+
+@router.get("/u/{username}/activity")
+async def profile_activity(
+    username: str,
+    request: Request,
+    offset: int = 0,
+    viewer: User | None = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full-page activity feed for a single user, paginated by offset.
+
+    Visibility matches `list_user_activity`: guests see only events on
+    the user's public projects; the owner sees their own private-project
+    events too. Pagination reuses the offset pattern from /explore/activity.
+    """
+    profile_user = await get_active_user_by_username(db, username)
+    if profile_user is None:
+        raise HTTPException(status_code=404)
+    offset = max(offset, 0)
+    events = await list_user_activity(
+        db,
+        profile_user.id,
+        viewer_id=viewer.id if viewer is not None else None,
+        limit=ACTIVITY_PAGE_SIZE,
+        offset=offset,
+    )
+    has_more = len(events) == ACTIVITY_PAGE_SIZE
+    return templates.TemplateResponse(
+        request,
+        "users/activity.html",
+        {
+            "user": viewer,
+            "profile_user": profile_user,
+            "events": events,
+            "offset": offset,
+            "next_offset": offset + ACTIVITY_PAGE_SIZE if has_more else None,
+        },
+    )
 
 
 @router.get("/u/{username}")

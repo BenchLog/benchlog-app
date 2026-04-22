@@ -855,10 +855,161 @@ async def test_activity_tab_404_for_guest_on_private(client, db):
     assert resp.status_code == 404
 
 
-# ---------- per-project feed: no visibility filter ---------- #
+# ---------- per-user activity dashboard ---------- #
 
 
-async def test_project_feed_returns_in_recency_order(client, db):
+async def test_profile_activity_page_200_for_existing_user(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    project = await _project(db, alice, slug="bench", is_public=True)
+
+    await login(client, "alice")
+    await post_form(
+        client,
+        f"/u/alice/{project.slug}/journal",
+        {"title": "Hi", "content": "x", "is_public": "on"},
+        csrf_path=f"/u/alice/{project.slug}",
+    )
+
+    resp = await client.get("/u/alice/activity")
+    assert resp.status_code == 200
+    assert "Activity" in resp.text
+
+
+async def test_profile_activity_page_404_for_unknown_user(client):
+    resp = await client.get("/u/nope/activity")
+    assert resp.status_code == 404
+
+
+async def test_profile_activity_guest_sees_public_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    pub = await _project(db, alice, slug="pub", is_public=True)
+    priv = await _project(db, alice, slug="priv", is_public=False)
+
+    await login(client, "alice")
+    await post_form(
+        client,
+        f"/u/alice/{pub.slug}/journal",
+        {"title": "Open", "content": "p", "is_public": "on"},
+        csrf_path=f"/u/alice/{pub.slug}",
+    )
+    await post_form(
+        client,
+        f"/u/alice/{priv.slug}/journal",
+        {"title": "Hidden", "content": "s", "is_public": "on"},
+        csrf_path=f"/u/alice/{priv.slug}",
+    )
+
+    # Log out; read as guest.
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+    resp = await client.get("/u/alice/activity")
+    assert resp.status_code == 200
+    assert "/u/alice/pub" in resp.text
+    assert "/u/alice/priv" not in resp.text
+
+
+async def test_profile_activity_owner_sees_private(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    priv = await _project(db, alice, slug="priv", is_public=False)
+
+    await login(client, "alice")
+    await post_form(
+        client,
+        f"/u/alice/{priv.slug}/journal",
+        {"title": "Hidden", "content": "s"},
+        csrf_path=f"/u/alice/{priv.slug}",
+    )
+
+    resp = await client.get("/u/alice/activity")
+    assert resp.status_code == 200
+    assert "/u/alice/priv" in resp.text
+
+
+async def test_profile_activity_third_party_public_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    pub = await _project(db, alice, slug="pub", is_public=True)
+    priv = await _project(db, alice, slug="priv", is_public=False)
+
+    await login(client, "alice")
+    await post_form(
+        client,
+        f"/u/alice/{pub.slug}/journal",
+        {"title": "Open", "content": "p", "is_public": "on"},
+        csrf_path=f"/u/alice/{pub.slug}",
+    )
+    await post_form(
+        client,
+        f"/u/alice/{priv.slug}/journal",
+        {"title": "Hidden", "content": "s"},
+        csrf_path=f"/u/alice/{priv.slug}",
+    )
+
+    # Log out; log in as a third party.
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+    await make_user(db, email="bob@test.com", username="bob")
+    await login(client, "bob")
+
+    resp = await client.get("/u/alice/activity")
+    assert resp.status_code == 200
+    assert "/u/alice/pub" in resp.text
+    assert "/u/alice/priv" not in resp.text
+
+
+async def test_profile_activity_pagination(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    project = await _project(db, alice, slug="bench", is_public=True)
+
+    # Seed 55 synthetic events directly (actor=alice, project=public).
+    for _ in range(55):
+        db.add(
+            ActivityEvent(
+                actor_id=alice.id,
+                project_id=project.id,
+                event_type=ActivityEventType.project_created,
+            )
+        )
+    await db.commit()
+
+    # Page 1: 50 events + "Load older" link pointing at offset=50.
+    resp = await client.get("/u/alice/activity")
+    assert resp.status_code == 200
+    assert "/u/alice/activity?offset=50" in resp.text
+
+    # Page 2: the remaining 5 events, no "Load older" link.
+    resp = await client.get("/u/alice/activity?offset=50")
+    assert resp.status_code == 200
+    assert "/u/alice/activity?offset=100" not in resp.text
+
+
+async def test_profile_shows_view_all_link_when_activity_present(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    project = await _project(db, alice, slug="bench", is_public=True)
+
+    await login(client, "alice")
+    await post_form(
+        client,
+        f"/u/alice/{project.slug}/journal",
+        {"title": "Hi", "content": "x", "is_public": "on"},
+        csrf_path=f"/u/alice/{project.slug}",
+    )
+
+    resp = await client.get("/u/alice")
+    assert resp.status_code == 200
+    assert "/u/alice/activity" in resp.text
+
+
+async def test_profile_activity_inactive_user_404(client, db):
+    await make_user(
+        db, email="ghost@test.com", username="ghost", is_active=False
+    )
+    resp = await client.get("/u/ghost/activity")
+    assert resp.status_code == 404
+
+
+async def test_project_activity_returns_in_recency_order(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     project = await _project(db, alice, slug="bench", is_public=True)
 

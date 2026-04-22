@@ -63,9 +63,12 @@
     <h2 class="text-xl mb-4">Projects</h2>
 
     {% if public_projects %}
-    <ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+    {# CSS columns give a masonry-ish fill without JS. Trade-off: cards read
+       top-down then left-to-right, so source order ≠ visual order — fine for
+       a card feed where date order is a weak signal. #}
+    <ul class="columns-1 sm:columns-2 lg:columns-3 gap-4 list-none p-0">
         {% for project in public_projects %}
-        <li>
+        <li class="break-inside-avoid mb-4">
             {% with show_owner = False %}
                 {% include "components/project_card.html" %}
             {% endwith %}
@@ -100,7 +103,10 @@
 
 {% if recent_activity %}
 <section class="mt-10">
-    <h2 class="text-xl mb-4">Recent activity</h2>
+    <div class="flex items-baseline justify-between mb-4">
+        <h2 class="text-xl m-0">Recent activity</h2>
+        <a href="/u/{{ profile_user.username }}/activity" class="text-sm text-ink-muted hover:text-rust">View all &rarr;</a>
+    </div>
     <ul class="divide-y divide-edge list-none p-0 m-0">
         {% for event in recent_activity %}
         <li>

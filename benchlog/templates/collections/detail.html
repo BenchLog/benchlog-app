@@ -148,11 +148,13 @@
 {# The project grid and its empty state. × buttons are independent of the
    main update form — their AJAX PATCH-like endpoint keeps membership in
    sync without needing Save. They're hidden by default and only appear
-   while the page is in edit mode (data-collection-edit="on"). #}
-<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0 {% if not visible_projects %}hidden{% endif %}"
+   while the page is in edit mode (data-collection-edit="on").
+   CSS columns give masonry — × button stays anchored because each <li>
+   is position:relative and the button is absolutely positioned inside it. #}
+<ul class="columns-1 sm:columns-2 lg:columns-3 gap-4 list-none p-0 {% if not visible_projects %}hidden{% endif %}"
     data-collection-list>
     {% for project in visible_projects %}
-    <li class="relative" data-collection-item data-project-id="{{ project.id }}">
+    <li class="relative break-inside-avoid mb-4" data-collection-item data-project-id="{{ project.id }}">
         {% with show_owner = not is_owner %}
             {% include "components/project_card.html" %}
         {% endwith %}

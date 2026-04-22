@@ -31,6 +31,11 @@ from benchlog.models import (
     User,
 )
 
+# Shared page size for the paginated activity listings (explore firehose
+# and per-user dashboard). One constant so the next/previous math stays
+# in sync across surfaces.
+ACTIVITY_PAGE_SIZE = 50
+
 
 async def purge_entry_events(db: AsyncSession, entry_id: uuid.UUID) -> None:
     """Drop `journal_entry_posted` events for a deleted entry.
@@ -194,6 +199,7 @@ async def list_user_activity(
     *,
     viewer_id: uuid.UUID | None,
     limit: int = 50,
+    offset: int = 0,
 ) -> list[ActivityEvent]:
     """Events by `user_id` on projects visible to `viewer_id`.
 
@@ -213,7 +219,9 @@ async def list_user_activity(
         query = query.where(
             (Project.is_public.is_(True)) | (Project.user_id == viewer_id)
         )
-    query = query.order_by(ActivityEvent.created_at.desc()).limit(limit)
+    query = (
+        query.order_by(ActivityEvent.created_at.desc()).offset(offset).limit(limit)
+    )
     result = await db.execute(_with_rendering_loads(query))
     events = list(result.scalars().all())
     return await _filter_private_journal_events(db, events, viewer_id)

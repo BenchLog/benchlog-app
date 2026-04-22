@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Activity · @{{ profile_user.username }} · BenchLog{% endblock %}
+{% block content %}
+<div class="meta mb-2">
+    <a href="/u/{{ profile_user.username }}" class="hover:text-rust">@{{ profile_user.username }}</a>
+    / Activity
+</div>
+<div class="mb-6">
+    <h1 class="text-3xl">Activity</h1>
+    <p class="text-ink-muted">{{ profile_user.display_name }}'s recent activity.</p>
+</div>
+
+{% if events %}
+<ul class="divide-y divide-edge list-none p-0 m-0">
+    {% for event in events %}
+    <li>
+        {% include "components/_activity_line.html" %}
+    </li>
+    {% endfor %}
+</ul>
+{% if next_offset is not none %}
+<div class="mt-6">
+    <a href="/u/{{ profile_user.username }}/activity?offset={{ next_offset }}" class="btn-ghost text-sm">Load older</a>
+</div>
+{% endif %}
+{% else %}
+<div class="card text-center py-10">
+    <p class="text-ink-muted">
+        {% if offset %}
+            No older activity.
+        {% else %}
+            No activity yet.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+{% endblock %}

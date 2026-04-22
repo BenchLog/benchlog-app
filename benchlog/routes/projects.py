@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -170,15 +170,20 @@ def _clean_q(raw: str | None) -> str:
 _QUERY_TOKEN_RE = re.compile(r"[^\w\s]", re.UNICODE)
 
 
+def _search_tokens(q: str) -> list[str]:
+    """Parse a free-text search into tokens. Punctuation becomes spaces,
+    tokens shorter than 2 chars are dropped (single-letter matches scan
+    too much to be useful)."""
+    if not q:
+        return []
+    cleaned = _QUERY_TOKEN_RE.sub(" ", q)
+    return [t for t in cleaned.split() if len(t) >= 2]
+
+
 def _build_prefix_tsquery(q: str) -> str:
     """Turn a free-text search into a tsquery string with prefix matching
-    per token. "flowi router" → "flowi:* & router:*". Drops tokens shorter
-    than 2 chars — single-letter prefixes scan too much of the GIN index
-    and the results are rarely what the user wants."""
-    if not q:
-        return ""
-    cleaned = _QUERY_TOKEN_RE.sub(" ", q)
-    tokens = [t for t in cleaned.split() if len(t) >= 2]
+    per token. "flowi router" → "flowi:* & router:*"."""
+    tokens = _search_tokens(q)
     if not tokens:
         return ""
     return " & ".join(f"{t}:*" for t in tokens)
@@ -196,22 +201,32 @@ def _tsquery_for(q: str):
 
 
 def _apply_search_query(query, *, q: str):
-    """Filter a Project select by full-text search over title + description.
+    """Filter a Project select by substring match over title + description.
 
-    Uses prefix matching (per token `:*`) so typing "flowi" finds "Flowire".
-    `to_tsquery` is strict about syntax — `_build_prefix_tsquery` sanitizes
-    out operators and normalizes whitespace so arbitrary user input can't
-    break the query or inject operators.
+    Each token (from `_search_tokens`) must appear as a substring in
+    either the title or the description. "wire" matches "Flowire";
+    "flow" matches "Flowire" too.
 
-    Returns `query` unchanged when the search is empty. Caller is
-    responsible for overriding their default ORDER BY with ts_rank_cd —
-    kept out of here so routes can decide whether relevance or recency
-    wins.
+    Why ILIKE not tsquery: tsquery doesn't support infix matching
+    natively (only prefix via `:*`), and maker-journal content rarely
+    benefits from stemming enough to outweigh losing substring matches.
+    Ranking still uses ts_rank_cd via `_tsquery_for` for ORDER BY when
+    a tsquery is buildable — ILIKE is WHERE only.
+
+    Returns `query` unchanged when the search has no usable tokens.
     """
-    ts = _tsquery_for(q)
-    if ts is None:
+    tokens = _search_tokens(q)
+    if not tokens:
         return query
-    return query.where(Project.search_vector.op("@@")(ts))
+    for token in tokens:
+        pattern = f"%{token}%"
+        query = query.where(
+            or_(
+                Project.title.ilike(pattern),
+                Project.description.ilike(pattern),
+            )
+        )
+    return query
 
 
 def _apply_filter_query(

@@ -220,8 +220,8 @@ async def search_linkable_projects(
     """
     # Local import to avoid a circular dependency — routes/projects.py
     # imports from helpers modules, and some helpers import from other
-    # route-level utilities. The tsquery helper is the only bit we need.
-    from benchlog.routes.projects import _tsquery_for
+    # route-level utilities.
+    from benchlog.routes.projects import _apply_search_query, _tsquery_for
 
     q = (q or "").strip()
 
@@ -237,9 +237,10 @@ async def search_linkable_projects(
         )
     )
 
+    query = _apply_search_query(query, q=q)
     ts = _tsquery_for(q) if q else None
     if ts is not None:
-        query = query.where(Project.search_vector.op("@@")(ts)).order_by(
+        query = query.order_by(
             func.ts_rank_cd(Project.search_vector, ts).desc(),
             Project.updated_at.desc(),
         )

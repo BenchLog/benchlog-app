@@ -1308,29 +1308,10 @@ async def test_list_search_multi_word_is_and(client, db):
     assert "Router jig" not in resp.text
 
 
-async def test_list_search_is_stemmed(client, db):
-    # English stemmer folds "building" -> "build", so ?q=build finds
-    # "Building a router table".
-    user = await make_user(db, email="alice@test.com", username="alice")
-    db.add(
-        Project(
-            user_id=user.id,
-            title="Building a router table",
-            slug="building-router-table",
-            status=ProjectStatus.idea,
-        )
-    )
-    await db.commit()
-
-    await login(client, "alice")
-    resp = await client.get("/projects?q=build")
-    assert "Building a router table" in resp.text
-
-
-async def test_list_search_is_prefix_match(client, db):
-    # Typing a partial token should match words that start with it —
-    # "flowi" finds "Flowire" (motivating case). Lets users get results
-    # after 2-3 characters instead of needing a full-word match.
+async def test_list_search_is_substring_match(client, db):
+    # Substring matching: a partial token anywhere in the title hits —
+    # "flowi" finds "Flowire" (prefix), and "wire" also finds "Flowire"
+    # (infix). Matches the mental model of a maker-journal search.
     user = await make_user(db, email="alice@test.com", username="alice")
     db.add_all(
         [
@@ -1355,8 +1336,12 @@ async def test_list_search_is_prefix_match(client, db):
     assert "Flowire" in resp.text
     assert "Dovetail jig" not in resp.text
 
-    # Single-letter prefixes are too broad — we ignore tokens <2 chars so
-    # they don't scan the whole GIN index. Should behave like no-search.
+    # Infix match: "wire" is inside "Flowire".
+    resp = await client.get("/projects?q=wire")
+    assert "Flowire" in resp.text
+    assert "Dovetail jig" not in resp.text
+
+    # Single-letter tokens are dropped (too broad), so behaves like no-search.
     resp = await client.get("/projects?q=f")
     assert "Flowire" in resp.text
     assert "Dovetail jig" in resp.text

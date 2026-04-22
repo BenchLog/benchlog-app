@@ -251,15 +251,13 @@ def rewrite_file_references(
         bang = m.group(1)
         text = m.group(2)
         title = m.group(3) or ""
-        # Rewrite the author-facing label too. Full path first (more
-        # specific) so `[models/widget.stl]` becomes `[stl/widget.stl]`
-        # cleanly when the file both moved and got renamed; then the
-        # basename to catch standalone mentions like `[widget.stl]`.
-        # `str.replace` is all-occurrences — matches the "even if it's
-        # part of a longer text" intent.
-        new_text = text.replace(old_full_path, new_full_path)
+        # Why: only rewrite the basename inside the label, never the full
+        # path. A pure path change (same filename) must not touch the
+        # author-written label — they wrote `widget.stl`, not the URL.
         if old_basename != new_basename:
-            new_text = new_text.replace(old_basename, new_basename)
+            new_text = text.replace(old_basename, new_basename)
+        else:
+            new_text = text
         return f"{bang}[{new_text}](files/{new_full_path}{title})"
 
     new_text, count = _rewrite_prose(markdown_text, pattern, _sub)

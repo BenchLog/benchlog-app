@@ -513,7 +513,7 @@ async def test_project_detail_modal_data_loaded(client, db):
 
 async def test_detail_edit_toggle_renders_for_owner_only(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
-    bob = await make_user(db, email="bob@test.com", username="bob")
+    await make_user(db, email="bob@test.com", username="bob")
     alices = await _make_project(
         db, alice, title="AP", slug="ap", is_public=True
     )

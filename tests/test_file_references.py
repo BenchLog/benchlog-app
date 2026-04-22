@@ -226,10 +226,10 @@ def test_rewrite_leaves_text_alone_when_old_name_absent():
     assert result.text == "[latest model](files/gadget.stl)"
 
 
-def test_rewrite_prefers_full_path_over_basename_in_text():
-    # File moved from `models/` to `stl/`, also renamed. Text mentioning
-    # the full old path gets the full new path; any standalone basename
-    # mentions update to the new basename.
+def test_rewrite_only_replaces_basename_in_text_not_full_path():
+    # File moved from `models/` to `stl/`, also renamed. Only standalone
+    # basename mentions update — a user-written full-path mention stays
+    # as-is (the label is prose, not the URL).
     result = rewrite_file_references(
         "See [models/widget.stl and also widget.stl](files/models/widget.stl).",
         "models/widget.stl",
@@ -237,8 +237,20 @@ def test_rewrite_prefers_full_path_over_basename_in_text():
     )
     assert (
         result.text
-        == "See [stl/gadget.stl and also gadget.stl](files/stl/gadget.stl)."
+        == "See [models/gadget.stl and also gadget.stl](files/stl/gadget.stl)."
     )
+
+
+def test_rewrite_path_only_change_leaves_label_untouched():
+    # Filename unchanged, only the path changed (file moved into a folder).
+    # Label text must not be rewritten with the new path.
+    result = rewrite_file_references(
+        "Grab [widget.stl](files/widget.stl).",
+        "widget.stl",
+        "models/widget.stl",
+    )
+    assert result.text == "Grab [widget.stl](files/models/widget.stl)."
+    assert result.count == 1
 
 
 def test_rewrite_doesnt_touch_other_links_text():

@@ -333,6 +333,8 @@ html[data-theme="dark"] {
     padding: 0.75rem 1rem;
     margin: 0 0 1rem;
     overflow-x: auto;
+    /* Prose line-height (1.65) is too loose for code — tighten for readability. */
+    line-height: 1.45;
   }
   pre code { background: transparent; padding: 0; border-radius: 0; font-size: 0.8125rem; border: 0; color: inherit; font-weight: inherit; }
 

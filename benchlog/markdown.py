@@ -15,12 +15,57 @@ from urllib.parse import quote
 from markdown_it import MarkdownIt
 from mdit_py_plugins.footnote import footnote_plugin
 from mdit_py_plugins.tasklists import tasklists_plugin
+from pygments import highlight as _pygments_highlight
+from pygments.formatters import HtmlFormatter
+from pygments.lexers import get_lexer_by_name
+from pygments.util import ClassNotFound
+
+
+# Separate from the line-numbered formatter in `benchlog/files.py` — inline
+# fenced blocks are usually short snippets, so the table-style line column
+# reads as clutter. `nowrap=True` emits just the token spans so we can wrap
+# them in our own `<pre>` and dodge markdown-it's default `<pre><code>`
+# wrapper (it skips wrapping only if the returned HTML starts with `<pre`).
+# Token colors come from the shared `.highlight .*` rules already in the
+# stylesheet.
+_HIGHLIGHT_FORMATTER = HtmlFormatter(nowrap=True)
+
+
+def _highlight_fence(code: str, lang: str, _attrs: str) -> str:
+    """markdown-it highlight callback — Pygments-render known languages only.
+
+    Returning "" means "let markdown-it do the default `<pre><code>`", which
+    is what we want for fences with no language or an unknown one. No lexer
+    fallback to TextLexer here (unlike file previews): an unstyled fence is
+    the expected shape for prose.
+    """
+    if not lang:
+        return ""
+    try:
+        lexer = get_lexer_by_name(lang, stripall=False)
+    except ClassNotFound:
+        return ""
+    tokens = _pygments_highlight(code, lexer, _HIGHLIGHT_FORMATTER)
+    # Use the lexer's canonical alias (not the raw user string) for the
+    # language-* class, so untrusted input can't break out of the attribute.
+    aliases = getattr(lexer, "aliases", None) or [lexer.name.lower()]
+    canonical = aliases[0]
+    return f'<pre class="highlight language-{canonical}"><code>{tokens}</code></pre>'
+
 
 _md = (
     # html: false forces escaping of raw HTML tags in the source — otherwise
     # the gfm-like preset would let `<script>` etc. through unchanged, since
     # we mark the rendered output safe for Jinja.
-    MarkdownIt("gfm-like", {"linkify": True, "typographer": True, "html": False})
+    MarkdownIt(
+        "gfm-like",
+        {
+            "linkify": True,
+            "typographer": True,
+            "html": False,
+            "highlight": _highlight_fence,
+        },
+    )
     .enable("table")
     .enable("strikethrough")
 )

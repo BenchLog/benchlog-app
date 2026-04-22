@@ -5,9 +5,9 @@ actor nullable on delete): this table is user-visible, project-scoped,
 and cascades with both the actor and the project so a deletion naturally
 takes its trail with it.
 
-Six event types in v1 — each one is fired from a single call site. See
-`benchlog/activity.py` for the write helpers and the three list helpers
-that back the project/profile/explore feeds.
+Each event type is fired from a single call site. See `benchlog/activity.py`
+for the write helpers and the three list helpers that back the
+project/profile/explore feeds.
 """
 
 import enum
@@ -24,11 +24,12 @@ from benchlog.models.base import Base, new_uuid
 
 class ActivityEventType(str, enum.Enum):
     project_created = "project_created"
-    project_became_public = "project_became_public"
     project_forked = "project_forked"
     journal_entry_posted = "journal_entry_posted"
     file_uploaded = "file_uploaded"
     file_version_added = "file_version_added"
+    link_added = "link_added"
+    link_removed = "link_removed"
 
 
 class ActivityEvent(Base):

@@ -17,16 +17,19 @@
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
 {% if project.description or is_owner %}
-<section class="card" data-description-section>
-    <div class="flex items-baseline justify-between mb-3">
-        <h2 class="text-lg m-0">Description</h2>
-        {% if is_owner %}
-        <button type="button" class="btn-ghost text-xs" data-description-edit>
-            <i data-lucide="pencil" class="w-3.5 h-3.5 inline mr-1"></i>
-            Edit
-        </button>
-        {% endif %}
-    </div>
+<section class="card relative group" data-description-section>
+    {% if is_owner %}
+    {# Icon-only Edit button tucked in the top-right corner — visible on
+       hover/focus so the read view doesn't open with an empty band above
+       the text. Keyboard-focusable so it stays accessible without a mouse. #}
+    <button type="button"
+            class="absolute top-2 right-2 inline-flex items-center justify-center w-7 h-7 rounded text-ink-muted hover:text-rust hover:bg-edge/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+            data-description-edit
+            aria-label="Edit description"
+            title="Edit description">
+        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+    </button>
+    {% endif %}
 
     {# Rendered view — visible by default. #}
     <div class="markdown-body" data-description-rendered>
@@ -480,14 +483,20 @@
     }
 
     async function removeRelation(id) {
-      // Lightweight confirm prompt — the relation removes the chip
-      // immediately on success, so a missed click would be disorienting
-      // without a guardrail. We use window.confirm rather than the
-      // shared data-confirm modal because the delete endpoint is fetch()
-      // driven (no server redirect to ride).
+      // The delete endpoint is fetch()-driven so the data-confirm
+      // auto-interception (which rides a form submit) doesn't apply.
+      // Use the programmatic window.benchlogConfirm helper instead so
+      // the guardrail matches the rest of the site's visual language.
       const chip = section.querySelector('[data-relation-chip="' + id + '"]');
       const title = chip?.querySelector('a')?.textContent?.trim() || 'this project';
-      if (!window.confirm('Remove the relation to ' + title + '?')) return;
+      const ok = await (window.benchlogConfirm
+        ? window.benchlogConfirm({
+            title: 'Remove related project?',
+            body: 'Remove the link to ' + title + '?',
+            ok: 'Remove',
+          })
+        : Promise.resolve(window.confirm('Remove the relation to ' + title + '?')));
+      if (!ok) return;
       const resp = await fetch(
         projectUrl + '/relations/' + encodeURIComponent(id) + '/delete',
         {

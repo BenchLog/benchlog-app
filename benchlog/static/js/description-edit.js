@@ -40,10 +40,11 @@
     showError("");
     renderedEl.classList.add("hidden");
     form.classList.remove("hidden");
-    // Hide the Edit button while in edit mode — clicking it during a
-    // session would be a no-op (editor already visible) and the clutter
-    // competes with the Save/Cancel affordances.
-    editBtn.classList.add("hidden");
+    // Hide the Edit button while in edit mode. Inline `style.display`
+    // beats the button's always-on `inline-flex` utility class — Tailwind's
+    // `.hidden` loses the specificity tie so it left the button partly
+    // visible.
+    editBtn.style.display = "none";
     if (!editor && window.toastui) {
       // Build the hidden source textarea + mount div inside the slot. We
       // do this at click time (rather than at render time) so the editor
@@ -89,7 +90,7 @@
   function closeEditor() {
     form.classList.add("hidden");
     renderedEl.classList.remove("hidden");
-    editBtn.classList.remove("hidden");
+    editBtn.style.display = "";
     showError("");
   }
 

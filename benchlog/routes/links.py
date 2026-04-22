@@ -5,6 +5,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from benchlog.activity import record_event
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
 from benchlog.links import (
@@ -13,7 +14,7 @@ from benchlog.links import (
     normalize_url,
     parse_link_type,
 )
-from benchlog.models import LinkType, ProjectLink, User
+from benchlog.models import ActivityEventType, LinkType, ProjectLink, User
 from benchlog.projects import (
     get_project_by_username_and_slug,
     get_user_project_by_slug,
@@ -142,15 +143,26 @@ async def create_link(
         return fail("Please enter a valid URL.")
     values["url"] = normalized
 
-    db.add(
-        ProjectLink(
-            project_id=project.id,
-            title=values["title"],
-            url=normalized,
-            link_type=parse_link_type(values["link_type"]),
-            # Append at the bottom of any existing arrangement.
-            sort_order=await next_sort_order(db, project.id),
-        )
+    link = ProjectLink(
+        project_id=project.id,
+        title=values["title"],
+        url=normalized,
+        link_type=parse_link_type(values["link_type"]),
+        # Append at the bottom of any existing arrangement.
+        sort_order=await next_sort_order(db, project.id),
+    )
+    db.add(link)
+    await db.flush()
+    await record_event(
+        db,
+        actor=user,
+        project=project,
+        event_type=ActivityEventType.link_added,
+        payload={
+            "link_id": str(link.id),
+            "label": link.title,
+            "url": link.url,
+        },
     )
     await db.commit()
     return RedirectResponse(
@@ -305,7 +317,16 @@ async def delete_link(
     link = await get_link_by_id(db, project.id, link_id)
     if link is None:
         raise HTTPException(status_code=404)
+    label = link.title
+    url = link.url
     await db.delete(link)
+    await record_event(
+        db,
+        actor=user,
+        project=project,
+        event_type=ActivityEventType.link_removed,
+        payload={"label": label, "url": url},
+    )
     await db.commit()
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/links", status_code=302

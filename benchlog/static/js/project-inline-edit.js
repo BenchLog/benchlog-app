@@ -82,6 +82,11 @@
       const resp = await postSettings([["status", value]]);
       if (resp.ok) {
         if (label) label.textContent = (STATUS_LABELS[value] || value).toLowerCase();
+        // Only show the "other" options — hide whatever is now selected
+        // and reveal the rest. Same pattern as the public/pinned menus.
+        statusMenu.querySelectorAll("[data-status-option]").forEach((opt) => {
+          opt.classList.toggle("hidden", opt.dataset.statusOption === value);
+        });
         closeMenu(btn);
       }
     });

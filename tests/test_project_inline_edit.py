@@ -5,7 +5,8 @@ Covers:
     chip / title / tag / category / slug edit on the detail page.
   - Owner-vs-non-owner rendering of the header (status chip dropdown,
     public/pinned chips, inline title edit, slug + delete in More actions).
-  - `project_became_public` event fires on False → True transitions.
+  - Visibility flips record NO activity event — deliberately kept out of
+    the feed since the project header already shows current visibility.
 """
 
 from sqlalchemy import select
@@ -13,7 +14,6 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.models import (
     ActivityEvent,
-    ActivityEventType,
     Project,
     ProjectStatus,
 )
@@ -261,7 +261,7 @@ async def test_settings_pinned_toggle(client, db):
     assert project.pinned is False
 
 
-async def test_settings_is_public_flip_records_event(client, db):
+async def test_settings_is_public_flip_records_no_event(client, db):
     user = await make_user(db, email="alice@test.com", username="alice")
     project = Project(
         user_id=user.id,
@@ -274,7 +274,7 @@ async def test_settings_is_public_flip_records_event(client, db):
     await db.commit()
 
     await login(client, "alice")
-    # False -> True
+    # False -> True: no activity event should be recorded.
     resp = await post_form(
         client,
         f"/u/alice/{project.slug}/settings",
@@ -285,11 +285,9 @@ async def test_settings_is_public_flip_records_event(client, db):
     await db.refresh(project)
     assert project.is_public is True
     events = await _events(db, project_id=project.id)
-    assert [e.event_type for e in events] == [
-        ActivityEventType.project_became_public
-    ]
+    assert events == []
 
-    # True -> True (no transition) — no new event.
+    # True -> True (no transition) — still nothing.
     resp = await post_form(
         client,
         f"/u/alice/{project.slug}/settings",
@@ -298,9 +296,9 @@ async def test_settings_is_public_flip_records_event(client, db):
     )
     assert resp.status_code == 204
     events = await _events(db, project_id=project.id)
-    assert len(events) == 1
+    assert events == []
 
-    # True -> False — no event.
+    # True -> False — still nothing.
     resp = await post_form(
         client,
         f"/u/alice/{project.slug}/settings",
@@ -309,7 +307,7 @@ async def test_settings_is_public_flip_records_event(client, db):
     )
     assert resp.status_code == 204
     events = await _events(db, project_id=project.id)
-    assert len(events) == 1
+    assert events == []
 
 
 async def test_settings_slug_change_returns_redirect_json(client, db):

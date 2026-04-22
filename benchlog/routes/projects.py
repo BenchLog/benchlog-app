@@ -76,6 +76,9 @@ async def load_project_header_ctx(
         dict when the project has no categories) so the template never
         has to branch on missing context — the header falls back to
         ``cat.name`` only when the breadcrumb lookup genuinely misses.
+      ``status_chip_options`` — ``[(value, label)]`` pairs for the owner's
+        status dropdown. Always returned so the shared header renders the
+        same list on every tab (overview/journal/files/gallery/links).
     """
     if viewer is None:
         viewer_collections: list = []
@@ -90,6 +93,7 @@ async def load_project_header_ctx(
         "viewer_collections": viewer_collections,
         "project_collection_ids": project_collection_ids,
         "category_breadcrumbs": category_breadcrumbs,
+        "status_chip_options": _status_options(),
     }
 
 
@@ -675,7 +679,6 @@ async def project_detail(
             "incoming_relation_groups": incoming_groups,
             "known_tags": known_tags,
             "known_categories": known_categories,
-            "status_chip_options": _status_options(),
             "user_pickable_relation_types": [
                 (t.value, t.label, t.icon)
                 for t in (
@@ -800,8 +803,8 @@ async def update_project_settings(
         `{"redirect": "/u/<user>/<new-slug>"}` so the client can navigate.
       - Returns 400 JSON `{"detail": "..."}` on validation failure.
 
-    Emits `project_became_public` ONLY on a False→True transition of
-    `is_public`, matching `update_project`'s behavior.
+    Does not emit any activity event on visibility flips — the project
+    header already shows current visibility, so logging every flip is noise.
     """
     project = await _require_owned_project(db, user, username, slug)
     form = await request.form()
@@ -818,7 +821,6 @@ async def update_project_settings(
             return False
         return None
 
-    was_public = project.is_public
     slug_changed = False
 
     # Title — present and non-empty to update; present and empty is a 400
@@ -894,14 +896,6 @@ async def update_project_settings(
         raw_cats = form.getlist("categories") or form.getlist("category")
         await set_project_categories(db, project, _clean_category_list(raw_cats))
 
-    if not was_public and project.is_public:
-        await record_event(
-            db,
-            actor=user,
-            project=project,
-            event_type=ActivityEventType.project_became_public,
-        )
-
     await db.commit()
 
     if slug_changed:
@@ -973,7 +967,6 @@ async def update_project(
     ):
         return await fail(f"\u201c{normalized}\u201d is already used by another of your projects.")
 
-    was_public = project.is_public
     project.title = values["title"]
     project.slug = normalized
     project.description = values["description"].strip() or None
@@ -982,13 +975,6 @@ async def update_project(
     project.is_public = values["is_public"]
     await set_project_tags(db, project, parse_tag_input(values["tags"]))
     await set_project_categories(db, project, values["categories"])
-    if not was_public and project.is_public:
-        await record_event(
-            db,
-            actor=user,
-            project=project,
-            event_type=ActivityEventType.project_became_public,
-        )
     await db.commit()
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}", status_code=302

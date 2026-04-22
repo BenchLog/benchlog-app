@@ -30,6 +30,7 @@
             <a href="/u/{{ user.username }}/collections/{{ c.slug }}"
                data-collection-chip="{{ c.id }}"
                class="inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust">
+                <i data-lucide="folder" class="w-3 h-3 opacity-70 inline"></i>
                 {{ c.name }}
             </a>
             {% endfor %}
@@ -233,9 +234,34 @@
         a.className =
           'inline-flex items-center gap-1 rounded-full border border-edge bg-paper-surface px-2 py-0.5 text-xs text-ink-muted no-underline hover:border-rust hover:text-rust';
         a.dataset.collectionChip = id;
-        a.textContent = opt.label;
+        const icon = document.createElement('i');
+        icon.setAttribute('data-lucide', 'folder');
+        icon.className = 'w-3 h-3 opacity-70 inline';
+        a.appendChild(icon);
+        a.appendChild(document.createTextNode(' ' + opt.label));
         wrap.appendChild(a);
       });
+      if (window.lucide && typeof window.lucide.createIcons === 'function') {
+        window.lucide.createIcons();
+      }
+    };
+
+    const renderFolderLabel = (option, container) => {
+      const icon = document.createElement('i');
+      icon.setAttribute('data-lucide', 'folder');
+      icon.className = 'w-3 h-3 opacity-70 inline';
+      container.appendChild(icon);
+      container.appendChild(document.createTextNode(' ' + (option.label || '')));
+    };
+    cfg.pillRenderer = (option, container) => {
+      renderFolderLabel(option, container);
+    };
+    cfg.optionRenderer = (option, container, isCreate) => {
+      if (isCreate) {
+        container.textContent = `Create "${option.label}"`;
+        return;
+      }
+      renderFolderLabel(option, container);
     };
 
     cfg.onStatus = setStatus;

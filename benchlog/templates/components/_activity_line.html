@@ -19,11 +19,12 @@
 
 {% set icons = {
     'project_created': 'plus-circle',
-    'project_became_public': 'globe',
     'project_forked': 'git-branch',
     'journal_entry_posted': 'book-open',
     'file_uploaded': 'file-plus',
     'file_version_added': 'layers',
+    'link_added': 'link',
+    'link_removed': 'link',
 } %}
 
 <div class="flex items-start gap-3 py-3">
@@ -33,14 +34,6 @@
             <a href="/u/{{ actor.username }}" class="hover:text-rust">@{{ actor.username }}</a>
             {% if et == 'project_created' %}
                 created a project
-            {% elif et == 'project_became_public' %}
-                made
-                {% if show_project %}
-                    <a href="{{ project_url }}" class="hover:text-rust">@{{ project.user.username }}/{{ project.slug }}</a>
-                {% else %}
-                    this project
-                {% endif %}
-                public
             {% elif et == 'project_forked' %}
                 forked
                 {% if show_project %}
@@ -73,10 +66,25 @@
                 {% else %}
                     a new file version
                 {% endif %}
+            {% elif et == 'link_added' %}
+                {% set link_label = event.payload.get('label') if event.payload else None %}
+                {% set link_url = event.payload.get('url') if event.payload else None %}
+                added a link
+                {% if link_url %}
+                    — <a href="{{ link_url }}" rel="nofollow noopener" class="hover:text-rust">{{ link_label or link_url }}</a>
+                {% elif link_label %}
+                    — {{ link_label }}
+                {% endif %}
+            {% elif et == 'link_removed' %}
+                {% set link_label = event.payload.get('label') if event.payload else None %}
+                removed a link
+                {% if link_label %}
+                    — {{ link_label }}
+                {% endif %}
             {% else %}
                 did something
             {% endif %}
-            {% if show_project and et not in ['project_became_public', 'project_forked'] %}
+            {% if show_project and et != 'project_forked' %}
                 on <a href="{{ project_url }}" class="hover:text-rust">@{{ project.user.username }}/{{ project.slug }}</a>
             {% endif %}
         </div>

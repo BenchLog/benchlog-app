@@ -241,6 +241,9 @@
         search.setAttribute("aria-expanded", "true");
         positionDropdown();
       }
+      // Custom optionRenderers may inject `<i data-lucide>` placeholders;
+      // refresh once per render so they swap to SVGs.
+      refreshLucide();
     };
 
     const setStatus = (state, msg) => {

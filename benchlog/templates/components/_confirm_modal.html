@@ -25,6 +25,9 @@
     const bodyEl = modal.querySelector("[data-confirm-body]");
     const okBtn = modal.querySelector("[data-confirm-ok]");
     const cancelBtn = modal.querySelector("[data-confirm-cancel]");
+    // `pending` is either an HTMLFormElement (form-interception path) or a
+    // `{resolve}` record from `window.benchlogConfirm` — never both. The
+    // two paths share the OK/Cancel/Esc wiring but resolve differently.
     let pending = null;
 
     const variantClass = (variant) =>
@@ -36,19 +39,26 @@
     };
 
     // Canceling a confirm returns the form to a clean pre-submit state so the
-    // user isn't left staring at edits they just chose not to apply.
+    // user isn't left staring at edits they just chose not to apply. For the
+    // programmatic path, resolve `false` instead.
     const cancel = () => {
-      const form = pending;
+      const p = pending;
       close();
-      if (form) form.reset();
+      if (p && p instanceof HTMLFormElement) {
+        p.reset();
+      } else if (p && typeof p.resolve === "function") {
+        p.resolve(false);
+      }
     };
 
     okBtn.addEventListener("click", () => {
-      const form = pending;
+      const p = pending;
       close();
-      if (form) {
-        form.dataset.confirmed = "true";
-        form.requestSubmit();
+      if (p && p instanceof HTMLFormElement) {
+        p.dataset.confirmed = "true";
+        p.requestSubmit();
+      } else if (p && typeof p.resolve === "function") {
+        p.resolve(true);
       }
     });
     cancelBtn.addEventListener("click", cancel);
@@ -77,5 +87,26 @@
       okBtn.className = variantClass(form.dataset.confirmVariant);
       modal.showModal();
     });
+
+    // Programmatic confirmation for flows that don't ride a form submit
+    // (AJAX DELETE, custom buttons). Returns Promise<bool>. If a prior
+    // confirmation is still open, the caller is short-circuited to false
+    // so we don't stack dialogs.
+    window.benchlogConfirm = ({
+      title,
+      body,
+      ok,
+      variant,
+    } = {}) => {
+      if (pending) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        pending = { resolve };
+        titleEl.textContent = title || "Are you sure?";
+        bodyEl.textContent = body || "This action cannot be undone.";
+        okBtn.textContent = ok || "Remove";
+        okBtn.className = variantClass(variant);
+        modal.showModal();
+      });
+    };
   })();
 </script>

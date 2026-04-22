@@ -253,6 +253,12 @@
       });
 
       document.addEventListener("click", (e) => {
+        // Skip detached targets. Pill × and dropdown options rebuild their
+        // container on click, which means e.target is no longer in the DOM
+        // by the time this handler runs — `root.contains` would then
+        // falsely report "outside" and hide the dropdown while the search
+        // input still has focus.
+        if (!e.target.isConnected) return;
         if (!root.contains(e.target)) {
           dropdown.hidden = true;
           search.setAttribute("aria-expanded", "false");

@@ -1,4 +1,5 @@
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
+from benchlog.auth.users import get_user_by_id
 from benchlog.config import settings
 from benchlog.middleware import (
     AuthMiddleware,
@@ -37,6 +39,38 @@ logger = logging.getLogger("benchlog")
 
 def _is_local_dev(base_url: str) -> bool:
     return base_url.startswith("http://localhost") or base_url.startswith("http://127.0.0.1")
+
+
+async def _resolve_session_user(request: Request):
+    """Best-effort user lookup for the error-page template context.
+
+    The `current_user` dependency doesn't fire for exception handlers, so
+    we mirror its checks here (valid UUID, user exists, is active, session
+    epoch matches) and swallow any DB error so a broken lookup never masks
+    the original error being rendered.
+    """
+    session_user = request.session.get("user")
+    if not session_user:
+        return None
+    try:
+        user_id = uuid.UUID(session_user["id"])
+        session_epoch = int(session_user.get("epoch", 0))
+    except (KeyError, ValueError, TypeError):
+        return None
+    # Import locally so test conftest can swap `async_session` on the
+    # `benchlog.database` module before this lookup runs.
+    from benchlog.database import async_session
+
+    try:
+        async with async_session() as db:
+            user = await get_user_by_id(db, user_id)
+    except SQLAlchemyError:
+        return None
+    if user is None or not user.is_active:
+        return None
+    if user.session_epoch != session_epoch:
+        return None
+    return user
 
 
 @asynccontextmanager
@@ -115,13 +149,20 @@ def create_app() -> FastAPI:
             heading, message = ERROR_COPY.get(
                 exc.status_code, ("Something went wrong", "An unexpected error occurred.")
             )
+            # Resolve the current user from the session so the shared base-nav
+            # can render the logged-in navbar on 404s/5xxs. The `current_user`
+            # dependency doesn't fire for exception handlers, so we pull the
+            # User row directly — matching what the dependency checks (active
+            # + session epoch intact).
             signed_in = bool(request.session.get("user"))
+            view_user = await _resolve_session_user(request)
             home_href = "/" if signed_in else "/login"
             home_label = "Return home" if signed_in else "Go to sign in"
             return templates.TemplateResponse(
                 request,
                 "errors/error.html",
                 {
+                    "user": view_user,
                     "status_code": exc.status_code,
                     "heading": heading,
                     "message": message,

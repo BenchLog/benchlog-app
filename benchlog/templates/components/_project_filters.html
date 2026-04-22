@@ -88,7 +88,13 @@
                     {% endfor %}
                 </div>
             </div>
-            {% with name="tag", selected=current_tags, suggestions=known_tags, placeholder="Filter by tag…", multi_value=True, existing_only=True %}
+            {# Free-form commit is allowed (existing_only defaults to False)
+               so users can filter by tags that aren't yet in the
+               suggestions payload — the public/private tag vocabularies
+               grow independently of what's already been typed on this
+               page, and an unknown slug simply returns zero results
+               rather than an error. #}
+            {% with name="tag", selected=current_tags, suggestions=known_tags, placeholder="Filter by tag…", multi_value=True %}
                 {% include "components/_tag_combobox.html" %}
             {% endwith %}
         </div>

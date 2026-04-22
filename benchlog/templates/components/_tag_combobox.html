@@ -139,7 +139,16 @@
 
       const currentOptions = () => {
         const q = slugify(search.value);
-        if (!q) return [];
+        // Empty query: surface a bounded list of not-yet-selected known tags
+        // on focus so users can browse the vocabulary without typing first
+        // (mirrors the category combobox UX). Skip entirely when there are
+        // no known tags to avoid rendering an empty dropdown.
+        if (!q) {
+          return known
+            .filter((t) => !selected.includes(t))
+            .slice(0, 15)
+            .map((t) => ({ kind: "existing", value: t }));
+        }
         const matches = known.filter(t => !selected.includes(t) && t.includes(q));
         const canCreate = !existingOnly && !selected.includes(q) && !matches.includes(q);
         const opts = matches.slice(0, 10).map(t => ({ kind: "existing", value: t }));
@@ -251,7 +260,7 @@
       });
 
       search.addEventListener("input", () => { active = 0; renderDropdown(); });
-      search.addEventListener("focus", () => { if (search.value) renderDropdown(); });
+      search.addEventListener("focus", () => { renderDropdown(); });
 
       search.addEventListener("keydown", (e) => {
         const mod = e.metaKey || e.ctrlKey;
@@ -290,6 +299,12 @@
       });
 
       document.addEventListener("click", (e) => {
+        // Skip detached targets. Pill × and dropdown options rebuild their
+        // container via renderPills() / renderDropdown() on click, which
+        // means e.target is no longer in the DOM by the time this handler
+        // runs — `root.contains` would then falsely report "outside" and
+        // hide the dropdown while the search input still has focus.
+        if (!e.target.isConnected) return;
         if (!root.contains(e.target)) {
           dropdown.hidden = true;
           search.setAttribute("aria-expanded", "false");

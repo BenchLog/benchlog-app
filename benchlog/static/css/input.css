@@ -609,6 +609,34 @@ html[data-theme="dark"] {
   }
 }
 
+/* Empty-state drop zone shown on the Files tab when a project has zero
+   files. Doubles as the click-to-pick target — sized big so it's an
+   obvious affordance. `is-drop-active` lights on external drag-over. */
+@utility file-empty-drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border: 2px dashed var(--color-edge);
+  border-radius: 8px;
+  background-color: var(--color-paper-surface);
+  padding: 3rem 1.5rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--color-rust);
+    outline: none;
+  }
+
+  &.is-drop-active {
+    border-color: var(--color-rust);
+    background-color: color-mix(in srgb, var(--color-rust) 8%, transparent);
+  }
+}
+
 /* Inline status banner shown while a drag-drop upload is in flight.
    Sits above the file tree as a polite live region for screen readers. */
 @utility file-upload-status {

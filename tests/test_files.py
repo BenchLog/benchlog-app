@@ -3721,3 +3721,140 @@ async def test_rename_only_touches_the_renaming_project(client, db):
     await db.refresh(p2)
     assert p1.description == "[ref](files/b.stl)"
     assert p2.description == "[ref](files/a.stl)"  # untouched
+
+
+# ---------- files tab stats ---------- #
+
+
+async def test_files_tab_renders_total_file_count_and_size(client, db):
+    """The files tab heading carries a stats chip: N files · humanized size.
+
+    Size is the total storage footprint — sum of every FileVersion blob,
+    not just the current version — because old versions still occupy disk
+    and "how big is this project" means the whole footprint.
+    """
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bench",
+            slug="bench",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+
+    # Three separate files at known sizes: 1 KiB, 2 KiB, 5 KiB = 8192 bytes = 8.0 KB.
+    for filename, size in [("a.bin", 1024), ("b.bin", 2048), ("c.bin", 5120)]:
+        await _upload(
+            client,
+            "/u/alice/bench/files",
+            filename=filename,
+            content=b"x" * size,
+            mime="application/octet-stream",
+            csrf_path="/u/alice/bench",
+        )
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert "3 files" in resp.text
+    # human_size renders 8192 B as "8.0 KB" (1024-based, one decimal).
+    assert "8.0 KB" in resp.text
+    assert 'data-files-stats' in resp.text
+
+
+async def test_files_tab_stats_count_all_versions_of_size(client, db):
+    """Uploading a second version of the same file keeps the file count
+    at 1 but doubles the storage footprint — both blobs still live on disk."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bench",
+            slug="bench",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="notes.txt",
+        content=b"x" * 2048,
+        mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    # New version with a different size — now total = 2048 + 3072 = 5120 = 5.0 KB.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    files = {"upload": ("notes.txt", b"x" * 3072, "text/plain")}
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version",
+        data={"_csrf": token, "changelog": ""},
+        files=files,
+    )
+    assert resp.status_code == 302
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    # Still one logical file
+    assert "1 file" in resp.text
+    assert "1 files" not in resp.text
+    # Sum of both versions
+    assert "5.0 KB" in resp.text
+
+
+async def test_files_tab_stats_visible_to_guest_on_public_project(client, db):
+    """Aggregate stats aren't sensitive — guests on a public project see
+    the same chip the owner sees."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bench",
+            slug="bench",
+            status=ProjectStatus.in_progress,
+            is_public=True,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="spec.md",
+        content=b"x" * 512,
+        mime="text/markdown",
+        csrf_path="/u/alice/bench",
+    )
+
+    client.cookies.clear()  # drop to guest
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert "1 file" in resp.text
+    assert "512 B" in resp.text
+
+
+async def test_files_tab_stats_empty_project(client, db):
+    """No files yet — chip still renders with 0 count / 0 B footprint."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bench",
+            slug="bench",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert "0 files" in resp.text
+    assert "0 B" in resp.text

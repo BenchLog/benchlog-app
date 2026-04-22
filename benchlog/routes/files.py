@@ -20,7 +20,7 @@ from urllib.parse import quote
 from anyio import to_thread
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.background import BackgroundTask
@@ -339,6 +339,17 @@ async def files_tab(
     sort_column, sort_direction = _normalize_sort(sort, dir)
     tree = _build_file_tree(project, sort_column, sort_direction)
     has_folders = any(child["kind"] == "folder" for child in tree["children"])
+    # Total storage footprint = sum of every FileVersion blob (not just the
+    # current version). Old versions still occupy disk, so the aggregate is
+    # the number that answers "how big is this project on disk today".
+    total_file_count = sum(1 for _ in project.files)
+    total_storage_bytes = (
+        await db.execute(
+            select(func.coalesce(func.sum(FileVersion.size_bytes), 0))
+            .join(ProjectFile, ProjectFile.id == FileVersion.file_id)
+            .where(ProjectFile.project_id == project.id)
+        )
+    ).scalar_one()
     return templates.TemplateResponse(
         request,
         "projects/files.html",
@@ -350,6 +361,8 @@ async def files_tab(
             "has_folders": has_folders,
             "sort_column": sort_column,
             "sort_direction": sort_direction,
+            "total_file_count": total_file_count,
+            "total_storage_bytes": int(total_storage_bytes or 0),
             "notice": request.session.pop("flash_notice", None),
             "error": request.session.pop("flash_error", None),
         },

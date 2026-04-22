@@ -143,7 +143,7 @@
 {% endfor %}
 {% endmacro %}
 
-<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-1">
     <h2 class="text-xl">Files</h2>
     <div class="flex flex-wrap items-center gap-2">
         {% if has_folders %}
@@ -166,10 +166,24 @@
         </a>
         {% endif %}
         {% if is_owner %}
-        <a href="{{ files_base }}/new" class="btn-primary text-sm">Upload file</a>
+        <button type="button" class="btn-primary text-sm" data-file-picker-trigger>
+            Upload file
+        </button>
         {% endif %}
     </div>
 </div>
+{% if is_owner %}
+{# One hidden input shared by the top-right button and the empty-state
+   drop zone. `multiple` lets the native picker queue several uploads in
+   one go; directories require drag-drop (no cross-browser picker API
+   for folder selection). #}
+<input type="file" multiple class="hidden" data-file-picker-input>
+{% endif %}
+<p class="meta mb-4" data-files-stats
+   title="Total storage footprint across every version (current and historical)">
+    {{ total_file_count }} file{% if total_file_count != 1 %}s{% endif %}
+    · {{ total_storage_bytes | human_size }}
+</p>
 
 {% macro sort_link(column, label) %}
     {% if column == sort_column %}
@@ -213,18 +227,22 @@
     </tbody>
 </table>
 {% else %}
-<div class="card text-center py-10">
-    <p class="text-ink-muted mb-4">
-        {% if is_owner %}
-            No files yet. Upload models, photos, schematics, or notes.
-        {% else %}
-            No files on this project yet.
-        {% endif %}
-    </p>
     {% if is_owner %}
-    <a href="{{ files_base }}/new" class="btn-primary text-sm">Upload file</a>
+    {# Empty state doubles as the drop zone: click opens the shared file
+       picker, drag-drop streams through the same upload path the populated
+       file tree uses. One affordance, two input channels. #}
+    <div class="file-empty-drop-zone" data-empty-drop-zone
+         role="button" tabindex="0"
+         aria-label="Upload files — click to pick, or drag files here">
+        <i data-lucide="upload-cloud" class="w-10 h-10 mb-3 text-ink-muted"></i>
+        <p class="text-ink m-0">Drag and drop files here to upload</p>
+        <p class="meta m-0 mt-1">or click to pick — models, photos, schematics, or notes</p>
+    </div>
+    {% else %}
+    <div class="card text-center py-10">
+        <p class="text-ink-muted m-0">No files on this project yet.</p>
+    </div>
     {% endif %}
-</div>
 {% endif %}
 
 {% if is_owner %}
@@ -287,9 +305,168 @@
 </dialog>
 {% endif %}
 
-{% if tree.children %}
+{% if is_owner %}
 <script>
 (() => {
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const uploadUrl = {{ (files_base) | tojson }};
+  const uploadStatusEl = document.querySelector('[data-upload-status]');
+  const filePickerInput = document.querySelector('[data-file-picker-input]');
+  const emptyDropZone = document.querySelector('[data-empty-drop-zone]');
+
+  function setUploadStatus(text) {
+    if (!uploadStatusEl) return;
+    uploadStatusEl.hidden = false;
+    uploadStatusEl.textContent = text;
+  }
+
+  function isExternalFileDrag(e) {
+    return Array.from(e.dataTransfer.types || []).includes('Files');
+  }
+
+  // Recursively flatten dropped files + folders into a single list of
+  // {file, relativePath} pairs. webkitGetAsEntry covers the folder case
+  // in every modern browser; fall back to dataTransfer.files for the
+  // rare browser without it (and for FileList-from-picker which has no
+  // items array).
+  async function collectDroppedFiles(dataTransfer) {
+    const out = [];
+    const items = dataTransfer.items;
+    if (items && items.length && items[0].webkitGetAsEntry) {
+      const entries = [];
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry?.();
+        if (entry) entries.push(entry);
+      }
+      for (const entry of entries) {
+        await walkEntry(entry, '', out);
+      }
+    } else {
+      for (const file of dataTransfer.files) {
+        out.push({ file, relativePath: '' });
+      }
+    }
+    return out;
+  }
+
+  async function walkEntry(entry, prefix, out) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      out.push({ file, relativePath: prefix });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+      while (true) {
+        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch.length) break;
+        for (const child of batch) {
+          await walkEntry(child, childPrefix, out);
+        }
+      }
+    }
+  }
+
+  async function runWithConcurrency(items, limit, fn) {
+    let i = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (i < items.length) {
+        const idx = i++;
+        await fn(items[idx], idx);
+      }
+    });
+    await Promise.all(workers);
+  }
+
+  async function uploadOne(item, basePath) {
+    const finalPath = [basePath, item.relativePath].filter(Boolean).join('/');
+    const formData = new FormData();
+    formData.append('_csrf', csrfToken);
+    formData.append('path', finalPath);
+    formData.append('description', '');
+    formData.append('upload', item.file, item.file.name);
+    try {
+      const resp = await fetch(uploadUrl, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Accept': 'application/json' },
+      });
+      if (resp.ok) return { ok: true };
+      let msg = `${item.file.name} (${resp.status})`;
+      try {
+        const payload = await resp.json();
+        if (payload.detail) msg = `${item.file.name} — ${payload.detail}`;
+      } catch {}
+      return { ok: false, msg };
+    } catch {
+      return { ok: false, msg: `${item.file.name} — network error` };
+    }
+  }
+
+  async function handleExternalDrop(dataTransfer, basePath) {
+    setUploadStatus('Reading dropped items…');
+    const items = await collectDroppedFiles(dataTransfer);
+    if (!items.length) {
+      if (uploadStatusEl) uploadStatusEl.hidden = true;
+      return;
+    }
+    let done = 0;
+    const failures = [];
+    setUploadStatus(`Uploading 0 / ${items.length}…`);
+    await runWithConcurrency(items, 4, async (item) => {
+      const result = await uploadOne(item, basePath);
+      done += 1;
+      if (!result.ok) failures.push(result.msg);
+      setUploadStatus(
+        `Uploaded ${done - failures.length} / ${items.length}` +
+          (failures.length ? `, ${failures.length} failed` : '')
+      );
+    });
+    if (failures.length) {
+      alert(`Some files failed to upload:\n\n${failures.join('\n')}`);
+    }
+    setUploadStatus('Refreshing…');
+    location.reload();
+  }
+
+  // Top-right "Upload file" button + empty-state drop zone both route
+  // through the same picker input. Reusing one <input> keeps the file-list
+  // state tidy (clearing `.value = ''` after each use lets the user re-pick
+  // the same file in a row).
+  document.querySelector('[data-file-picker-trigger]')?.addEventListener('click', () => {
+    filePickerInput?.click();
+  });
+
+  filePickerInput?.addEventListener('change', () => {
+    if (!filePickerInput.files.length) return;
+    handleExternalDrop({ items: null, files: filePickerInput.files }, '');
+    filePickerInput.value = '';
+  });
+
+  if (emptyDropZone) {
+    emptyDropZone.addEventListener('click', () => filePickerInput?.click());
+    emptyDropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        filePickerInput?.click();
+      }
+    });
+    emptyDropZone.addEventListener('dragover', (e) => {
+      if (!isExternalFileDrag(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      emptyDropZone.classList.add('is-drop-active');
+    });
+    emptyDropZone.addEventListener('dragleave', () => {
+      emptyDropZone.classList.remove('is-drop-active');
+    });
+    emptyDropZone.addEventListener('drop', (e) => {
+      if (!isExternalFileDrag(e)) return;
+      e.preventDefault();
+      emptyDropZone.classList.remove('is-drop-active');
+      handleExternalDrop(e.dataTransfer, '');
+    });
+  }
+
   const table = document.querySelector('[data-file-tree]');
   if (!table) return;
 
@@ -392,8 +569,6 @@
     const localized = timeFormatter ? timeFormatter.format(d) : d.toString();
     el.title = localized;
   });
-
-  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
   // ---------- Edit modals (file + folder) ----------
   //
@@ -563,12 +738,10 @@
   // non-owners anyway, but we gate the affordances client-side too so
   // guests don't see a misleading "drop here" highlight.
   const moveUrl = table.dataset.moveUrl;
-  const uploadUrl = table.dataset.uploadUrl;
   if (!moveUrl) return;
 
   let dragSource = null;
   const thead = table.querySelector('thead[data-root-drop-target]');
-  const uploadStatusEl = document.querySelector('[data-upload-status]');
 
   function clearTargets() {
     table.querySelectorAll('.is-drop-target').forEach((el) =>
@@ -581,10 +754,6 @@
     if (targetPath === dragSource.path) return false;
     if (targetPath.startsWith(dragSource.path + '/')) return false;
     return true;
-  }
-
-  function isExternalFileDrag(e) {
-    return Array.from(e.dataTransfer.types || []).includes('Files');
   }
 
   table.querySelectorAll('tr[draggable="true"]').forEach((row) => {
@@ -703,126 +872,6 @@
     }
   }
 
-  // ---------- External (OS → browser) upload drop ----------
-
-  function setUploadStatus(text) {
-    if (!uploadStatusEl) return;
-    uploadStatusEl.hidden = false;
-    uploadStatusEl.textContent = text;
-  }
-
-  function clearUploadStatus(delayMs = 0) {
-    if (!uploadStatusEl) return;
-    setTimeout(() => {
-      uploadStatusEl.hidden = true;
-      uploadStatusEl.textContent = '';
-    }, delayMs);
-  }
-
-  // Recursively flatten dropped files + folders into a single list of
-  // {file, relativePath} pairs. webkitGetAsEntry covers the folder case
-  // in every modern browser; fall back to dataTransfer.files for the
-  // (rare) browser without it — uploads will be flat in that case.
-  async function collectDroppedFiles(dataTransfer) {
-    const out = [];
-    const items = dataTransfer.items;
-    if (items && items.length && items[0].webkitGetAsEntry) {
-      const entries = [];
-      for (const item of items) {
-        const entry = item.webkitGetAsEntry?.();
-        if (entry) entries.push(entry);
-      }
-      for (const entry of entries) {
-        await walkEntry(entry, '', out);
-      }
-    } else {
-      for (const file of dataTransfer.files) {
-        out.push({ file, relativePath: '' });
-      }
-    }
-    return out;
-  }
-
-  async function walkEntry(entry, prefix, out) {
-    if (entry.isFile) {
-      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
-      out.push({ file, relativePath: prefix });
-    } else if (entry.isDirectory) {
-      const reader = entry.createReader();
-      const childPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
-      // readEntries returns batches — keep calling until empty.
-      while (true) {
-        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
-        if (!batch.length) break;
-        for (const child of batch) {
-          await walkEntry(child, childPrefix, out);
-        }
-      }
-    }
-  }
-
-  async function runWithConcurrency(items, limit, fn) {
-    let i = 0;
-    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (i < items.length) {
-        const idx = i++;
-        await fn(items[idx], idx);
-      }
-    });
-    await Promise.all(workers);
-  }
-
-  async function uploadOne(item, basePath) {
-    const finalPath = [basePath, item.relativePath].filter(Boolean).join('/');
-    const formData = new FormData();
-    formData.append('_csrf', csrfToken);
-    formData.append('path', finalPath);
-    formData.append('description', '');
-    formData.append('upload', item.file, item.file.name);
-    try {
-      const resp = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData,
-        headers: { 'Accept': 'application/json' },
-      });
-      if (resp.ok) return { ok: true };
-      let msg = `${item.file.name} (${resp.status})`;
-      try {
-        const payload = await resp.json();
-        if (payload.detail) msg = `${item.file.name} — ${payload.detail}`;
-      } catch {}
-      return { ok: false, msg };
-    } catch {
-      return { ok: false, msg: `${item.file.name} — network error` };
-    }
-  }
-
-  async function handleExternalDrop(dataTransfer, basePath) {
-    if (!uploadUrl) return;
-    setUploadStatus('Reading dropped items…');
-    const items = await collectDroppedFiles(dataTransfer);
-    if (!items.length) {
-      clearUploadStatus();
-      return;
-    }
-    let done = 0;
-    const failures = [];
-    setUploadStatus(`Uploading 0 / ${items.length}…`);
-    await runWithConcurrency(items, 4, async (item) => {
-      const result = await uploadOne(item, basePath);
-      done += 1;
-      if (!result.ok) failures.push(result.msg);
-      setUploadStatus(
-        `Uploaded ${done - failures.length} / ${items.length}` +
-          (failures.length ? `, ${failures.length} failed` : '')
-      );
-    });
-    if (failures.length) {
-      alert(`Some files failed to upload:\n\n${failures.join('\n')}`);
-    }
-    setUploadStatus(`Refreshing…`);
-    location.reload();
-  }
 })();
 </script>
 {% endif %}

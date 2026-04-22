@@ -609,6 +609,94 @@ async def test_form_combobox_exposes_undo_redo_handlers(client, db):
     assert "ctrlKey" in resp.text
 
 
+async def test_filter_bar_tag_autocomplete_scopes_per_context(client, db):
+    """The tag combobox in the project filter bar must carry the right
+    autocomplete vocabulary for its context:
+
+    - `/projects` (owner-scoped) exposes every tag the viewer has used on
+      any of their own projects (public or private).
+    - `/explore` (public) exposes only tags that currently appear on
+      public projects — private tags must never leak into the guest /
+      cross-user autocomplete payload.
+    """
+    import re
+
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    # Public project with `public-tag`
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Pub",
+            "description": "",
+            "status": "idea",
+            "tags": "public-tag",
+            "is_public": "1",
+        },
+        csrf_path="/projects/new",
+    )
+    # Private project with `private-tag`
+    await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Priv",
+            "description": "",
+            "status": "idea",
+            "tags": "private-tag",
+        },
+        csrf_path="/projects/new",
+    )
+
+    # /projects — owner-scoped: sees both her own public and private tags.
+    resp = await client.get("/projects")
+    assert resp.status_code == 200
+    matches = re.findall(r'data-known-tags="([^"]*)"', resp.text)
+    assert matches, "tag combobox should render data-known-tags on /projects"
+    # The filter bar is the first combobox rendered on /projects; the
+    # page may include additional tag chips but we only care the payload
+    # is scoped correctly. Take the union across every rendered combobox.
+    all_slugs: set[str] = set()
+    for m in matches:
+        all_slugs.update(m.split())
+    assert "public-tag" in all_slugs
+    assert "private-tag" in all_slugs
+
+    # /explore as a guest — public-only payload.
+    resp = await client.get("/explore")
+    assert resp.status_code == 200
+    matches = re.findall(r'data-known-tags="([^"]*)"', resp.text)
+    assert matches, "tag combobox should render data-known-tags on /explore"
+    explore_slugs: set[str] = set()
+    for m in matches:
+        explore_slugs.update(m.split())
+    assert "public-tag" in explore_slugs
+    assert "private-tag" not in explore_slugs
+
+    # Keep type-checker / ruff happy about the unused capture.
+    assert alice.username == "alice"
+
+
+async def test_filter_bar_tag_autocomplete_allows_free_form_commit(client, db):
+    """The filter combobox must NOT be existing_only — users should be
+    able to commit a typed slug that isn't in the suggestion payload
+    (public/private vocabularies evolve independently of what's cached
+    on-page). An unknown slug simply returns zero results rather than
+    being silently dropped on Enter.
+    """
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await client.get("/projects")
+    assert resp.status_code == 200
+    # existing_only toggles a specific data attribute on the combobox
+    # wrapper — absence means free-form commits are accepted by the JS.
+    assert 'data-tag-existing-only="1"' not in resp.text
+    assert 'data-tag-existing-only=""' in resp.text
+
+
 async def test_form_combobox_renders_with_no_known_tags(client, db):
     await make_user(db, email="alice@test.com", username="alice")
     await login(client, "alice")

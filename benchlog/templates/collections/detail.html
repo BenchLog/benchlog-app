@@ -12,14 +12,34 @@
         %}{% include "components/_meta_og.html" %}{% endwith %}
     {% endif %}
 {% endblock %}
+{% block head_extra %}
+    {# Toast-ui only loaded for owners — guests never see the edit mode. #}
+    {% if is_owner %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+    {% endif %}
+{% endblock %}
 {% block content %}
 {% set collection_url = '/u/' ~ collection.user.username ~ '/collections/' ~ collection.slug %}
+
+{% if is_owner %}
+{# One form wraps every editable field. Submit triggers a normal POST
+   to the update endpoint, which 302s back to this page (or to the new
+   slug if the URL changed). The project × buttons live outside this
+   form and use AJAX so they don't interact with Save/Cancel. #}
+<form method="post" action="{{ collection_url }}" data-collection-edit-form>
+    {% include "components/_csrf.html" %}
+{% endif %}
 
 <header class="mb-6">
     <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         <a href="/u/{{ collection.user.username }}/collections" class="hover:text-rust">Collections</a>
         <span aria-hidden="true">/</span>
-        <span>{{ visible_projects|length }} {{ 'project' if visible_projects|length == 1 else 'projects' }}</span>
+        <span>
+            <span data-collection-count>{{ visible_projects|length }}</span>
+            <span data-collection-count-label>{{ 'project' if visible_projects|length == 1 else 'projects' }}</span>
+        </span>
         {% if is_owner %}
             {% if collection.is_public %}
             <span aria-hidden="true">·</span>
@@ -39,13 +59,60 @@
         {% endif %}
     </div>
     <div class="flex flex-wrap items-start justify-between gap-3">
-        <h1 class="text-4xl leading-tight">{{ collection.name }}</h1>
+        <div class="flex-1 min-w-0">
+            <h1 class="text-4xl leading-tight" data-view-read>{{ collection.name }}</h1>
+            {% if is_owner %}
+            <input type="text" name="name" maxlength="200" required
+                   value="{{ collection.name }}"
+                   data-view-edit hidden
+                   data-original-value="{{ collection.name }}"
+                   class="text-4xl leading-tight w-full rounded border border-edge bg-paper px-3 py-1">
+            {% endif %}
+        </div>
         {% if is_owner %}
         <div class="flex gap-2 shrink-0">
-            <a href="{{ collection_url }}/edit" class="btn-ghost text-sm">Edit</a>
+            <button type="button"
+                    class="btn-ghost text-sm"
+                    data-collection-edit-toggle
+                    data-view-read
+                    aria-pressed="false">
+                <i data-lucide="pencil" class="w-3.5 h-3.5 mr-1"></i>
+                Edit
+            </button>
+            <button type="submit" class="btn-primary text-sm" data-view-edit hidden>Save</button>
+            <button type="button" class="btn-ghost text-sm"
+                    data-collection-edit-cancel
+                    data-view-edit hidden>Cancel</button>
         </div>
         {% endif %}
     </div>
+
+    {% if is_owner %}
+    <div data-view-edit hidden class="mt-4 space-y-3 max-w-2xl">
+        <div>
+            <label class="meta" for="collection-slug-input">URL slug</label>
+            <input id="collection-slug-input" name="slug" type="text" maxlength="120" required
+                   value="{{ collection.slug }}"
+                   data-original-value="{{ collection.slug }}"
+                   class="mt-1 w-full rounded border border-edge bg-paper px-2 py-1 text-sm">
+            <p class="meta mt-1">
+                Shows up in the URL: <code>/u/{{ collection.user.username }}/collections/<span class="text-ink">{{ collection.slug }}</span></code>
+            </p>
+            <div data-slug-warning hidden
+                 class="mt-2 text-sm text-rust-deep border border-rust-deep rounded px-3 py-2 bg-rust/10"
+                 role="alert">
+                <strong>Heads up:</strong> changing the slug changes this collection's URL. Links pointing to <code>/u/{{ collection.user.username }}/collections/{{ collection.slug }}</code> will stop working.
+            </div>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" name="is_public" value="1"
+                   {% if collection.is_public %}checked{% endif %}
+                   data-original-checked="{{ '1' if collection.is_public else '' }}">
+            Public — shown on your profile
+        </label>
+    </div>
+    {% endif %}
+
     <div class="meta mt-2">
         {% if not is_owner %}by {{ collection.user.display_name }} · {% endif %}
         Created {{ collection.created_at.strftime("%Y-%m-%d") }} ·
@@ -53,41 +120,58 @@
     </div>
 </header>
 
-{% if collection.description %}
-<section class="card mb-6">
+{# Read view — rendered description. #}
+<section class="card mb-6"
+         data-view-read
+         {% if not collection.description %}hidden{% endif %}>
     <div class="markdown-body">
         {{ collection.description|markdown }}
     </div>
 </section>
+
+{% if is_owner %}
+{# Edit view — toast-ui mount, populated lazily on first Edit click.
+   The hidden textarea carries the current value so submit always picks
+   up whatever the editor has. #}
+<section class="card mb-6" data-view-edit hidden>
+    <label class="meta mb-2 block" for="toastui-source-collection-description">Description</label>
+    <div data-collection-description-slot
+         data-raw-description="{{ collection.description or '' }}"></div>
+    <p class="meta mt-1">Markdown is supported.</p>
+</section>
 {% endif %}
 
-{% if visible_projects %}
-<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0">
+{% if is_owner %}
+</form>
+{% endif %}
+
+{# The project grid and its empty state. × buttons are independent of the
+   main update form — their AJAX PATCH-like endpoint keeps membership in
+   sync without needing Save. They're hidden by default and only appear
+   while the page is in edit mode (data-collection-edit="on"). #}
+<ul class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 list-none p-0 {% if not visible_projects %}hidden{% endif %}"
+    data-collection-list>
     {% for project in visible_projects %}
-    <li class="relative">
+    <li class="relative" data-collection-item data-project-id="{{ project.id }}">
         {% with show_owner = not is_owner %}
             {% include "components/project_card.html" %}
         {% endwith %}
         {% if is_owner %}
-        <form method="post"
-              action="{{ collection_url }}/projects"
-              data-collection-remove
-              data-project-id="{{ project.id }}"
-              class="absolute top-2 right-2 z-20">
-            {% include "components/_csrf.html" %}
-            <button type="submit"
-                    class="btn-ghost text-xs"
-                    title="Remove from this collection"
-                    aria-label="Remove {{ project.title }} from this collection">
-                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-            </button>
-        </form>
+        <button type="button"
+                class="card-remove-btn hidden absolute -top-2 -right-2 z-20 w-6 h-6 rounded-full bg-paper border border-edge shadow-sm text-ink-muted hover:text-rust hover:border-rust items-center justify-center"
+                data-collection-remove
+                data-project-id="{{ project.id }}"
+                title="Remove from this collection"
+                aria-label="Remove {{ project.title }} from this collection">
+            <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
         {% endif %}
     </li>
     {% endfor %}
 </ul>
-{% else %}
-<div class="card text-center py-10">
+
+<div class="card text-center py-10 {% if visible_projects %}hidden{% endif %}"
+     data-collection-empty>
     <p class="text-ink-muted">
         {% if is_owner %}
             No projects in this collection yet. Open one of your projects and use the Collections picker to add it here.
@@ -96,21 +180,129 @@
         {% endif %}
     </p>
 </div>
-{% endif %}
 
 {% if is_owner %}
+{# Delete lives in its own form, shown only in edit mode so it stays out
+   of sight during normal browsing. #}
+<div data-view-edit hidden class="mt-10 pt-6 border-t border-edge">
+    <form method="post" action="{{ collection_url }}/delete"
+          data-confirm
+          data-confirm-title="Delete collection?"
+          data-confirm-body="{{ collection.name }} will be removed. The projects inside stay untouched."
+          data-confirm-ok="Delete collection">
+        {% include "components/_csrf.html" %}
+        <button type="submit" class="btn-danger text-sm">Delete collection</button>
+    </form>
+</div>
+
 <script>
   (() => {
-    // Remove buttons — fire an AJAX POST to the toggle endpoint so the
-    // owner can prune without a full page reload. Falls back to a plain
-    // form POST when JS is off: the server accepts JSON at that URL and
-    // a form-POST would 400 currently — so JS-on is the happy path.
     const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-    document.querySelectorAll('[data-collection-remove]').forEach((form) => {
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const pid = form.dataset.projectId;
-        const resp = await fetch(form.action, {
+    const form = document.querySelector('[data-collection-edit-form]');
+    const list = document.querySelector('[data-collection-list]');
+    const emptyState = document.querySelector('[data-collection-empty]');
+    const countEl = document.querySelector('[data-collection-count]');
+    const countLabelEl = document.querySelector('[data-collection-count-label]');
+    const editBtn = document.querySelector('[data-collection-edit-toggle]');
+    const cancelBtn = document.querySelector('[data-collection-edit-cancel]');
+    const readEls = () => document.querySelectorAll('[data-view-read]');
+    const editEls = () => document.querySelectorAll('[data-view-edit]');
+    const removeButtons = () =>
+      list ? list.querySelectorAll('.card-remove-btn') : [];
+    const slugInput = document.getElementById('collection-slug-input');
+    const slugWarning = document.querySelector('[data-slug-warning]');
+    const descriptionSlot = document.querySelector('[data-collection-description-slot]');
+    let descriptionEditor = null;
+
+    function mountDescriptionEditor() {
+      if (descriptionEditor || !descriptionSlot || !window.toastui) return;
+      const raw = descriptionSlot.dataset.rawDescription || '';
+      descriptionSlot.innerHTML = '';
+      const sourceId = 'toastui-source-collection-description';
+      const mountId = 'toastui-mount-collection-description';
+      const source = document.createElement('textarea');
+      source.id = sourceId;
+      source.name = 'description';
+      source.className = 'hidden';
+      source.value = raw;
+      descriptionSlot.appendChild(source);
+      const resizer = document.createElement('div');
+      resizer.className = 'toastui-editor-resizer';
+      resizer.style.height = '320px';
+      resizer.style.minHeight = '240px';
+      descriptionSlot.appendChild(resizer);
+      const mount = document.createElement('div');
+      mount.id = mountId;
+      mount.dataset.toastuiMount = '';
+      mount.dataset.toastuiSourceId = sourceId;
+      mount.className = 'h-full';
+      resizer.appendChild(mount);
+      window.initToastuiEditors?.(descriptionSlot);
+      descriptionEditor = mount.__toastuiEditor || null;
+    }
+
+    function setEditMode(on) {
+      readEls().forEach((el) => { el.hidden = on; });
+      editEls().forEach((el) => { el.hidden = !on; });
+      removeButtons().forEach((b) => {
+        b.classList.toggle('hidden', !on);
+        b.classList.toggle('inline-flex', on);
+      });
+      if (list) list.dataset.collectionEdit = on ? 'on' : 'off';
+      if (editBtn) editBtn.setAttribute('aria-pressed', String(on));
+      if (on) mountDescriptionEditor();
+    }
+
+    editBtn?.addEventListener('click', () => setEditMode(true));
+
+    cancelBtn?.addEventListener('click', () => {
+      // Revert every inline field back to the value the page loaded
+      // with. Users expect Cancel to discard their edits — no server
+      // round-trip, no confirmation.
+      form?.querySelectorAll('input[data-original-value]').forEach((input) => {
+        input.value = input.dataset.originalValue || '';
+      });
+      form?.querySelectorAll('input[type="checkbox"][data-original-checked]').forEach((input) => {
+        input.checked = input.dataset.originalChecked === '1';
+      });
+      if (descriptionEditor) {
+        descriptionEditor.setMarkdown(descriptionSlot?.dataset.rawDescription || '');
+      }
+      if (slugWarning) slugWarning.hidden = true;
+      setEditMode(false);
+    });
+
+    // Slug-change warning mirrors the standalone edit form.
+    slugInput?.addEventListener('input', () => {
+      if (!slugWarning) return;
+      const orig = (slugInput.dataset.originalValue || '').toLowerCase();
+      slugWarning.hidden = slugInput.value.trim().toLowerCase() === orig;
+    });
+
+    // AJAX × removal (independent of the Save/Cancel flow).
+    function updateCount() {
+      if (!list) return;
+      const n = list.querySelectorAll('[data-collection-item]').length;
+      if (countEl) countEl.textContent = String(n);
+      if (countLabelEl) countLabelEl.textContent = n === 1 ? 'project' : 'projects';
+      if (n === 0) {
+        list.classList.add('hidden');
+        emptyState?.classList.remove('hidden');
+      } else {
+        list.classList.remove('hidden');
+        emptyState?.classList.add('hidden');
+      }
+    }
+
+    async function removeCard(btn) {
+      const li = btn.closest('[data-collection-item]');
+      if (!li || li.dataset.removing === '1') return;
+      li.dataset.removing = '1';
+      btn.disabled = true;
+      const pid = btn.dataset.projectId;
+      let ok = false;
+      try {
+        const resp = await fetch({{ (collection_url ~ '/projects') | tojson }}, {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
@@ -119,10 +311,28 @@
           },
           body: JSON.stringify({ project_id: pid, action: 'remove' }),
         });
-        if (resp.ok) {
-          form.closest('li')?.remove();
-        }
-      });
+        ok = resp.ok;
+      } catch (_) {
+        ok = false;
+      }
+      if (!ok) {
+        li.dataset.removing = '';
+        btn.disabled = false;
+        return;
+      }
+      li.style.transition = 'opacity 150ms ease';
+      li.style.opacity = '0';
+      setTimeout(() => {
+        li.remove();
+        updateCount();
+      }, 160);
+    }
+
+    list?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-collection-remove]');
+      if (!btn) return;
+      e.preventDefault();
+      removeCard(btn);
     });
   })();
 </script>

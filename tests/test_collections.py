@@ -511,6 +511,47 @@ async def test_project_detail_modal_data_loaded(client, db):
     assert str(out_collection.id) not in initial
 
 
+async def test_detail_edit_toggle_renders_for_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    alices = await _make_project(
+        db, alice, title="AP", slug="ap", is_public=True
+    )
+    collection = Collection(
+        user_id=alice.id, name="Faves", slug="faves", is_public=True
+    )
+    collection.projects = [alices]
+    db.add(collection)
+    await db.commit()
+
+    # Owner sees the Edit toggle + per-card remove button.
+    await login(client, "alice")
+    resp = await client.get("/u/alice/collections/faves")
+    assert resp.status_code == 200
+    assert "data-collection-edit-toggle" in resp.text
+    assert "data-collection-remove" in resp.text
+
+    # Non-owner (logged in) doesn't see either.
+    await login(client, "bob")
+    resp = await client.get("/u/alice/collections/faves")
+    assert resp.status_code == 200
+    assert "data-collection-edit-toggle" not in resp.text
+    assert "data-collection-remove" not in resp.text
+
+    # Guest (logged out) doesn't see either.
+    # Re-create a fresh client session so prior login cookies don't leak.
+    from httpx import ASGITransport, AsyncClient
+    from benchlog.main import app
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver",
+        follow_redirects=False,
+    ) as guest:
+        resp = await guest.get("/u/alice/collections/faves")
+        assert resp.status_code == 200
+        assert "data-collection-edit-toggle" not in resp.text
+        assert "data-collection-remove" not in resp.text
+
+
 async def test_detail_hides_cross_user_private_from_owner(client, db):
     # Alice has Bob's project in her collection; when Bob flips private,
     # Alice (the collection owner) shouldn't see the chip — she can't see

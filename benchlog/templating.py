@@ -4,7 +4,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 from benchlog.config import settings
-from benchlog.files import human_size
+from benchlog.files import file_icon, human_size
 from benchlog.markdown import build_file_lookup_from_files, plain_excerpt
 from benchlog.markdown import render as render_markdown
 from benchlog.markdown import render_for_project
@@ -59,6 +59,7 @@ def _absolute_url(path: str) -> str:
 templates.env.filters["markdown"] = _markdown_filter
 templates.env.filters["project_markdown"] = _project_markdown_filter
 templates.env.filters["human_size"] = human_size
+templates.env.filters["file_icon"] = file_icon
 templates.env.filters["excerpt"] = plain_excerpt
 templates.env.filters["absolute_url"] = _absolute_url
 templates.env.globals["site_name"] = "BenchLog"

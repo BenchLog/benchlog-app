@@ -1248,6 +1248,44 @@ async def delete_file_version(
     )
 
 
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/edit")
+async def edit_file_version_changelog(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    changelog: str = Form(""),
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rewrite the "what changed" note on any existing version.
+
+    Owner-only. Empty string clears the note. Drag-drop uploads bypass
+    the changelog form entirely, so this is the post-hoc way to fill in
+    context on a version that was added without one.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    target = next(
+        (v for v in file.versions if v.version_number == version_number), None
+    )
+    if target is None:
+        raise HTTPException(status_code=404)
+
+    target.changelog = changelog.strip() or None
+    await db.commit()
+
+    if _wants_json(request):
+        return Response(status_code=204)
+    return RedirectResponse(
+        f"/u/{user.username}/{project.slug}/files/{file.id}",
+        status_code=302,
+    )
+
+
 @router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/restore")
 async def restore_file_version(
     username: str,

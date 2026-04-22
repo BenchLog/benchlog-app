@@ -3497,6 +3497,189 @@ async def test_restore_version_owner_only(client, db):
     assert {v.version_number for v in versions} == {1, 2}
 
 
+# ---------- edit version changelog ---------- #
+
+
+async def test_owner_can_edit_non_current_version_changelog(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/edit",
+        data={"_csrf": token, "changelog": "initial draft — sketch only"},
+    )
+    assert resp.status_code == 302
+
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    assert versions[0].changelog == "initial draft — sketch only"
+    # Sibling version is untouched.
+    assert versions[1].changelog is None
+
+
+async def test_owner_can_edit_current_version_changelog(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _make_versioned_file(
+        client, filenames_and_bodies=[("notes.txt", b"alpha"), ("notes.txt", b"beta")]
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/2/edit",
+        data={"_csrf": token, "changelog": "revised after review"},
+    )
+    assert resp.status_code == 302
+
+    versions = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    assert versions[1].changelog == "revised after review"
+
+
+async def test_edit_version_changelog_empty_clears(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="notes.txt", content=b"alpha", mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    # Seed a value to clear.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/edit",
+        data={"_csrf": token, "changelog": "something"},
+    )
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/edit",
+        data={"_csrf": token, "changelog": "   "},
+    )
+    assert resp.status_code == 302
+
+    version = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalar_one()
+    assert version.changelog is None
+
+
+async def test_non_owner_cannot_edit_version_changelog(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(Project(user_id=alice.id, title="Bench", slug="bench",
+                   status=ProjectStatus.in_progress, is_public=True))
+    await db.commit()
+
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="notes.txt", content=b"alpha", mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/edit",
+        data={"_csrf": token, "changelog": "hacked"},
+    )
+    assert resp.status_code == 404
+
+    version = (
+        await db.execute(
+            select(FileVersion).where(FileVersion.file_id == file.id)
+        )
+    ).scalar_one()
+    assert version.changelog is None
+
+
+# ---------- smart file icons ---------- #
+
+
+def test_file_icon_maps_common_extensions():
+    from benchlog.files import file_icon
+    assert file_icon("widget.stl") == "box"
+    assert file_icon("widget.3mf") == "box"
+    assert file_icon("widget.step") == "box"
+    assert file_icon("print.gcode") == "printer"
+    assert file_icon("part.scad") == "shapes"
+    assert file_icon("plate.svg") == "pen-tool"
+    assert file_icon("build.zip") == "archive"
+    assert file_icon("build.tar.gz") == "archive"
+    assert file_icon("main.py") == "file-code-2"
+    assert file_icon("app.ts") == "file-code-2"
+    assert file_icon("config.yaml") == "file-code-2"
+    assert file_icon("data.csv") == "table-2"
+    assert file_icon("notes.md") == "file-text"
+    assert file_icon("report.docx") == "file-text"
+    assert file_icon("unknown.xyz") == "file"
+    assert file_icon("no-extension") == "file"
+
+
+def test_file_icon_respects_mime_specials():
+    from benchlog.files import file_icon
+    # Mime-driven specials win over extension-based lookup.
+    assert file_icon("clip.mov", "video/quicktime") == "film"
+    assert file_icon("track.mp3", "audio/mpeg") == "music"
+    assert file_icon("doc.pdf", "application/pdf") == "file-text"
+    # PDF without explicit mime still picks up via extension.
+    assert file_icon("doc.pdf", "application/octet-stream") == "file-text"
+
+
+async def test_file_tree_renders_smart_icons(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    for filename, body, mime in [
+        ("widget.stl", b"stl-data", "application/octet-stream"),
+        ("main.py", b"print(1)\n", "text/x-python"),
+        ("notes.md", b"# notes", "text/markdown"),
+        ("mystery.xyz", b"who knows", "application/octet-stream"),
+    ]:
+        await _upload(
+            client, "/u/alice/bench/files",
+            filename=filename, content=body, mime=mime,
+            csrf_path="/u/alice/bench",
+        )
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    body = resp.text
+    assert 'data-lucide="box"' in body
+    assert 'data-lucide="file-code-2"' in body
+    assert 'data-lucide="file-text"' in body
+    # Generic fallback for the unknown extension.
+    assert 'data-lucide="file"' in body
+
+
 # ---------- markdown rename-tracking ---------- #
 #
 # When a file/folder is renamed or moved, the matching `files/<old>` links

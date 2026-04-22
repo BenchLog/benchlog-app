@@ -59,6 +59,74 @@ _TEXT_PREVIEW_LIMIT = 256 * 1024
 _SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
 
 
+# Extension → lucide icon name. Grouped by role so the mapping reads like
+# "what kind of thing is this" rather than a blob of extensions. Order
+# doesn't matter — the lookup is a flat dict built once at import time.
+_ICON_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # 3D / CAD models — a solid shape speaks to "object in space".
+    ("box", (".stl", ".3mf", ".obj", ".step", ".stp", ".iges", ".igs")),
+    # Slicer output / machine-ready geometry.
+    ("printer", (".gcode", ".gco")),
+    # Parametric / sculpting source files.
+    ("shapes", (".scad", ".f3d", ".fcstd", ".blend")),
+    # Vector + drawing formats (kept separate from bitmap images, which
+    # still take the image-thumbnail path via `is_image`).
+    ("pen-tool", (".svg", ".dxf", ".ai", ".eps")),
+    # Compressed bundles.
+    ("archive", (".zip", ".tar", ".gz", ".7z", ".rar")),
+    # Code + structured config. Two buckets that share the same icon —
+    # separating them would add noise without adding recognition.
+    ("file-code-2", (
+        ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
+        ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt",
+        ".lua", ".sh", ".bash", ".ps1",
+        ".json", ".yaml", ".yml", ".toml", ".xml", ".html", ".css",
+        ".scss", ".sql",
+    )),
+    # Tabular data.
+    ("table-2", (".csv", ".tsv", ".xlsx", ".xls")),
+    # Prose / documents. Merged with plain-text notes so .md and .docx
+    # both read as "something with words in it".
+    ("file-text", (
+        ".md", ".txt", ".rst", ".log",
+        ".doc", ".docx", ".odt", ".pages", ".rtf",
+    )),
+)
+_EXT_ICON_MAP: dict[str, str] = {
+    ext: icon for icon, exts in _ICON_GROUPS for ext in exts
+}
+
+
+def file_icon(filename: str | None, mime_type: str | None = None) -> str:
+    """Pick a lucide icon name for a file row.
+
+    Mime-based specials (video/audio/pdf) win first since they're
+    unambiguous; images are expected to render a thumbnail instead and
+    should be handled at the template level. Everything else falls back
+    to an extension map, with a generic `file` for unknowns.
+    """
+    mime = (mime_type or "").lower()
+    if mime.startswith("video/"):
+        return "film"
+    if mime.startswith("audio/"):
+        return "music"
+    if mime == "application/pdf":
+        return "file-text"
+    if not filename:
+        return "file"
+    lower = filename.lower()
+    dot = lower.rfind(".")
+    if dot == -1:
+        return "file"
+    ext = lower[dot:]
+    # PDFs can also arrive without the application/pdf mime (e.g. a raw
+    # octet-stream upload) — fall through the extension map so they still
+    # pick up the right icon.
+    if ext == ".pdf":
+        return "file-text"
+    return _EXT_ICON_MAP.get(ext, "file")
+
+
 def human_size(num_bytes: int | None) -> str:
     """Format a byte count as a compact human-readable string.
 

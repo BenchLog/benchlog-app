@@ -17,14 +17,8 @@
             <span class="file-tree-icon">
                 {% if file.current_version and file.current_version.is_image %}
                 <img src="{{ files_base }}/{{ file.id }}/thumb" alt="" loading="lazy">
-                {% elif file.current_version and file.current_version.mime_type.startswith('video/') %}
-                <i data-lucide="film" class="w-3.5 h-3.5"></i>
-                {% elif file.current_version and file.current_version.mime_type.startswith('audio/') %}
-                <i data-lucide="music" class="w-3.5 h-3.5"></i>
-                {% elif file.current_version and file.current_version.mime_type == 'application/pdf' %}
-                <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
                 {% else %}
-                <i data-lucide="file" class="w-3.5 h-3.5"></i>
+                <i data-lucide="{{ file.filename | file_icon(file.current_version.mime_type if file.current_version else None) }}" class="w-3.5 h-3.5"></i>
                 {% endif %}
             </span>
             <a href="{{ files_base }}/{{ file.id }}"

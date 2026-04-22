@@ -187,6 +187,11 @@
             <div class="flex flex-wrap items-center gap-2 shrink-0">
                 <a href="{{ file_url }}/download?v={{ v.version_number }}" class="btn-ghost text-xs">Download v{{ v.version_number }}</a>
                 {% if is_owner %}
+                    <button type="button" class="btn-ghost text-xs"
+                            data-version-edit-trigger
+                            data-version-submit-url="{{ file_url }}/version/{{ v.version_number }}/edit"
+                            data-version-number="{{ v.version_number }}"
+                            data-version-changelog="{{ v.changelog or '' }}">Edit</button>
                     {% if not is_current %}
                     <form method="post"
                           action="{{ file_url }}/version/{{ v.version_number }}/restore"
@@ -245,5 +250,98 @@
         </div>
     </form>
 </section>
+
+<dialog class="modal" data-version-edit-modal>
+    <form data-version-edit-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0">
+                Edit v<span data-version-edit-label></span>
+            </h2>
+            <button type="button" class="btn-ghost text-xs" data-version-edit-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div>
+            <label for="version-edit-changelog">What changed? <span class="meta ml-2">optional</span></label>
+            <textarea id="version-edit-changelog" name="changelog" rows="4" maxlength="2000"
+                      placeholder="e.g. fixed the mounting hole offset"></textarea>
+            <p class="meta mt-1">Leave empty to clear the note.</p>
+        </div>
+        <p class="text-rust-deep text-sm m-0" data-version-edit-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-version-edit-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">Save</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+(() => {
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const modal = document.querySelector('[data-version-edit-modal]');
+  if (!modal) return;
+  const form = modal.querySelector('[data-version-edit-form]');
+  const label = modal.querySelector('[data-version-edit-label]');
+  const errorEl = modal.querySelector('[data-version-edit-error]');
+  let submitUrl = null;
+
+  function showError(msg) {
+    errorEl.textContent = msg;
+    errorEl.hidden = false;
+  }
+
+  document.querySelectorAll('[data-version-edit-trigger]').forEach((trigger) => {
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      submitUrl = trigger.dataset.versionSubmitUrl;
+      label.textContent = trigger.dataset.versionNumber || '';
+      form.changelog.value = trigger.dataset.versionChangelog || '';
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+      modal.showModal();
+      requestAnimationFrame(() => {
+        form.changelog.focus();
+        form.changelog.select();
+      });
+    });
+  });
+
+  modal.querySelectorAll('[data-version-edit-cancel]').forEach((btn) => {
+    btn.addEventListener('click', () => modal.close());
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!submitUrl) return;
+    const body = new URLSearchParams();
+    body.set('_csrf', csrfToken);
+    body.set('changelog', form.changelog.value);
+    try {
+      const resp = await fetch(submitUrl, {
+        method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+        },
+        body: body.toString(),
+      });
+      if (resp.status === 204 || resp.status === 200 || resp.redirected) {
+        location.reload();
+        return;
+      }
+      let msg = `Save failed (${resp.status}).`;
+      try {
+        const payload = await resp.json();
+        if (payload && payload.detail) msg = payload.detail;
+      } catch {}
+      showError(msg);
+    } catch {
+      showError('Save failed — check your connection.');
+    }
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

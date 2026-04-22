@@ -8,3 +8,4 @@ tailwindcss
 dist/
 .ruff_cache/
 .pytest_cache/
+benchlog/static/css/output.css

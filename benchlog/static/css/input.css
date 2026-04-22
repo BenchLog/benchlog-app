@@ -311,11 +311,20 @@ html[data-theme="dark"] {
     border-radius: 0 4px 4px 0;
   }
 
-  code {
-    background-color: color-mix(in srgb, var(--color-edge) 40%, transparent);
-    padding: 0.05em 0.35em;
-    border-radius: 3px;
+  /* Inline code: pop it off the page with a cream-tinted background, a hint
+     of rust in the text, and a subtle edge border. The `:not(pre) > code`
+     scope keeps fenced code blocks untouched (they stay plain inside the
+     styled <pre>). `word-break: break-word` stops long tokens — URLs,
+     flag=values — from blowing out narrow card columns. */
+  :not(pre) > code {
+    background-color: var(--color-paper-surface);
+    border: 1px solid var(--color-edge);
+    color: var(--color-rust-deep);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
     font-size: 0.875em;
+    font-weight: 500;
+    word-break: break-word;
   }
   pre {
     background-color: color-mix(in srgb, var(--color-edge) 50%, transparent);
@@ -325,7 +334,7 @@ html[data-theme="dark"] {
     margin: 0 0 1rem;
     overflow-x: auto;
   }
-  pre code { background: transparent; padding: 0; border-radius: 0; font-size: 0.8125rem; }
+  pre code { background: transparent; padding: 0; border-radius: 0; font-size: 0.8125rem; border: 0; color: inherit; font-weight: inherit; }
 
   table {
     border-collapse: collapse;
@@ -1747,16 +1756,152 @@ dialog.modal[open] {
   .toastui-editor-popup {
     background-color: var(--color-paper-surface) !important;
     border: 1px solid var(--color-edge) !important;
+    box-shadow: 0 4px 12px var(--color-shadow) !important;
     color: var(--color-ink) !important;
   }
-  .toastui-editor-popup .toastui-editor-close-button {
-    color: var(--color-ink-muted) !important;
+  .toastui-editor-popup-body label {
+    color: var(--color-ink) !important;
   }
   .toastui-editor-popup-body input[type="text"],
   .toastui-editor-popup-body input[type="url"],
   .toastui-editor-popup-body textarea {
     background-color: var(--color-paper) !important;
-    border-color: var(--color-edge) !important;
+    border: 1px solid var(--color-edge) !important;
     color: var(--color-ink) !important;
+  }
+  .toastui-editor-popup-body input[type="text"]:focus,
+  .toastui-editor-popup-body input[type="url"]:focus,
+  .toastui-editor-popup-body textarea:focus {
+    border-color: var(--color-rust) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-rust) 20%, transparent) !important;
+  }
+  .toastui-editor-popup-body input[type="text"].disabled {
+    background-color: color-mix(in srgb, var(--color-edge) 40%, transparent) !important;
+    color: var(--color-ink-muted) !important;
+  }
+
+  /* Primary / close buttons inside popups (e.g. "Insert link" OK + Cancel).
+     Toastui paints OK in a hard #00a9ff blue and Cancel in pale grey —
+     both clash with the Field Notebook palette. Recolor OK to rust and
+     Cancel to the same ghost-button treatment used elsewhere. */
+  .toastui-editor-defaultUI .toastui-editor-ok-button {
+    background-color: var(--color-rust) !important;
+    color: var(--color-paper) !important;
+    border: 1px solid var(--color-rust) !important;
+    outline-color: var(--color-rust-deep) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-ok-button:hover {
+    background-color: var(--color-rust-deep) !important;
+    border-color: var(--color-rust-deep) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-close-button {
+    background-color: transparent !important;
+    color: var(--color-ink) !important;
+    border: 1px solid var(--color-edge) !important;
+    outline-color: var(--color-edge) !important;
+  }
+  .toastui-editor-defaultUI .toastui-editor-close-button:hover {
+    background-color: var(--color-paper-surface) !important;
+    border-color: var(--color-ink-muted) !important;
+  }
+  .toastui-editor-popup .toastui-editor-close-button {
+    color: var(--color-ink) !important;
+  }
+
+  /* "Insert image" URL/File tab strip inside the popup — active underline
+     was hardcoded to #00a9ff blue. */
+  .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item {
+    color: var(--color-ink) !important;
+    border-bottom-color: var(--color-edge) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item:hover {
+    border-bottom-color: var(--color-ink-muted) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-tabs .tab-item.active {
+    color: var(--color-rust) !important;
+    border-bottom-color: var(--color-rust) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-file-name {
+    background-color: var(--color-paper) !important;
+    border: 1px solid var(--color-edge) !important;
+    color: var(--color-ink-muted) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-file-name.has-file {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-file-select-button {
+    background-color: transparent !important;
+    border: 1px solid var(--color-edge) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-popup-add-image .toastui-editor-file-select-button:hover {
+    background-color: var(--color-paper-surface) !important;
+    border-color: var(--color-ink-muted) !important;
+  }
+
+  /* "Add table" cell picker. The preview grid and the drag-selection
+     overlay both hardcoded blue/white and grey borders. */
+  .toastui-editor-popup-add-table .toastui-editor-table-cell {
+    background-color: var(--color-paper) !important;
+    border: 1px solid var(--color-edge) !important;
+  }
+  .toastui-editor-popup-add-table .toastui-editor-table-cell.header {
+    background-color: var(--color-paper-surface) !important;
+  }
+  .toastui-editor-popup-add-table .toastui-editor-table-selection-layer {
+    background-color: color-mix(in srgb, var(--color-rust) 14%, transparent) !important;
+    border: 1px solid var(--color-rust) !important;
+  }
+  .toastui-editor-popup-add-table .toastui-editor-table-description {
+    color: var(--color-ink-muted) !important;
+  }
+
+  /* Heading-picker menu (H1/H2/.../paragraph) — hover row was hardcoded
+     to a light blue tint. */
+  .toastui-editor-popup-add-heading ul li {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-popup-add-heading ul li:hover {
+    background-color: color-mix(in srgb, var(--color-rust) 12%, transparent) !important;
+    color: var(--color-rust-deep) !important;
+  }
+
+  /* Triple-dot "more" overflow menu on narrow screens — same cream
+     palette as the primary popups, same rust accent on hover. */
+  .toastui-editor-context-menu {
+    background-color: var(--color-paper-surface) !important;
+    border: 1px solid var(--color-edge) !important;
+    box-shadow: 0 4px 12px var(--color-shadow) !important;
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-context-menu .menu-group {
+    border-bottom-color: var(--color-edge) !important;
+  }
+  .toastui-editor-context-menu .menu-item {
+    color: var(--color-ink) !important;
+  }
+  .toastui-editor-context-menu .menu-item:hover {
+    background-color: color-mix(in srgb, var(--color-rust) 12%, transparent) !important;
+    color: var(--color-rust-deep) !important;
+  }
+
+  /* Collapsed-toolbar dropdown (appears when the toolbar overflows to a
+     `…` trigger and the hidden buttons fly out below it). */
+  .toastui-editor-dropdown-toolbar {
+    background-color: var(--color-paper-surface) !important;
+    border: 1px solid var(--color-edge) !important;
+    box-shadow: 0 4px 12px var(--color-shadow) !important;
+  }
+
+  /* Tooltip shown on toolbar-button hover. Defaults are light grey on
+     dark — unreadable on dark theme and out of palette on light. */
+  .toastui-editor-tooltip {
+    background-color: var(--color-ink) !important;
+    color: var(--color-paper) !important;
+    border: 0 !important;
+  }
+  .toastui-editor-tooltip .arrow {
+    border-top-color: var(--color-ink) !important;
   }
 }

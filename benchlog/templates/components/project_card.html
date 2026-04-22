@@ -1,12 +1,17 @@
 {# Compact card used on project lists.
    Args:
      project          — required (with eager-loaded user + tags)
-     show_owner       — if truthy, render `project.user.display_name` as a byline
+     show_owner       — if truthy, mirrors the ownership context for the
+                        "Public" chip at the bottom (hidden on owner views
+                        where it would be noise). The `@username` byline
+                        under the title is always rendered — one consistent
+                        card shape across My Projects / Explore / Profile.
      tag_href_prefix  — defaults to "/explore"; where tag chips link to
 
    Card link: stretched-link pattern — the title's anchor covers the whole
    card via ::after so the card is clickable without nesting anchors. Tag
-   chips sit inside a `relative` wrapper to stay independently clickable.
+   chips and the @username byline sit inside a `relative` wrapper to stay
+   independently clickable.
 
    Pin: absolute-positioned corner marker so it never competes with the
    title. Title: clamped to 2 lines with a `title` tooltip for the full
@@ -58,7 +63,7 @@
         {% endif %}
     </div>
     {% endif %}
-    <div class="flex items-start justify-between gap-3 mb-2">
+    <div class="flex items-start justify-between gap-3 mb-1">
         <h3 class="text-lg leading-tight text-ink m-0 min-w-0 flex-1">
             <a href="/u/{{ project.user.username }}/{{ project.slug }}"
                class="stretched-link no-underline text-ink hover:text-rust"
@@ -70,9 +75,10 @@
             {{ project.status.value.replace('_', ' ') }}
         </span>
     </div>
-    {% if show_owner %}
-    <div class="meta mb-2">by {{ project.user.display_name }}</div>
-    {% endif %}
+    <div class="meta mb-2">
+        <a href="/u/{{ project.user.username }}"
+           class="relative no-underline text-ink-muted hover:text-rust">@{{ project.user.username }}</a>
+    </div>
     {% if project.description %}
     <p class="text-sm text-ink-muted line-clamp-3">{{ project.description }}</p>
     {% else %}

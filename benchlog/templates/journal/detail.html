@@ -1,18 +1,32 @@
 {% extends "projects/_layout.html" %}
 {% block title %}{{ entry.title or 'Journal entry' }} · {{ project.title }}{% endblock %}
+{% block head_extra %}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/journal-edit.js') }}" defer></script>
+{% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
-{% set edit_url = (project_url ~ '/journal/' ~ entry.slug ~ '/edit') if entry.slug else (project_url ~ '/journal/' ~ entry.id ~ '/edit') %}
-{% set action_ref = entry.slug or entry.id %}
+{% set entry_ref = entry.slug or entry.id %}
+{% set entry_base_url = project_url ~ '/journal/' ~ entry_ref %}
 
-<div class="meta mb-4">
+<div class="meta mb-4"
+     data-journal-section
+     data-file-index='{{ file_index | tojson if file_index else "[]" }}'
+     data-entry-index='{{ entry_index | tojson if entry_index else "[]" }}'>
     <a href="{{ project_url }}/journal" class="hover:text-rust">Journal</a>
     <span aria-hidden="true"> / </span>
     <span>Single entry</span>
 </div>
 
-<article class="card">
-    <header class="mb-4 flex flex-wrap items-start justify-between gap-3">
+<article class="card"
+         data-journal-entry="{{ entry.id }}"
+         data-entry-base-url="{{ entry_base_url }}"
+         data-entry-has-title="{% if entry.title %}1{% endif %}"
+         data-entry-detail-view>
+    <header class="mb-4 flex flex-wrap items-start justify-between gap-3" data-entry-rendered-header>
         <div class="min-w-0">
             {% if entry.title %}
             <h1 class="text-3xl leading-tight m-0 flex items-center gap-2">
@@ -32,7 +46,31 @@
                 <span aria-hidden="true">·</span>
                 <span>by {{ project.user.display_name }}</span>
                 {% endif %}
-                {% if is_owner and entry.is_public %}
+                {% if is_owner %}
+                <span aria-hidden="true">·</span>
+                <details class="relative inline-flex" data-menu data-entry-visibility-menu>
+                    <summary class="list-none cursor-pointer inline-flex items-center gap-1 {% if entry.is_public %}text-rust-deep{% else %}hover:text-rust{% endif %}"
+                             title="{% if entry.is_public %}Public — visible to anyone who can see this project{% else %}Private — only you can see this entry{% endif %}">
+                        <span class="inline-flex" data-entry-visibility-icon-slot>
+                            <i data-lucide="{% if entry.is_public %}globe{% else %}lock{% endif %}" class="w-3.5 h-3.5"></i>
+                        </span>
+                        <span data-entry-visibility-label>{% if entry.is_public %}Public{% else %}Private{% endif %}</span>
+                        <i data-lucide="chevron-down" class="w-3 h-3 opacity-70"></i>
+                    </summary>
+                    <div role="menu" class="absolute left-0 top-full mt-1 min-w-36 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-10">
+                        <button type="button" role="menuitem"
+                                data-entry-visibility-option="1"
+                                class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if entry.is_public %} hidden{% endif %}">
+                            Make public
+                        </button>
+                        <button type="button" role="menuitem"
+                                data-entry-visibility-option="0"
+                                class="w-full text-left px-3 py-1.5 text-ink-muted hover:bg-edge/60 hover:text-rust{% if not entry.is_public %} hidden{% endif %}">
+                            Make private
+                        </button>
+                    </div>
+                </details>
+                {% elif entry.is_public %}
                 <span aria-hidden="true">·</span>
                 <span class="inline-flex items-center gap-1 text-rust-deep"
                       title="Public — visible to anyone who can see this project">
@@ -43,36 +81,73 @@
             </div>
         </div>
         {% if is_owner %}
-        <div class="flex items-center gap-2 shrink-0">
-            <form method="post"
-                  action="{{ project_url }}/journal/{{ action_ref }}/{% if entry.is_pinned %}unpin{% else %}pin{% endif %}"
-                  class="inline">
-                {% include "components/_csrf.html" %}
-                <button type="submit" class="btn-ghost text-sm"
-                        title="{% if entry.is_pinned %}Unpin entry{% else %}Pin entry to top{% endif %}">
-                    <i data-lucide="pin{% if entry.is_pinned %}-off{% endif %}" class="w-3.5 h-3.5 inline mr-1"></i>
-                    {% if entry.is_pinned %}Unpin{% else %}Pin{% endif %}
-                </button>
-            </form>
-            <a href="{{ edit_url }}" class="btn-ghost text-sm">Edit</a>
+        <div class="flex items-center gap-1 shrink-0">
+            <button type="button"
+                    class="btn-ghost text-sm inline-flex items-center gap-1"
+                    data-entry-pin-toggle
+                    title="{% if entry.is_pinned %}Unpin entry{% else %}Pin entry to top{% endif %}"
+                    aria-label="{% if entry.is_pinned %}Unpin entry{% else %}Pin entry to top{% endif %}">
+                <i data-lucide="pin{% if entry.is_pinned %}-off{% endif %}" class="w-3.5 h-3.5"></i>
+                <span>{% if entry.is_pinned %}Unpin{% else %}Pin{% endif %}</span>
+            </button>
+            <button type="button"
+                    class="btn-ghost text-sm inline-flex items-center justify-center w-8 h-8 p-0"
+                    data-entry-edit
+                    aria-label="Edit entry"
+                    title="Edit entry">
+                <i data-lucide="pencil" class="w-4 h-4"></i>
+            </button>
+            <button type="button"
+                    class="btn-ghost text-sm inline-flex items-center justify-center w-8 h-8 p-0 text-rust-deep hover:text-rust"
+                    data-entry-delete
+                    aria-label="Delete entry"
+                    title="Delete entry">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
         </div>
         {% endif %}
     </header>
 
-    <div class="markdown-body text-ink">
+    <div class="markdown-body text-ink" data-entry-rendered>
         {{ entry.content|project_markdown(project) }}
     </div>
-</article>
 
-{% if is_owner %}
-<form method="post" action="{{ project_url }}/journal/{{ action_ref }}/delete"
-      class="max-w-2xl mt-4"
-      data-confirm
-      data-confirm-title="Delete entry?"
-      data-confirm-body="This journal entry will be permanently removed."
-      data-confirm-ok="Delete entry">
-    {% include "components/_csrf.html" %}
-    <button type="submit" class="btn-danger text-sm">Delete entry</button>
-</form>
-{% endif %}
+    {% if is_owner %}
+    <div class="hidden mt-3" data-entry-edit-form
+         data-raw-content="{{ entry.content }}"
+         data-action-url="{{ entry_base_url }}">
+        <div class="flex flex-col gap-3">
+            <div>
+                <label for="entry-detail-title-{{ entry.id }}">Title <span class="meta ml-2">optional</span></label>
+                <input id="entry-detail-title-{{ entry.id }}" type="text"
+                       maxlength="256"
+                       placeholder="e.g. Finished the base coat"
+                       value="{{ entry.title or '' }}"
+                       data-entry-title>
+            </div>
+            <div data-entry-slug-wrap {% if not entry.title %}hidden{% endif %}>
+                <label for="entry-detail-slug-{{ entry.id }}">Slug</label>
+                <input id="entry-detail-slug-{{ entry.id }}" type="text"
+                       maxlength="256"
+                       value="{{ entry.slug or '' }}"
+                       data-entry-slug>
+                <p class="meta mt-1">
+                    Deep-linkable at <code>{{ project_url }}/journal/&lt;slug&gt;</code>.
+                    Changing this breaks any old links — retitling alone
+                    keeps the existing slug.
+                </p>
+            </div>
+            <div>
+                <label>Content</label>
+                <div data-entry-editor-slot></div>
+            </div>
+            <p class="meta hidden" data-entry-error role="alert"></p>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" class="btn-primary text-sm" data-entry-save>Save changes</button>
+                <button type="button" class="btn-ghost text-sm" data-entry-cancel>Cancel</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</article>
 {% endblock %}

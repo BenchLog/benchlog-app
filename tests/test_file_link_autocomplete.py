@@ -206,34 +206,27 @@ async def test_project_detail_omits_file_index_for_non_owners(client, db):
     assert "data-toastui-file-index" not in resp.text
 
 
-async def test_journal_form_renders_file_index_with_parent_project_files(client, db):
+async def test_journal_tab_renders_file_index_with_parent_project_files(client, db):
+    # File index rides on `[data-journal-section]` so the new-entry modal
+    # and every inline editor on the page share one source of truth —
+    # no per-editor refetch.
     alice = await make_user(db, email="alice@test.com", username="alice")
     project = await _seed_project(db, alice)
     await _seed_file(db, project, path="models", filename="bracket.stl")
 
-    await login(client, "alice")
-    # New-entry form.
-    resp = await client.get("/u/alice/bench/journal/new")
-    assert resp.status_code == 200
-    index = _extract_file_index(resp.text)
-    assert index is not None
-    names = [(e["path"], e["filename"]) for e in index]
-    assert ("models", "bracket.stl") in names
-
-    # Edit-entry form — create an entry directly and pull its edit page.
-    # Untitled entries are addressable only by UUID, so use that path.
     from benchlog.models import JournalEntry
 
-    entry = JournalEntry(
-        project_id=project.id, title=None, content="body", is_public=False
+    db.add(
+        JournalEntry(
+            project_id=project.id, title=None, content="body", is_public=False
+        )
     )
-    db.add(entry)
     await db.commit()
-    await db.refresh(entry)
 
-    resp = await client.get(f"/u/alice/bench/journal/{entry.id}/edit")
+    await login(client, "alice")
+    resp = await client.get("/u/alice/bench/journal")
     assert resp.status_code == 200
-    index = _extract_file_index(resp.text)
+    index = _extract_file_index(resp.text, attr="data-file-index")
     assert index is not None
     names = [(e["path"], e["filename"]) for e in index]
     assert ("models", "bracket.stl") in names

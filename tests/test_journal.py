@@ -363,7 +363,7 @@ async def test_title_edit_does_not_change_slug(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "Totally different title", "slug": "first", "content": "body"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
     await db.refresh(entry)
@@ -393,7 +393,7 @@ async def test_slug_edit_changes_slug(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "First", "slug": "moved", "content": "body"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
     await db.refresh(entry)
@@ -421,7 +421,7 @@ async def test_clearing_title_nulls_slug(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "", "slug": "first", "content": "body"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     await db.refresh(entry)
     assert entry.title is None
@@ -447,7 +447,7 @@ async def test_adding_title_generates_slug(client, db):
         client,
         f"/u/alice/bench/journal/{entry.id}",
         {"title": "Now titled", "content": "body"},
-        csrf_path=f"/u/alice/bench/journal/{entry.id}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     await db.refresh(entry)
     assert entry.title == "Now titled"
@@ -537,7 +537,7 @@ async def test_owner_can_edit_entry(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "Initial", "slug": "initial", "content": "final"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
     assert resp.headers["location"] == "/u/alice/bench/journal/initial"
@@ -607,9 +607,6 @@ async def test_non_owner_cannot_edit_or_delete_entry(client, db):
 
     await login(client, "bob")
 
-    resp = await client.get(f"/u/alice/alice-public/journal/{entry.slug}/edit")
-    assert resp.status_code == 404
-
     resp = await post_form(
         client,
         f"/u/alice/alice-public/journal/{entry.slug}",
@@ -668,24 +665,6 @@ async def test_guest_post_to_journal_redirects_to_login(client, db):
         "/u/alice/bench/journal",
         data={"title": "x", "content": "y"},
     )
-    assert resp.status_code == 302
-    assert resp.headers["location"] == "/login"
-
-
-async def test_guest_new_entry_form_redirects_to_login(client, db):
-    user = await make_user(db, email="alice@test.com", username="alice")
-    db.add(
-        Project(
-            user_id=user.id,
-            title="Bench",
-            slug="bench",
-            status=ProjectStatus.idea,
-            is_public=True,
-        )
-    )
-    await db.commit()
-
-    resp = await client.get("/u/alice/bench/journal/new")
     assert resp.status_code == 302
     assert resp.headers["location"] == "/login"
 
@@ -968,7 +947,7 @@ async def test_owner_can_flip_entry_public_via_form(client, db):
         client,
         f"/u/alice/bench/journal/{entry.id}",
         {"title": "", "content": "visible from the start"},
-        csrf_path=f"/u/alice/bench/journal/{entry.id}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     await db.refresh(entry)
     assert entry.is_public is False
@@ -1194,12 +1173,12 @@ async def test_project_entry_index_excludes_untitled(client, db):
     await db.commit()
 
     await login(client, "alice")
-    resp = await client.get("/u/alice/bench/journal/new")
+    resp = await client.get("/u/alice/bench/journal")
     assert resp.status_code == 200
-    # Server renders the entry index JSON on the mount's
-    # `data-toastui-entry-index` attr — a single entry (untitled
-    # excluded).
-    m = re.search(r"data-toastui-entry-index='([^']*)'", resp.text)
+    # Server serialises the entry index JSON onto the [data-journal-section]
+    # wrapper so the new-entry modal + every inline editor can share it
+    # without refetching — a single entry (the untitled one is excluded).
+    m = re.search(r"data-entry-index='([^']*)'", resp.text)
     assert m is not None
     import json as _json
     index = _json.loads(m.group(1))
@@ -1234,7 +1213,7 @@ async def test_slug_rename_rewrites_project_description(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "Day 1", "slug": "kickoff", "content": "kickoff"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
 
@@ -1275,7 +1254,7 @@ async def test_slug_rename_rewrites_sibling_entry_body(client, db):
         client,
         f"/u/alice/bench/journal/{a.slug}",
         {"title": "Day 1", "slug": "kickoff", "content": "target"},
-        csrf_path=f"/u/alice/bench/journal/{a.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
 
@@ -1315,7 +1294,7 @@ async def test_title_rename_rewrites_matching_labels(client, db):
         client,
         f"/u/alice/bench/journal/{entry.slug}",
         {"title": "Kickoff Day", "slug": "day-1", "content": "kickoff"},
-        csrf_path=f"/u/alice/bench/journal/{entry.slug}/edit",
+        csrf_path="/u/alice/bench/journal",
     )
     assert resp.status_code == 302
 
@@ -1326,3 +1305,218 @@ async def test_title_rename_rewrites_matching_labels(client, db):
         "[Kickoff Day](journal/day-1) was the start. "
         "See [the kickoff](journal/day-1) for more."
     )
+
+
+# ---------- JSON / AJAX paths ---------- #
+
+
+async def _csrf_header(client, path: str = "/login") -> dict[str, str]:
+    from tests.conftest import csrf_token
+    return {"X-CSRF-Token": await csrf_token(client, path)}
+
+
+async def _seed_owner_project(db) -> tuple:
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id,
+        title="Bench",
+        slug="bench",
+        status=ProjectStatus.in_progress,
+    )
+    db.add(project)
+    await db.flush()
+    return user, project
+
+
+async def test_create_entry_via_json_returns_rendered_feed_item(client, db):
+    user, project = await _seed_owner_project(db)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    headers["Accept"] = "application/json"
+    resp = await client.post(
+        "/u/alice/bench/journal",
+        json={"title": "Kickoff", "content": "got started", "is_public": True},
+        headers=headers,
+    )
+    assert resp.status_code == 201
+    body = resp.json()
+    assert "html" in body and body["html"]
+    # Feed-item partial shape — article wrapper with the expected data-attrs.
+    assert 'data-journal-entry="' in body["html"]
+    assert body["slug"] == "kickoff"
+    assert body["permalink"].endswith("/journal/kickoff")
+
+    stored = (await db.execute(select(JournalEntry))).scalar_one()
+    assert stored.title == "Kickoff"
+    assert stored.is_public is True
+
+
+async def test_create_entry_via_json_rejects_empty_content(client, db):
+    user, project = await _seed_owner_project(db)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    headers["Accept"] = "application/json"
+    resp = await client.post(
+        "/u/alice/bench/journal",
+        json={"title": "", "content": "   ", "is_public": False},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Content is required."
+    assert (await db.execute(select(JournalEntry))).scalars().all() == []
+
+
+async def test_update_entry_via_json_returns_rendered_feed_item(client, db):
+    user, project = await _seed_owner_project(db)
+    entry = JournalEntry(
+        project_id=project.id, title="Start", slug="start", content="v1"
+    )
+    db.add(entry)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    headers["Accept"] = "application/json"
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}",
+        json={"title": "Start", "slug": "", "content": "v2", "is_public": False},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 'data-journal-entry="' in body["html"]
+    assert "v2" in body["html"]
+    assert body["slug"] == "start"
+    await db.refresh(entry)
+    assert entry.content == "v2"
+
+
+async def test_set_entry_visibility_endpoint_toggles_is_public(client, db):
+    user, project = await _seed_owner_project(db)
+    entry = JournalEntry(
+        project_id=project.id, title="E", slug="e", content="x", is_public=False
+    )
+    db.add(entry)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/visibility",
+        json={"is_public": True},
+        headers=headers,
+    )
+    assert resp.status_code == 204
+    await db.refresh(entry)
+    assert entry.is_public is True
+
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/visibility",
+        json={"is_public": False},
+        headers=headers,
+    )
+    assert resp.status_code == 204
+    await db.refresh(entry)
+    assert entry.is_public is False
+
+
+async def test_set_entry_visibility_requires_is_public_field(client, db):
+    user, project = await _seed_owner_project(db)
+    entry = JournalEntry(
+        project_id=project.id, title="E", slug="e", content="x"
+    )
+    db.add(entry)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/visibility",
+        json={},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
+async def test_set_entry_visibility_non_owner_is_404(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    project = Project(
+        user_id=alice.id,
+        title="A",
+        slug="a",
+        status=ProjectStatus.in_progress,
+        is_public=True,
+    )
+    db.add(project)
+    await db.flush()
+    entry = JournalEntry(
+        project_id=project.id, title="E", slug="e", content="x", is_public=False
+    )
+    db.add(entry)
+    await db.commit()
+
+    await login(client, "bob")
+    headers = await _csrf_header(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/a/journal/{entry.slug}/visibility",
+        json={"is_public": True},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+    await db.refresh(entry)
+    assert entry.is_public is False
+
+
+async def test_pin_unpin_return_rendered_html_for_json(client, db):
+    # Pin/unpin returns the re-rendered feed item so the client can
+    # swap the whole article — cheaper than teaching JS to maintain the
+    # title-bar pin glyph + "Pinned" banner shape.
+    user, project = await _seed_owner_project(db)
+    entry = JournalEntry(
+        project_id=project.id, title="E", slug="e", content="x"
+    )
+    db.add(entry)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    headers["Accept"] = "application/json"
+
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/pin", headers=headers
+    )
+    assert resp.status_code == 200
+    assert 'data-journal-entry="' in resp.json()["html"]
+    await db.refresh(entry)
+    assert entry.is_pinned is True
+
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/unpin", headers=headers
+    )
+    assert resp.status_code == 200
+    assert 'data-journal-entry="' in resp.json()["html"]
+    await db.refresh(entry)
+    assert entry.is_pinned is False
+
+
+async def test_delete_returns_204_for_json_callers(client, db):
+    user, project = await _seed_owner_project(db)
+    entry = JournalEntry(
+        project_id=project.id, title="E", slug="e", content="x"
+    )
+    db.add(entry)
+    await db.commit()
+    await login(client, "alice")
+
+    headers = await _csrf_header(client, "/u/alice/bench/journal")
+    headers["Accept"] = "application/json"
+    resp = await client.post(
+        f"/u/alice/bench/journal/{entry.slug}/delete", headers=headers
+    )
+    assert resp.status_code == 204
+    assert (await db.execute(select(JournalEntry))).scalars().all() == []

@@ -1,5 +1,16 @@
 {% extends "projects/_layout.html" %}
 {% block title %}Journal · {{ project.title }} · BenchLog{% endblock %}
+{% block head_extra %}
+    {# Editor assets load on every journal tab view so opening the "New
+       entry" modal doesn't wait on a second script fetch. They're already
+       used by the inline editor on each feed item anyway (for owners),
+       so the cost is identical whether or not you click New. #}
+    <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
+    <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/journal-edit.js') }}" defer></script>
+{% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 
@@ -19,23 +30,26 @@
             aria-label="Dismiss">&times;</button>
 </div>
 
-<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+<div class="flex flex-wrap items-baseline justify-between gap-3 mb-4"
+     data-journal-section
+     data-create-url="{{ project_url }}/journal"
+     data-file-index='{{ file_index | tojson if file_index else "[]" }}'
+     data-entry-index='{{ entry_index | tojson if entry_index else "[]" }}'>
     <h2 class="text-xl">Journal</h2>
     {% if is_owner %}
-    <a href="{{ project_url }}/journal/new" class="btn-primary text-sm">New entry</a>
+    <button type="button" class="btn-primary text-sm" data-journal-new>New entry</button>
     {% endif %}
 </div>
 
-{% if entries %}
-<ul class="space-y-4 list-none p-0">
+<ul class="space-y-4 list-none p-0" data-journal-feed>
     {% for entry in entries %}
     <li>
         {% include "journal/_feed_item.html" %}
     </li>
     {% endfor %}
 </ul>
-{% else %}
-<div class="card text-center py-10">
+{% if not entries %}
+<div class="card text-center py-10" data-journal-empty>
     <p class="text-ink-muted mb-4">
         {% if is_owner %}
             No entries yet. Post the first one as you make progress.
@@ -44,9 +58,34 @@
         {% endif %}
     </p>
     {% if is_owner %}
-    <a href="{{ project_url }}/journal/new" class="btn-primary text-sm">New entry</a>
+    <button type="button" class="btn-primary text-sm" data-journal-new>New entry</button>
     {% endif %}
 </div>
+{% endif %}
+
+{% if is_owner %}
+<dialog id="journal-new-modal" class="modal" data-journal-new-modal>
+    <div class="modal-body flex flex-col gap-3">
+        <header class="flex items-baseline justify-between gap-4">
+            <h3 class="text-lg m-0">New journal entry</h3>
+            <button type="button" class="btn-ghost text-sm" data-journal-new-close aria-label="Close">Close</button>
+        </header>
+        <input type="text"
+               maxlength="256"
+               placeholder="Title (optional)"
+               data-journal-new-title>
+        <div data-journal-new-editor-slot></div>
+        <label class="inline-flex items-center gap-2 text-sm">
+            <input type="checkbox" data-journal-new-public>
+            Make this entry public.
+        </label>
+        <p class="meta hidden" data-journal-new-error role="alert"></p>
+        <div class="flex items-center justify-end gap-2">
+            <button type="button" class="btn-ghost text-sm" data-journal-new-cancel>Cancel</button>
+            <button type="button" class="btn-primary text-sm" data-journal-new-submit>Post entry</button>
+        </div>
+    </div>
+</dialog>
 {% endif %}
 
 <script>

@@ -242,7 +242,7 @@ def _tsquery_for(q: str):
     return func.to_tsquery("english", ts_str)
 
 
-def _apply_search_query(query, *, q: str):
+def _apply_search_query(query, *, q: str, title_only: bool = False):
     """Filter a Project select by substring match over title + description.
 
     Each token (from `_search_tokens`) must appear as a substring in
@@ -255,6 +255,10 @@ def _apply_search_query(query, *, q: str):
     Ranking still uses ts_rank_cd via `_tsquery_for` for ORDER BY when
     a tsquery is buildable — ILIKE is WHERE only.
 
+    `title_only=True` skips the description column — used by picker-style
+    comboboxes (related-project search) where matching on a stray phrase
+    buried in someone's description would be a surprising result.
+
     Returns `query` unchanged when the search has no usable tokens.
     """
     tokens = _search_tokens(q)
@@ -262,12 +266,15 @@ def _apply_search_query(query, *, q: str):
         return query
     for token in tokens:
         pattern = f"%{token}%"
-        query = query.where(
-            or_(
-                Project.title.ilike(pattern),
-                Project.description.ilike(pattern),
+        if title_only:
+            query = query.where(Project.title.ilike(pattern))
+        else:
+            query = query.where(
+                or_(
+                    Project.title.ilike(pattern),
+                    Project.description.ilike(pattern),
+                )
             )
-        )
     return query
 
 

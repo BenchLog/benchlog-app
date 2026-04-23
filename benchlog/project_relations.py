@@ -210,9 +210,10 @@ async def search_linkable_projects(
 
     `exclude_project_id` drops the source itself (the combobox lives on
     its detail page — self-links are rejected anyway, and including it
-    in the dropdown would invite the user to try). The `q` filter uses
-    the same prefix-tsquery helper as `/projects` and `/explore`; empty
-    `q` returns recently-updated candidates instead.
+    in the dropdown would invite the user to try). The `q` filter runs
+    title-only ILIKE (description is deliberately skipped — a picker
+    match on buried description text is surprising); empty `q` returns
+    recently-updated candidates instead.
 
     `user` is eager-loaded so the result rows can render `· @username`
     next to the title. Result cap is small (15) — this is a typeahead
@@ -237,7 +238,7 @@ async def search_linkable_projects(
         )
     )
 
-    query = _apply_search_query(query, q=q)
+    query = _apply_search_query(query, q=q, title_only=True)
     ts = _tsquery_for(q) if q else None
     if ts is not None:
         query = query.order_by(

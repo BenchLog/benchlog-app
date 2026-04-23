@@ -432,3 +432,22 @@ async def test_search_helper_prefix_matches(db):
     titles = [p.title for p in matches]
     assert "Flowire router" in titles
     assert "Other thing" not in titles
+
+
+async def test_search_helper_ignores_description_matches(db):
+    # Relations picker is title-only — matching on description text (e.g.
+    # a project titled "Other" whose description mentions "flowire") would
+    # be a surprising result in a picker combobox.
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    src = await _make_project(db, alice, title="Source", slug="source")
+    decoy = await _make_project(
+        db, alice, title="Unrelated", slug="unrelated", is_public=True
+    )
+    decoy.description = "This project mentions flowire in the body text."
+    await db.commit()
+
+    matches = await search_linkable_projects(
+        db, alice, "flowire", exclude_project_id=src.id
+    )
+    titles = [p.title for p in matches]
+    assert "Unrelated" not in titles

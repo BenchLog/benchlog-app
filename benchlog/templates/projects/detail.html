@@ -197,28 +197,30 @@
             </div>
         </fieldset>
 
-        {# Target search — single-select combobox. Server-side debounced
-           lookup against `/relations/search`. Styling mirrors the
-           add-to-collections modal so the two feel like the same control. #}
+        {# Target search — standard single-select combobox. Unlike the
+           tag/category/collection pickers, this is a one-shot pick: the
+           chosen title fills the input, the input turns read-only to
+           freeze the pick, and a × button clears back to search mode.
+           The modal closes on Add, so there's no need for multi-pick UX.
+           #}
         <div class="flex flex-col gap-1">
             <label class="meta" for="relations-target-search">Target project</label>
-            <div class="tag-input-inner" data-relations-inner>
-                <span class="tag-pill hidden" data-relations-selected-pill>
-                    <span data-relations-selected-label></span>
-                    <button type="button" class="tag-pill-remove"
-                            data-relations-clear-selection
-                            aria-label="Clear selection">
-                        <i data-lucide="x" class="w-3 h-3"></i>
-                    </button>
-                </span>
+            <div class="relative">
                 <input id="relations-target-search"
                        type="text"
-                       class="tag-input-search"
                        data-relations-search
                        placeholder="Search for a project…"
+                       role="combobox"
                        aria-autocomplete="list"
                        aria-expanded="false"
-                       autocomplete="off">
+                       autocomplete="off"
+                       class="pr-8">
+                <button type="button"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 text-ink-muted hover:text-rust cursor-pointer hidden"
+                        data-relations-clear
+                        aria-label="Clear selection">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
             </div>
             <div class="tag-input-dropdown"
                  data-relations-dropdown
@@ -250,9 +252,7 @@
 
     const searchEl = modal.querySelector('[data-relations-search]');
     const dropdownEl = modal.querySelector('[data-relations-dropdown]');
-    const pillEl = modal.querySelector('[data-relations-selected-pill]');
-    const pillLabelEl = modal.querySelector('[data-relations-selected-label]');
-    const clearBtn = modal.querySelector('[data-relations-clear-selection]');
+    const clearBtn = modal.querySelector('[data-relations-clear]');
     const submitBtn = modal.querySelector('[data-relations-submit]');
     const errorEl = modal.querySelector('[data-relations-error]');
     const typeInputs = modal.querySelectorAll('[data-relation-type-input]');
@@ -295,17 +295,22 @@
       submitBtn.disabled = selected === null;
     };
 
+    const labelFor = (item) => item.title + ' · @' + item.username;
+
     const setSelected = (item) => {
       selected = item;
       if (item) {
-        pillLabelEl.textContent = item.title + ' · @' + item.username;
-        pillEl.classList.remove('hidden');
-        searchEl.value = '';
+        // Lock the input to the chosen label once a project is picked —
+        // editing would be confusing in a single-select picker. The × on
+        // the right clears the selection and restores the search state.
+        searchEl.value = labelFor(item);
+        searchEl.readOnly = true;
+        clearBtn.classList.remove('hidden');
         results = [];
         renderDropdown();
       } else {
-        pillLabelEl.textContent = '';
-        pillEl.classList.add('hidden');
+        searchEl.readOnly = false;
+        clearBtn.classList.add('hidden');
       }
       syncSubmitState();
     };
@@ -324,6 +329,9 @@
 
     const renderDropdown = () => {
       dropdownEl.innerHTML = '';
+      // Dropdown stays closed once a project is picked — the input is
+      // holding the chosen label and the user can either submit or edit
+      // the input to reopen it with a fresh search.
       if (selected || results.length === 0) {
         dropdownEl.hidden = true;
         searchEl.setAttribute('aria-expanded', 'false');
@@ -339,6 +347,7 @@
         btn.setAttribute('role', 'option');
         btn.setAttribute('aria-selected', i === activeIdx ? 'true' : 'false');
         btn.dataset.resultId = item.id;
+        btn.dataset.resultIdx = i;
         btn.textContent = item.title + ' · @' + item.username;
         dropdownEl.appendChild(btn);
       });
@@ -422,9 +431,15 @@
         }
         const relation = await resp.json();
         appendChip(relation);
-        // Keep modal open; clear selection so the user can add another.
+        // Close on success — adding multiple relations at once is rare;
+        // the user can reopen for another. Reset is via setSelected(null)
+        // so readOnly and the × button flip back to initial state.
         setSelected(null);
-        searchEl.focus();
+        searchEl.value = '';
+        results = [];
+        renderDropdown();
+        if (typeof modal.close === 'function') modal.close();
+        else modal.removeAttribute('open');
       } finally {
         syncSubmitState();
       }
@@ -534,20 +549,33 @@
       setSelected(null);
       searchEl.value = '';
       results = [];
+      renderDropdown();          // make sure dropdown starts closed
       if (typeof modal.showModal === 'function') modal.showModal();
       else modal.setAttribute('open', '');
-      requestAnimationFrame(() => {
-        runSearch('');         // prime with recent-first list
-        searchEl.focus();
-      });
+      requestAnimationFrame(() => searchEl.focus());
     });
 
     searchEl.addEventListener('input', () => {
-      if (selected) setSelected(null);
+      // The input is read-only while a selection is held, so this only
+      // fires when the user is actively composing a query. Schedule a
+      // debounced search for any keystroke, including back-to-empty
+      // (runSearch calls the server which returns the recent-first list).
       scheduleSearch();
     });
     searchEl.addEventListener('focus', () => {
-      if (!selected && results.length) renderDropdown();
+      if (selected) return;
+      // Prime on first focus (opens with recent-first list); subsequent
+      // focuses just re-show whatever results we already have.
+      if (results.length) renderDropdown();
+      else runSearch('');
+    });
+    searchEl.addEventListener('blur', () => {
+      // Close the dropdown when focus leaves the input. Clicking a result
+      // in the dropdown uses mousedown + preventDefault (below) so the
+      // input never actually blurs for that path — this only fires when
+      // focus moves elsewhere in the modal or to an outside element.
+      dropdownEl.hidden = true;
+      searchEl.setAttribute('aria-expanded', 'false');
     });
     searchEl.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' && results.length) {
@@ -567,11 +595,33 @@
           submitRelation();
         }
       } else if (e.key === 'Escape' && searchEl.value) {
+        // Escape with content clears the field in place of closing the
+        // dialog — lets the user bail out of a pick or a typed query
+        // without losing their modal context.
         e.preventDefault();
+        setSelected(null);
         searchEl.value = '';
         results = [];
         renderDropdown();
       }
+    });
+
+    dropdownEl.addEventListener('mouseover', (e) => {
+      // Hovering an item moves the keyboard-active highlight to it, so
+      // there's never a stale "first item selected" on top of a hovered
+      // one (both states share the same is-active visual).
+      const btn = e.target.closest('[data-result-idx]');
+      if (!btn) return;
+      const idx = Number(btn.dataset.resultIdx);
+      if (idx === activeIdx) return;
+      const prev = dropdownEl.querySelector('.is-active');
+      if (prev) {
+        prev.classList.remove('is-active');
+        prev.setAttribute('aria-selected', 'false');
+      }
+      btn.classList.add('is-active');
+      btn.setAttribute('aria-selected', 'true');
+      activeIdx = idx;
     });
 
     dropdownEl.addEventListener('mousedown', (e) => {
@@ -586,9 +636,13 @@
     });
 
     clearBtn.addEventListener('click', () => {
+      // Drop the selection + prior results so the focus handler below
+      // primes a fresh query. renderDropdown() isn't needed — focusing
+      // the input triggers the focus listener which calls runSearch('').
       setSelected(null);
+      searchEl.value = '';
+      results = [];
       searchEl.focus();
-      runSearch(searchEl.value.trim());
     });
 
     submitBtn.addEventListener('click', (e) => {

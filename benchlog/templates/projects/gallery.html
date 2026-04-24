@@ -125,6 +125,8 @@
     "thumb_url": project_url ~ "/files/" ~ file.id|string ~ "/thumb",
     "filename": file.filename,
     "description": file.description or "",
+    "is_cover": project.cover_file_id == file.id,
+    "detail_url": project_url ~ "/files/" ~ file.id|string,
 }) %}
 {% endfor %}
 <script type="application/json" id="gallery-lightbox-data">{{ lightbox_data|tojson }}</script>
@@ -146,6 +148,29 @@
         <img class="gallery-lightbox-image" data-lightbox-image alt="">
     </div>
     <div class="gallery-lightbox-caption" data-lightbox-caption>
+        {% if is_owner %}
+        <div class="gallery-lightbox-toolbar" data-lightbox-toolbar>
+            {% include "components/_csrf.html" %}
+            <button type="button" class="gallery-lightbox-toolbar-btn"
+                    data-lightbox-cover-btn>
+                <i data-lucide="star"></i>
+                <span data-lightbox-cover-label>Set as cover</span>
+            </button>
+            <button type="button" class="gallery-lightbox-toolbar-btn"
+                    data-lightbox-hide-btn
+                    aria-label="Hide from gallery">
+                <i data-lucide="eye-off"></i>
+                <span>Hide from gallery</span>
+            </button>
+            <a href="#" class="gallery-lightbox-toolbar-btn"
+               data-lightbox-view-btn>
+                <i data-lucide="external-link"></i>
+                <span>View file</span>
+            </a>
+            <span class="gallery-lightbox-error" data-lightbox-error
+                  role="status" aria-live="polite" hidden></span>
+        </div>
+        {% endif %}
         <div class="gallery-lightbox-caption-text">
             <span class="gallery-lightbox-filename" data-lightbox-filename></span>
             <span class="gallery-lightbox-description" data-lightbox-description></span>

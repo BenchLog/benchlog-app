@@ -1539,6 +1539,94 @@ async def test_gallery_toggle_requires_owner(client, db):
     assert resp.status_code == 404
 
 
+async def test_gallery_visibility_returns_json_when_requested(client, db):
+    """Owner toggling visibility from the lightbox sends Accept: application/json
+    and expects the new {is_cover, show_in_gallery} state in the body."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+
+    # First call: hides the file.
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/gallery-visibility",
+        data={"_csrf": token},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"is_cover": False, "show_in_gallery": False}
+
+    # Second call: shows it again.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/gallery-visibility",
+        data={"_csrf": token},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"is_cover": False, "show_in_gallery": True}
+
+
+async def test_gallery_visibility_json_reports_cleared_cover(client, db):
+    """Hiding a file that's currently the cover clears the cover too — and the
+    JSON response surfaces both new flags in one round-trip."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    # Set as cover first.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    await client.post(f"/u/alice/bench/files/{file.id}/cover", data={"_csrf": token})
+
+    # Now hide via JSON — response should report both flags as False.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/gallery-visibility",
+        data={"_csrf": token},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"is_cover": False, "show_in_gallery": False}
+
+
+async def test_gallery_visibility_form_post_still_redirects(client, db):
+    """The grid's plain-form Hide button (no Accept header) must keep
+    redirecting — JSON branch is opt-in via Accept: application/json only."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/gallery-visibility",
+        data={"_csrf": token, "next": "/u/alice/bench/gallery"},
+    )
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/u/alice/bench/gallery"
+
+
 # ---------- gallery lightbox ---------- #
 
 
@@ -4224,3 +4312,142 @@ async def test_deleted_get_routes_are_404(client, db):
     resp = await client.get(f"/u/alice/bench/files/{file.id}/edit")
     # The trailing /edit segment no longer matches a route.
     assert resp.status_code == 404
+
+
+async def test_set_cover_returns_json_body_when_requested(client, db):
+    """The /cover endpoint now returns 200 + {is_cover, show_in_gallery} for
+    JSON callers (lightbox uses this so it knows the new state without a
+    second request)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+
+    # Set as cover via JSON.
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"is_cover": True, "show_in_gallery": True}
+
+    # Toggle off via JSON.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/cover",
+        data={"_csrf": token},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"is_cover": False, "show_in_gallery": True}
+
+
+async def test_lightbox_data_includes_owner_action_fields(client, db):
+    """The lightbox JSON payload carries per-image is_cover and detail_url so
+    the JS can render the owner toolbar without extra requests. (Visibility
+    is implicit — the payload only contains visible images, and hides splice
+    them out client-side.)"""
+    import json
+    import re
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="other.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    files = (await db.execute(select(ProjectFile))).scalars().all()
+    hero = next(f for f in files if f.filename == "hero.png")
+
+    # Set hero as cover so we can assert is_cover==True for it.
+    token = await csrf_token(client, f"/u/alice/bench/files/{hero.id}")
+    await client.post(f"/u/alice/bench/files/{hero.id}/cover", data={"_csrf": token})
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    match = re.search(
+        r'<script type="application/json" id="gallery-lightbox-data">(.*?)</script>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert match
+    data = json.loads(match.group(1))
+    by_filename = {entry["filename"]: entry for entry in data}
+
+    hero_entry = by_filename["hero.png"]
+    other_entry = by_filename["other.png"]
+
+    # Cover flag reflects the current cover.
+    assert hero_entry["is_cover"] is True
+    assert other_entry["is_cover"] is False
+
+    # detail_url points to the file detail page.
+    assert hero_entry["detail_url"] == f"/u/alice/bench/files/{hero.id}"
+    assert other_entry["detail_url"].endswith(f"/files/{other_entry['id']}")
+
+
+async def test_lightbox_toolbar_renders_for_owner(client, db):
+    """Owner sees the lightbox action toolbar (cover/hide/view buttons) inside
+    the dialog markup. The JS swaps labels per image; we just check the
+    container and buttons exist."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "data-lightbox-toolbar" in body
+    assert "data-lightbox-cover-btn" in body
+    assert "data-lightbox-hide-btn" in body
+    assert "data-lightbox-view-btn" in body
+    assert "data-lightbox-error" in body
+
+
+async def test_lightbox_toolbar_hidden_for_anonymous_viewer(client, db):
+    """Anonymous viewers of a public project see the lightbox dialog but no
+    owner toolbar buttons."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(
+        user_id=user.id, title="Bench", slug="bench",
+        status=ProjectStatus.in_progress, is_public=True,
+    ))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="hero.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    logout_token = await csrf_token(client, "/u/alice/bench/gallery")
+    await client.post("/logout", data={"_csrf": logout_token})
+
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    body = resp.text
+    # Dialog still ships, but no owner toolbar.
+    assert '<dialog class="gallery-lightbox"' in body
+    assert "data-lightbox-toolbar" not in body
+    assert "data-lightbox-cover-btn" not in body

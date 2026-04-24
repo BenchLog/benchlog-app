@@ -1309,6 +1309,63 @@ dialog.modal[open] {
     pointer-events: none;
     left: -9999px;
   }
+
+  .gallery-lightbox-toolbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    margin-bottom: 0.5rem;
+  }
+  .gallery-lightbox-toolbar-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border: 0;
+    border-radius: 9999px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.8125rem;
+    line-height: 1;
+    text-decoration: none;
+    transition: background-color 0.12s ease;
+  }
+  .gallery-lightbox-toolbar-btn:hover,
+  .gallery-lightbox-toolbar-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.25);
+  }
+  .gallery-lightbox-toolbar-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+  /* Active = "currently the cover" — visual cue that clicking will clear it. */
+  .gallery-lightbox-toolbar-btn[data-active="true"] {
+    background: rgba(217, 119, 87, 0.85); /* terracotta */
+    color: #fff;
+  }
+  .gallery-lightbox-toolbar-btn[data-active="true"]:hover {
+    background: rgba(217, 119, 87, 1);
+  }
+  .gallery-lightbox-toolbar-btn i {
+    width: 1rem;
+    height: 1rem;
+  }
+  .gallery-lightbox-error {
+    display: inline-block;
+    padding: 0.25rem 0.625rem;
+    background: rgba(220, 38, 38, 0.85);
+    color: #fff;
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+  }
+  .gallery-lightbox-error[hidden] {
+    display: none;
+  }
 }
 
 /* === Project filter bar === */

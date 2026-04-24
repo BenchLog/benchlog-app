@@ -350,7 +350,7 @@
         },
         body: JSON.stringify(body),
       });
-      if (resp.status === 204) {
+      if (resp.ok) {
         window.location.reload();
         return;
       }

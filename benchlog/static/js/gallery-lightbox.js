@@ -39,7 +39,32 @@
     const preloadPrev = dialog.querySelector("[data-lightbox-preload-prev]");
     const preloadNext = dialog.querySelector("[data-lightbox-preload-next]");
 
+    // Owner toolbar elements (may not exist for anonymous viewers).
+    const toolbar = dialog.querySelector("[data-lightbox-toolbar]");
+    const coverBtn = dialog.querySelector("[data-lightbox-cover-btn]");
+    const coverLabel = dialog.querySelector("[data-lightbox-cover-label]");
+    const hideBtn = dialog.querySelector("[data-lightbox-hide-btn]");
+    const viewBtn = dialog.querySelector("[data-lightbox-view-btn]");
+    const errorEl = dialog.querySelector("[data-lightbox-error]");
+    const csrfInput = toolbar
+      ? toolbar.querySelector('input[name="_csrf"]')
+      : null;
+
+    // Per-image mutable state mirrors what the toolbar shows. Seeded from the
+    // JSON payload; mutated locally on successful POSTs so the user sees the
+    // new state immediately without a page reload. Hidden images are spliced
+    // out of the sequence on hide, so visibility is implicit (every image
+    // currently in `images[]` is visible) and not tracked here.
+    const state = images.map((item) => ({
+      is_cover: !!item.is_cover,
+    }));
+
     let index = 0;
+    // Did the user mutate cover/visibility from the toolbar? If so, the
+    // grid behind the lightbox is stale; reload the page on close so the
+    // cover badge moves to the new tile and any newly-hidden images
+    // disappear from the visible grid (or move into the hidden section).
+    let mutated = false;
 
     // ---------- render ---------- //
 
@@ -64,6 +89,48 @@
 
       // Reset any in-progress drag offset on the image.
       imageEl.style.transform = "";
+
+      renderToolbar();
+    }
+
+    function renderToolbar() {
+      if (!toolbar) return;
+      const item = images[index];
+      const s = state[index];
+      if (!item || !s) return;
+
+      // Cover button: label + visual flip when the image is the current cover.
+      coverLabel.textContent = s.is_cover ? "Current cover" : "Set as cover";
+      coverBtn.dataset.active = s.is_cover ? "true" : "false";
+      coverBtn.setAttribute(
+        "aria-label",
+        s.is_cover ? "Clear project cover" : "Set as project cover",
+      );
+
+      // View file: anchor href points to the per-image detail URL.
+      viewBtn.setAttribute("href", item.detail_url || "#");
+
+      // Reset any sticky error from the previous image.
+      hideError();
+    }
+
+    function showError(message) {
+      if (!errorEl) return;
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+      // Auto-dismiss after 3s.
+      clearTimeout(showError._t);
+      showError._t = setTimeout(() => {
+        errorEl.hidden = true;
+        errorEl.textContent = "";
+      }, 3000);
+    }
+
+    function hideError() {
+      if (!errorEl) return;
+      clearTimeout(showError._t);
+      errorEl.hidden = true;
+      errorEl.textContent = "";
     }
 
     // ---------- open / close ---------- //
@@ -83,11 +150,16 @@
       dialog.focus();
     }
 
-    function closeLightbox() {
+    function closeLightbox({ skipReload = false } = {}) {
       if (typeof dialog.close === "function") {
         dialog.close();
       } else {
         dialog.removeAttribute("open");
+      }
+      if (mutated && !skipReload) {
+        // Browsers preserve scroll position on reload, so the user lands
+        // back where they were in the grid.
+        window.location.reload();
       }
     }
 
@@ -169,6 +241,126 @@
     imageEl.addEventListener("click", (e) => {
       e.stopPropagation();
     });
+
+    // ---------- owner actions ---------- //
+
+    function csrfToken() {
+      return csrfInput?.value || "";
+    }
+
+    async function postOwnerAction(url) {
+      const formData = new FormData();
+      formData.append("_csrf", csrfToken());
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "X-CSRF-Token": csrfToken(),
+        },
+        body: formData,
+      });
+      let body = null;
+      try {
+        body = await resp.json();
+      } catch (_) {
+        /* leave body null — handled below */
+      }
+      if (!resp.ok) {
+        const detail = body && typeof body.detail === "string"
+          ? body.detail
+          : "Couldn't save — try again.";
+        const err = new Error(detail);
+        err.detail = detail;
+        throw err;
+      }
+      return body || {};
+    }
+
+    if (coverBtn) {
+      coverBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = images[index];
+        if (!item) return;
+        coverBtn.disabled = true;
+        try {
+          const result = await postOwnerAction(`${item.detail_url}/cover`);
+          // Walk all images: only one can be the cover at a time. The server
+          // confirms which (the current index, if is_cover==true). Clearing
+          // the cover means no image is_cover.
+          const newCover = result.is_cover === true;
+          for (let i = 0; i < state.length; i += 1) {
+            state[i].is_cover = newCover && i === index;
+          }
+          mutated = true;
+          renderToolbar();
+        } catch (err) {
+          showError(err.detail || "Couldn't save — try again.");
+        } finally {
+          coverBtn.disabled = false;
+        }
+      });
+    }
+
+    if (hideBtn) {
+      hideBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const item = images[index];
+        if (!item) return;
+        hideBtn.disabled = true;
+        try {
+          await postOwnerAction(`${item.detail_url}/gallery-visibility`);
+          // Drop the now-hidden image from the in-memory sequence and advance
+          // to whatever sits at the same index (the next image). If we just
+          // hid the last image, fall back to the new last index. If nothing
+          // is left, close the lightbox.
+          images.splice(index, 1);
+          state.splice(index, 1);
+          mutated = true;
+          if (images.length === 0) {
+            closeLightbox();
+            return;
+          }
+          if (index >= images.length) {
+            index = images.length - 1;
+          }
+          render();
+        } catch (err) {
+          showError(err.detail || "Couldn't save — try again.");
+        } finally {
+          hideBtn.disabled = false;
+        }
+      });
+    }
+
+    if (viewBtn) {
+      viewBtn.addEventListener("click", (e) => {
+        // Let modifier-click and middle-click follow the anchor's real href
+        // (open-in-new-tab / new-window). Skipping the dialog-close here is
+        // cosmetic — the original tab stays on the gallery.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) {
+          return;
+        }
+        // Plain click: take over navigation so we can close the dialog first,
+        // which keeps the back button returning to the gallery rather than
+        // the lightbox-open state.
+        e.preventDefault();
+        e.stopPropagation();
+        const item = images[index];
+        const target = item?.detail_url;
+        if (!target) {
+          // Shouldn't happen — server always seeds detail_url — but surface
+          // it inline rather than silently closing to a dead state.
+          showError("Couldn't open file — try again.");
+          return;
+        }
+        // Skip the close-handler reload — we're navigating away, so the
+        // gallery doesn't need to refresh in place.
+        closeLightbox({ skipReload: true });
+        window.location.assign(target);
+      });
+    }
 
     // ---------- swipe (Pointer Events) ---------- //
 

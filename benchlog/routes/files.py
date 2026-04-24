@@ -129,10 +129,14 @@ def _content_type_from_filename(filename: str, fallback: str = "application/octe
 def _wants_json(request: Request) -> bool:
     """True when the client prefers a JSON response to HTML.
 
-    Used by edit routes that double as progressive-enhancement endpoints:
-    the modal submits via fetch with `Accept: application/json` and
-    expects 204/JSON errors, while the fallback HTML form expects the
-    usual redirect/re-render flow.
+    Used by mutation routes that double as progressive-enhancement
+    endpoints: the client submits via fetch with `Accept: application/json`
+    and gets either a 204 (edit/rename/delete/restore modals where there's
+    nothing new to convey on success) or a 200 with a JSON body (the
+    `/cover` and `/gallery-visibility` branches, which return the refreshed
+    `{is_cover, show_in_gallery}` state so the lightbox can update in
+    place). Errors are always JSON either way. The fallback HTML form path
+    uses the usual redirect/re-render flow.
     """
     return "application/json" in request.headers.get("accept", "")
 
@@ -1431,6 +1435,7 @@ async def toggle_gallery_visibility(
     username: str,
     slug: str,
     file_id: uuid.UUID,
+    request: Request,
     next_path: str = Form("", alias="next"),
     user: User = Depends(require_user),
     db: AsyncSession = Depends(get_db),
@@ -1442,9 +1447,11 @@ async def toggle_gallery_visibility(
     the project cover, clear the cover too (otherwise guests see a cover
     image that no longer appears in the gallery, which is confusing).
 
-    The `next` form field lets callers stay on their current page instead
-    of bouncing to the file detail view — the gallery grid uses this so a
-    quick Hide/Show click keeps the user in the gallery.
+    Two response modes:
+    - HTML form post (default): redirects to `next` if local-safe, else to
+      the file detail page. Used by the gallery grid's plain-form button.
+    - JSON (Accept: application/json): returns `{is_cover, show_in_gallery}`
+      without redirecting. Used by the lightbox so the action stays in-place.
     """
     project = await _require_owned_project(db, user, username, slug)
     file = await get_file_by_id(db, project.id, file_id)
@@ -1455,6 +1462,13 @@ async def toggle_gallery_visibility(
         project.cover_file_id = None
         _apply_crop(project, None)
     await db.commit()
+
+    if _wants_json(request):
+        return {
+            "is_cover": project.cover_file_id == file.id,
+            "show_in_gallery": file.show_in_gallery,
+        }
+
     fallback = f"/u/{user.username}/{project.slug}/files/{file.id}"
     return RedirectResponse(
         _safe_local_redirect(next_path, fallback),
@@ -1634,7 +1648,10 @@ async def set_cover_image(
     await db.commit()
 
     if json_mode:
-        return Response(status_code=204)
+        return {
+            "is_cover": project.cover_file_id == file.id,
+            "show_in_gallery": file.show_in_gallery,
+        }
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files/{file.id}",
         status_code=302,

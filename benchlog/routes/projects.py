@@ -389,11 +389,25 @@ def _apply_filter_query(
     return query
 
 
+SHORT_DESCRIPTION_MAX_LEN = 200
+
+
+def _clean_short_description(raw: str) -> str:
+    """Trim and collapse internal whitespace runs in a short description.
+
+    Plain text only — newlines and tabs become single spaces so the field
+    always renders as a one-liner on cards. Caller still needs to enforce
+    the length cap.
+    """
+    return re.sub(r"\s+", " ", (raw or "").strip())
+
+
 def _empty_form_values() -> dict:
     return {
         "title": "",
         "slug": "",
         "description": "",
+        "short_description": "",
         "status": ProjectStatus.idea.value,
         "pinned": False,
         "is_public": False,
@@ -407,6 +421,7 @@ def _form_values_from_project(project: Project) -> dict:
         "title": project.title,
         "slug": project.slug,
         "description": project.description or "",
+        "short_description": project.short_description or "",
         "status": project.status.value,
         "pinned": project.pinned,
         "is_public": project.is_public,
@@ -420,6 +435,7 @@ def _form_values_from_submission(
     title: str,
     slug: str,
     description: str,
+    short_description: str,
     status: str,
     pinned: str | None,
     is_public: str | None,
@@ -430,6 +446,7 @@ def _form_values_from_submission(
         "title": title,
         "slug": slug,
         "description": description,
+        "short_description": short_description,
         "status": status if status in STATUS_VALUES else ProjectStatus.idea.value,
         "pinned": bool(pinned),
         "is_public": bool(is_public),
@@ -604,6 +621,7 @@ async def create_project(
     title: str = Form(""),
     slug: str = Form(""),
     description: str = Form(""),
+    short_description: str = Form(""),
     status: str = Form(ProjectStatus.idea.value),
     pinned: str | None = Form(None),
     is_public: str | None = Form(None),
@@ -616,6 +634,7 @@ async def create_project(
         title=title.strip(),
         slug=slug.strip(),
         description=description,
+        short_description=_clean_short_description(short_description),
         status=status,
         pinned=pinned,
         is_public=is_public,
@@ -630,6 +649,10 @@ async def create_project(
 
     if not values["title"]:
         return await fail("Title is required.")
+    if len(values["short_description"]) > SHORT_DESCRIPTION_MAX_LEN:
+        return await fail(
+            f"Short description must be {SHORT_DESCRIPTION_MAX_LEN} characters or fewer."
+        )
 
     if values["slug"]:
         normalized = normalize_slug(values["slug"])
@@ -647,6 +670,7 @@ async def create_project(
         title=values["title"],
         slug=final_slug,
         description=values["description"].strip() or None,
+        short_description=values["short_description"] or None,
         status=_parse_status(values["status"]) or ProjectStatus.idea,
         pinned=values["pinned"],
         is_public=values["is_public"],
@@ -885,6 +909,23 @@ async def update_project_settings(
             )
         project.title = new_title
 
+    # Short description — present and empty clears it; present and non-empty
+    # updates. Whitespace is folded to single spaces and trimmed so the field
+    # always renders as a single line on cards.
+    if "short_description" in form:
+        cleaned = _clean_short_description(str(form.get("short_description") or ""))
+        if len(cleaned) > SHORT_DESCRIPTION_MAX_LEN:
+            return JSONResponse(
+                {
+                    "detail": (
+                        f"Short description must be {SHORT_DESCRIPTION_MAX_LEN} "
+                        "characters or fewer."
+                    )
+                },
+                status_code=400,
+            )
+        project.short_description = cleaned or None
+
     # Slug — normalize, dedupe against this user's other projects.
     if "slug" in form:
         raw_slug = str(form.get("slug") or "").strip()
@@ -964,6 +1005,7 @@ async def update_project(
     title: str = Form(""),
     new_slug: str = Form("", alias="slug"),
     description: str = Form(""),
+    short_description: str = Form(""),
     status: str = Form(ProjectStatus.idea.value),
     pinned: str | None = Form(None),
     is_public: str | None = Form(None),
@@ -990,6 +1032,7 @@ async def update_project(
         title=title.strip(),
         slug=new_slug.strip(),
         description=description,
+        short_description=_clean_short_description(short_description),
         status=status,
         pinned=pinned,
         is_public=is_public,
@@ -1006,6 +1049,10 @@ async def update_project(
         return await fail("Title is required.")
     if not values["slug"]:
         return await fail("Slug is required.")
+    if len(values["short_description"]) > SHORT_DESCRIPTION_MAX_LEN:
+        return await fail(
+            f"Short description must be {SHORT_DESCRIPTION_MAX_LEN} characters or fewer."
+        )
 
     normalized = normalize_slug(values["slug"])
     if not normalized:
@@ -1020,6 +1067,7 @@ async def update_project(
     project.title = values["title"]
     project.slug = normalized
     project.description = values["description"].strip() or None
+    project.short_description = values["short_description"] or None
     project.status = _parse_status(values["status"]) or project.status
     project.pinned = values["pinned"]
     project.is_public = values["is_public"]

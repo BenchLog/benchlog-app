@@ -79,8 +79,14 @@
         <a href="/u/{{ project.user.username }}"
            class="relative no-underline text-ink-muted hover:text-rust">@{{ project.user.username }}</a>
     </div>
-    {% if project.description %}
-    <p class="text-sm text-ink-muted line-clamp-3">{{ project.description }}</p>
+    {# Card summary: prefer the explicit short_description (plain text),
+       otherwise fall back to a stripped excerpt of the markdown description
+       so legacy projects without a short summary still get something
+       readable on cards instead of raw markdown leaking through. #}
+    {% if project.short_description %}
+    <p class="text-sm text-ink-muted line-clamp-3">{{ project.short_description }}</p>
+    {% elif project.description %}
+    <p class="text-sm text-ink-muted line-clamp-3">{{ project.description|excerpt }}</p>
     {% else %}
     <p class="text-sm text-ink-muted italic">No description yet.</p>
     {% endif %}

@@ -835,3 +835,78 @@ async def test_settings_endpoint_json_accept_header_works(client, db):
         headers={"Accept": "application/json"},
     )
     assert resp.status_code == 204
+
+
+# ---------- short_description partial-update ---------- #
+
+
+async def test_settings_short_description_set_and_clear(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id,
+        title="P",
+        slug="p",
+        status=ProjectStatus.idea,
+    )
+    db.add(project)
+    await db.commit()
+
+    await login(client, "alice")
+    # Set it.
+    resp = await post_form(
+        client,
+        f"/u/alice/{project.slug}/settings",
+        {"short_description": "A one-liner for cards."},
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 204
+    await db.refresh(project)
+    assert project.short_description == "A one-liner for cards."
+
+    # Empty value clears it back to NULL.
+    resp = await post_form(
+        client,
+        f"/u/alice/{project.slug}/settings",
+        {"short_description": "   "},
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 204
+    await db.refresh(project)
+    assert project.short_description is None
+
+
+async def test_settings_short_description_collapses_whitespace(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(user_id=user.id, title="P", slug="p", status=ProjectStatus.idea)
+    db.add(project)
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await post_form(
+        client,
+        f"/u/alice/{project.slug}/settings",
+        {"short_description": "  multi\nline\t  summary  "},
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 204
+    await db.refresh(project)
+    assert project.short_description == "multi line summary"
+
+
+async def test_settings_short_description_too_long_is_400(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(user_id=user.id, title="P", slug="p", status=ProjectStatus.idea)
+    db.add(project)
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await post_form(
+        client,
+        f"/u/alice/{project.slug}/settings",
+        {"short_description": "x" * 201},
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 400
+    assert "200" in resp.json()["detail"]
+    await db.refresh(project)
+    assert project.short_description is None

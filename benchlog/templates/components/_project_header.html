@@ -218,6 +218,29 @@
             </details>
         </div>
     </div>
+    {# Short description — one-line plain-text summary used on cards. Owner
+       can click to edit (mirrors the title pattern); non-owners see it
+       only when set. Empty owner state shows a click-to-add prompt so
+       there's a discoverable affordance for filling it in. #}
+    {% if is_owner %}
+    <div class="mt-1" data-project-short-desc>
+        <p class="text-base text-ink-muted italic project-title-editable m-0
+                  {% if not project.short_description %}opacity-70{% endif %}"
+           data-project-short-desc-read
+           title="Click to edit card summary">{% if project.short_description %}{{ project.short_description }}{% else %}Add a one-line summary for cards…{% endif %}</p>
+        <textarea name="short_description"
+                  rows="2"
+                  maxlength="200"
+                  class="hidden text-base w-full rounded border border-edge bg-paper px-2 py-1 italic"
+                  placeholder="One-line summary shown on project cards (200 chars max)."
+                  data-project-short-desc-edit
+                  data-original-short-desc="{{ project.short_description or '' }}">{{ project.short_description or '' }}</textarea>
+        <p class="hidden text-sm text-rust-deep mt-1" data-project-short-desc-error role="alert"></p>
+    </div>
+    {% elif project.short_description %}
+    <p class="mt-1 text-base text-ink-muted italic m-0">{{ project.short_description }}</p>
+    {% endif %}
+
     <div class="meta mt-2">
         {% if not is_owner %}by {{ project.user.display_name }} · {% endif %}
         Created {{ project.created_at.strftime("%Y-%m-%d") }} ·

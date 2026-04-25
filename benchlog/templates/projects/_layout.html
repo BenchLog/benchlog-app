@@ -10,7 +10,7 @@
         {% set _cover = project.cover_file if (project.cover_file and project.cover_file.current_version and project.cover_file.current_version.is_image) else None %}
         {% with
             title = project.title,
-            description = project.description|excerpt,
+            description = project.short_description or (project.description|excerpt),
             url = ('/u/' ~ project.user.username ~ '/' ~ project.slug)|absolute_url,
             image = (('/u/' ~ project.user.username ~ '/' ~ project.slug ~ '/files/' ~ _cover.id ~ '/download')|absolute_url) if _cover else None,
             og_type = 'article'

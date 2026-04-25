@@ -242,6 +242,85 @@
     });
   }
 
+  // ---- click-to-edit short description ----
+  // Mirrors the title editor: click read view → swap to textarea, save on
+  // blur/Enter, cancel on Esc. Empty value clears the field on the server
+  // and reverts the read view to the placeholder prompt.
+  const shortDescWrap = header.querySelector("[data-project-short-desc]");
+  const shortDescRead = header.querySelector("[data-project-short-desc-read]");
+  const shortDescEdit = header.querySelector("[data-project-short-desc-edit]");
+  const shortDescError = header.querySelector("[data-project-short-desc-error]");
+  const SHORT_DESC_PLACEHOLDER = "Add a one-line summary for cards…";
+  if (shortDescWrap && shortDescRead && shortDescEdit) {
+    const setReadDisplay = (value) => {
+      if (value) {
+        shortDescRead.textContent = value;
+        shortDescRead.classList.remove("opacity-70");
+      } else {
+        shortDescRead.textContent = SHORT_DESC_PLACEHOLDER;
+        shortDescRead.classList.add("opacity-70");
+      }
+    };
+    const showShortDescError = (msg) => {
+      if (!shortDescError) return;
+      shortDescError.textContent = msg || "";
+      shortDescError.classList.toggle("hidden", !msg);
+    };
+    const openShortDescEdit = () => {
+      showShortDescError("");
+      shortDescEdit.value = shortDescEdit.dataset.originalShortDesc || "";
+      shortDescRead.classList.add("hidden");
+      shortDescEdit.classList.remove("hidden");
+      shortDescEdit.focus();
+      shortDescEdit.select();
+    };
+    const closeShortDescEdit = () => {
+      shortDescEdit.classList.add("hidden");
+      shortDescRead.classList.remove("hidden");
+    };
+    const saveShortDesc = async () => {
+      // Collapse internal whitespace so a paste with newlines becomes a
+      // single line — matches the server's _clean_short_description.
+      const next = (shortDescEdit.value || "").replace(/\s+/g, " ").trim();
+      const original = shortDescEdit.dataset.originalShortDesc || "";
+      if (next === original) {
+        closeShortDescEdit();
+        return;
+      }
+      const resp = await postSettings([["short_description", next]]);
+      if (resp.ok) {
+        shortDescEdit.dataset.originalShortDesc = next;
+        shortDescEdit.value = next;
+        setReadDisplay(next);
+        closeShortDescEdit();
+      } else {
+        const msg = await readError(resp, "Couldn't save the summary.");
+        showShortDescError(msg);
+        shortDescEdit.focus();
+      }
+    };
+
+    shortDescRead.addEventListener("click", openShortDescEdit);
+    shortDescEdit.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (!shortDescEdit.classList.contains("hidden")) saveShortDesc();
+      }, 0);
+    });
+    shortDescEdit.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        // Plain Enter saves; Shift+Enter inserts a newline (folded back to
+        // a space on save). Single line is the intent on cards.
+        e.preventDefault();
+        saveShortDesc();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        shortDescEdit.value = shortDescEdit.dataset.originalShortDesc || "";
+        showShortDescError("");
+        closeShortDescEdit();
+      }
+    });
+  }
+
   // ---- slug modal ----
   const slugModal = document.querySelector("[data-slug-modal]");
   const slugModalOpen = document.querySelector("[data-slug-modal-open]");

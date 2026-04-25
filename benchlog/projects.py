@@ -171,6 +171,7 @@ async def fork_project(
         title=source_project.title,
         slug=new_slug,
         description=source_project.description,
+        short_description=source_project.short_description,
         status=source_project.status,
         pinned=False,
         is_public=False,

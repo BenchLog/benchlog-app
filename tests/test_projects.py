@@ -2219,3 +2219,94 @@ async def test_card_hides_category_row_when_empty(client, db):
     await login(client, "alice")
     resp = await client.get("/projects")
     assert 'aria-label="Categories"' not in resp.text
+
+
+# ---------- short_description on cards ---------- #
+
+
+async def test_create_project_persists_short_description(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Lamp",
+            "description": "",
+            "short_description": "  A 1950s gooseneck rewire.  ",
+            "status": "idea",
+        },
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 302
+
+    project = (
+        await db.execute(select(Project).where(Project.slug == "lamp"))
+    ).scalar_one()
+    # Server-side cleaning trims edges + collapses internal whitespace.
+    assert project.short_description == "A 1950s gooseneck rewire."
+
+
+async def test_create_project_short_description_too_long_is_400(client, db):
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await post_form(
+        client,
+        "/projects",
+        {
+            "title": "Lamp",
+            "description": "",
+            "short_description": "x" * 201,
+            "status": "idea",
+        },
+        csrf_path="/projects/new",
+    )
+    assert resp.status_code == 400
+    assert "200" in resp.text
+    # Nothing persisted on validation failure.
+    rows = (await db.execute(select(Project))).scalars().all()
+    assert rows == []
+
+
+async def test_card_uses_short_description_when_set(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Lamp",
+            slug="lamp",
+            description="**bold** markdown that should NOT leak onto cards",
+            short_description="Plain card summary.",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects")
+    assert "Plain card summary." in resp.text
+    # Raw markdown source from the full description must not show up on the
+    # card when a short_description is set.
+    assert "**bold**" not in resp.text
+
+
+async def test_card_falls_back_to_excerpt_when_short_description_missing(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Lamp",
+            slug="lamp",
+            description="**Restoring** a 1950s gooseneck lamp.",
+            status=ProjectStatus.idea,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    resp = await client.get("/projects")
+    # plain_excerpt strips the `**` markers, so the card shows clean text.
+    assert "Restoring a 1950s gooseneck lamp." in resp.text
+    assert "**Restoring**" not in resp.text

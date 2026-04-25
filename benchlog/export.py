@@ -117,6 +117,7 @@ def build_project_json(project: Project, *, include_private_entries: bool) -> di
         "exported_at": _iso(datetime.now(timezone.utc)),
         "slug": project.slug,
         "title": project.title,
+        "short_description": project.short_description,
         "description": project.description,
         "status": project.status.value,
         "pinned": project.pinned,

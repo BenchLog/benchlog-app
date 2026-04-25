@@ -43,6 +43,11 @@ class Project(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(256))
     slug: Mapped[str] = mapped_column(String(256), index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    # One-line plain-text summary used on project cards. Capped at 200 chars
+    # at the DB level so the card layout stays predictable; markdown is
+    # neither supported nor rendered. NULL means "no card summary set" —
+    # the card template falls back to a stripped excerpt of `description`.
+    short_description: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[ProjectStatus] = mapped_column(
         Enum(ProjectStatus, name="project_status"), default=ProjectStatus.idea
     )

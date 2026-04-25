@@ -42,6 +42,13 @@
     </div>
 
     <div>
+        <label for="short_description">Short description</label>
+        <textarea id="short_description" name="short_description" rows="2" maxlength="200"
+                  placeholder="One-line summary shown on project cards (plain text, 200 chars max).">{{ form_values.short_description }}</textarea>
+        <p class="meta mt-1">Plain text only — used on project cards in lists. Leave blank to fall back to a snippet of the description.</p>
+    </div>
+
+    <div>
         <label for="toastui-source-description">Description</label>
         {% with name="description", value=form_values.description, id_suffix="description", min_height="420px", placeholder="A few notes on what this project is…", file_index=file_index, entry_index=entry_index %}
             {% include "components/_toastui_editor.html" %}

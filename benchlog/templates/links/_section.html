@@ -1,0 +1,57 @@
+{# One accordion section. Caller passes `section`, `is_owner`, `project_url`. #}
+<li class="link-section" data-section-id="{{ section.id }}">
+    <div class="link-section-head" data-section-toggle>
+        {% if is_owner %}
+        <span class="drag-handle" data-section-drag aria-label="Drag section" title="Drag to reorder section">
+            <i data-lucide="grip-vertical" class="w-4 h-4"></i>
+        </span>
+        {% endif %}
+        <i data-lucide="chevron-right" class="w-4 h-4 link-section-chev"></i>
+        <span class="link-section-title flex-1">{{ section.name }}</span>
+        <span class="link-section-count meta">{{ section.links | length }}</span>
+        {% if is_owner %}
+        <div class="relative" data-section-menu>
+            <button type="button" class="btn-ghost text-xs" data-section-menu-trigger
+                    aria-haspopup="menu" aria-expanded="false">
+                <i data-lucide="more-vertical" class="w-4 h-4"></i>
+                <span class="sr-only">Section menu</span>
+            </button>
+            <div class="link-section-menu" data-section-menu-panel hidden>
+                <button type="button" class="link-section-menu-item"
+                        data-section-rename
+                        data-section-id="{{ section.id }}"
+                        data-section-name="{{ section.name }}">
+                    Rename
+                </button>
+                <form method="post"
+                      action="{{ project_url }}/links/sections/{{ section.id }}/delete"
+                      data-confirm
+                      data-confirm-title="Delete '{{ section.name }}'?"
+                      data-confirm-body="This will permanently delete {{ section.links | length }} link(s) in this section."
+                      data-confirm-ok="Delete section">
+                    {% include "components/_csrf.html" %}
+                    <button type="submit" class="link-section-menu-item link-section-menu-item-danger">
+                        Delete section
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <div class="link-section-body" data-section-body>
+        <ul class="link-list" data-link-list data-section-id="{{ section.id }}">
+            {% for link in section.links %}
+                {% include "links/_link_row.html" %}
+            {% endfor %}
+        </ul>
+        {% if is_owner %}
+        <button type="button" class="link-add-bar"
+                data-link-add-trigger
+                data-link-section-id="{{ section.id }}"
+                data-link-section-name="{{ section.name }}">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            Add link to {{ section.name }}
+        </button>
+        {% endif %}
+    </div>
+</li>

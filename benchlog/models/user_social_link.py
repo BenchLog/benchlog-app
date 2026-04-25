@@ -10,9 +10,11 @@ from benchlog.models.base import Base, TimestampMixin, new_uuid
 class UserSocialLinkType(str, enum.Enum):
     """Curated-set typing for user profile social links.
 
-    Mirrors `LinkType` (project links) — drives the label + Lucide icon on
-    rendered rows. Keep an `other` bucket so users can record something we
-    don't have a dedicated slot for yet.
+    Drives the label + Lucide icon on rendered rows. Keep an `other`
+    bucket so users can record something we don't have a dedicated slot
+    for yet. (Project links used to share this enum-style design before
+    the sections rebuild — they're now free-form, this enum only types
+    user-profile social links.)
     """
 
     github = "github"

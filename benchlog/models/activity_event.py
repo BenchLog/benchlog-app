@@ -30,6 +30,9 @@ class ActivityEventType(str, enum.Enum):
     file_version_added = "file_version_added"
     link_added = "link_added"
     link_removed = "link_removed"
+    link_section_created = "link_section_created"
+    link_section_renamed = "link_section_renamed"
+    link_section_deleted = "link_section_deleted"
 
 
 class ActivityEvent(Base):

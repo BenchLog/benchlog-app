@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     initial_oidc_auto_link_verified_email: bool = False
     initial_oidc_allow_private_network: bool = False
 
+    # ---- link metadata fetcher ----
+    # Server-side OG metadata fetcher: when False, requests resolving to
+    # private/loopback/link-local addresses are blocked (cloud-metadata
+    # IPs always blocked regardless). When True, allows previews of dev
+    # servers + LAN URLs — appropriate for single-user self-hosting.
+    # Saved links never depend on this; only the preview fetch does.
+    metadata_fetch_allow_private: bool = False
+
     # ---- storage ----
     # Pluggable backend; only "local" is wired up right now. The s3_* fields
     # are placeholders for a future S3/MinIO backend.

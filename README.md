@@ -57,6 +57,7 @@ Bootstrap settings come from environment variables (prefixed `BENCHLOG_`); every
 | `BENCHLOG_DATABASE_URL` | `postgresql+asyncpg://benchlog:benchlog@localhost/benchlog` | Async SQLAlchemy URL |
 | `BENCHLOG_BASE_URL` | `http://localhost:8000` | Public origin — used for OIDC redirects, email links, and WebAuthn RP ID |
 | `BENCHLOG_TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-For` for rate-limit client IP. Only enable behind a trusted reverse proxy. |
+| `BENCHLOG_METADATA_FETCH_ALLOW_PRIVATE` | `false` | When the link modal previews a URL it fetches OG metadata server-side. By default, requests resolving to loopback / RFC1918 / link-local addresses are blocked (cloud-metadata IPs are blocked unconditionally regardless). Flip this to `true` for single-user self-hosting if you want previews of dev-server / LAN / Docker links. The link itself is always saved either way — only the server-side preview fetch is gated. |
 
 ### Optional: seed SMTP / OIDC from env on first boot
 

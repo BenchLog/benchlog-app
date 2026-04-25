@@ -1,0 +1,31 @@
+{#
+  Section create/rename modal. Triggered by:
+    - data-section-add-trigger (no extra dataset — opens with empty name)
+    - data-section-rename (with data-section-id + data-section-name)
+#}
+<dialog class="modal" data-section-modal>
+    <form data-section-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0" data-section-modal-title>New section</h2>
+            <button type="button" class="btn-ghost text-xs" data-section-modal-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <div>
+            <label for="section-modal-name">Name</label>
+            <input id="section-modal-name" name="name" type="text" required maxlength="120"
+                   autocomplete="off" data-section-name>
+        </div>
+
+        <p class="text-rust-deep text-sm m-0" data-section-error hidden></p>
+
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-section-modal-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">
+                <span data-section-submit-label>Create</span>
+            </button>
+        </div>
+    </form>
+</dialog>

@@ -1,0 +1,108 @@
+{#
+  Shared link create/edit modal. Triggered by:
+    - data-link-add-trigger (optionally with data-link-section-id /
+      data-link-section-name to pre-fill the combobox)
+    - data-link-edit-trigger (with data-link-id, data-link-edit-url,
+      data-link-submit-url)
+
+  Pulls the project's sections from a JSON payload rendered alongside
+  the modal so the combobox option list can include new sections that
+  the page loaded. JS appends new section names to the catalog when the
+  user types a fresh name.
+#}
+{% set sections_for_modal = sections or [] %}
+<dialog class="modal" data-link-modal>
+    <form data-link-form class="space-y-4">
+        <div class="flex items-baseline justify-between gap-3">
+            <h2 class="text-lg font-display m-0" data-link-modal-title>Add link</h2>
+            <button type="button" class="btn-ghost text-xs" data-link-modal-cancel
+                    aria-label="Close">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+
+        <div>
+            <label for="link-modal-url">URL</label>
+            <input id="link-modal-url" name="url" type="text" required maxlength="2048"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="https://…" data-link-url>
+            <p class="meta mt-1">We'll add <code>https://</code> if you leave the scheme off.</p>
+        </div>
+
+        <div class="link-modal-preview" data-link-preview hidden>
+            <div class="link-modal-preview-thumb" data-link-preview-thumb></div>
+            <div class="link-modal-preview-body">
+                <div class="meta flex items-center gap-1.5" data-link-preview-site>
+                    <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+                    <span data-link-preview-site-name></span>
+                </div>
+                <p class="font-medium m-0" data-link-preview-title></p>
+                <p class="meta m-0" data-link-preview-desc></p>
+                <p class="meta m-0" data-link-preview-warning hidden></p>
+            </div>
+            <button type="button" class="btn-ghost text-xs" data-link-preview-refresh
+                    title="Refetch preview">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                Refresh
+            </button>
+        </div>
+
+        <input type="hidden" name="og_title" data-link-og-title>
+        <input type="hidden" name="og_description" data-link-og-description>
+        <input type="hidden" name="og_image_url" data-link-og-image>
+        <input type="hidden" name="og_site_name" data-link-og-site>
+        <input type="hidden" name="favicon_url" data-link-og-favicon>
+
+        <div>
+            <label for="link-modal-title">Title</label>
+            <input id="link-modal-title" name="title" type="text" required maxlength="256"
+                   data-link-title>
+        </div>
+
+        <div>
+            <label for="link-modal-note">
+                Note <span class="meta ml-2">optional · 1-2 sentences</span>
+            </label>
+            <textarea id="link-modal-note" name="note" rows="2" maxlength="280"
+                      data-link-note></textarea>
+            <p class="meta mt-1"><span data-link-note-count>0</span>/280</p>
+        </div>
+
+        <div>
+            <label for="link-modal-section">Section</label>
+            {% set _sec_options = [] %}
+            {% for s in sections_for_modal %}
+                {% set _ = _sec_options.append({"value": s.name, "label": s.name}) %}
+            {% endfor %}
+            {% set _link_section_cfg = {
+                "options": _sec_options,
+                "selected": [],
+                "name": "section_name",
+                "multi": False,
+                "placeholder": "Pick or create a section…",
+                "allowCreate": True,
+                "existingOnly": False,
+                "kind": "section",
+                "changeEventName": "combobox-change",
+                "extraChangeEvents": ["link-section-change"],
+            } %}
+            {% with combobox_id = "link-section-cb",
+                    combobox_config = _link_section_cfg,
+                    combobox_selected = [],
+                    combobox_name = "section_name",
+                    combobox_multi = False,
+                    combobox_placeholder = "Pick or create a section…" %}
+                {% include "components/_combobox.html" %}
+            {% endwith %}
+        </div>
+
+        <p class="text-rust-deep text-sm m-0" data-link-error hidden></p>
+
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm" data-link-modal-cancel>Cancel</button>
+            <button type="submit" class="btn-primary text-sm">
+                <span data-link-submit-label>Save link</span>
+            </button>
+        </div>
+    </form>
+</dialog>

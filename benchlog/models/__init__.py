@@ -6,7 +6,7 @@ from benchlog.models.collection import Collection, CollectionProject
 from benchlog.models.email_token import EmailToken
 from benchlog.models.file import FileVersion, ProjectFile
 from benchlog.models.journal_entry import JournalEntry
-from benchlog.models.link import LinkType, ProjectLink
+from benchlog.models.link import LinkSection, ProjectLink
 from benchlog.models.oidc import OIDCIdentity, OIDCProvider
 from benchlog.models.project import Project, ProjectStatus
 from benchlog.models.project_relation import (
@@ -32,7 +32,7 @@ __all__ = [
     "EmailToken",
     "FileVersion",
     "JournalEntry",
-    "LinkType",
+    "LinkSection",
     "OIDCIdentity",
     "OIDCProvider",
     "Project",

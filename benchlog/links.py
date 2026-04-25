@@ -1,4 +1,5 @@
-"""Data-access helpers for ProjectLink + URL validation."""
+"""Helpers for ProjectLink + LinkSection — URL validation, name keys,
+and sort-order computation."""
 
 import uuid
 from urllib.parse import urlparse
@@ -6,33 +7,10 @@ from urllib.parse import urlparse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from benchlog.models import LinkType, ProjectLink
+from benchlog.models import LinkSection, ProjectLink
 
 
-async def get_link_by_id(
-    db: AsyncSession, project_id: uuid.UUID, link_id: uuid.UUID
-) -> ProjectLink | None:
-    """Scoped lookup — a crafted link id can't slip out from under its project."""
-    result = await db.execute(
-        select(ProjectLink).where(
-            ProjectLink.id == link_id,
-            ProjectLink.project_id == project_id,
-        )
-    )
-    return result.scalar_one_or_none()
-
-
-async def next_sort_order(db: AsyncSession, project_id: uuid.UUID) -> int:
-    """One past the largest `sort_order` on the project — so new links
-    drop in at the bottom of any existing arrangement. Returns 0 for an
-    empty project."""
-    result = await db.execute(
-        select(func.max(ProjectLink.sort_order)).where(
-            ProjectLink.project_id == project_id
-        )
-    )
-    current_max = result.scalar_one_or_none()
-    return 0 if current_max is None else current_max + 1
+# ---------- URL normalization ---------- #
 
 
 _BLOCKED_SCHEMES = frozenset({"javascript", "data", "vbscript"})
@@ -55,11 +33,9 @@ def normalize_url(raw: str) -> str:
         scheme = parsed.scheme.lower()
         if scheme in _BLOCKED_SCHEMES:
             return ""
-        # Web URLs must include a host; `https://` alone is meaningless.
         if scheme in _WEB_SCHEMES and not parsed.netloc:
             return ""
         return candidate
-    # No scheme supplied — treat as a web URL and prepend https://.
     candidate = "https://" + candidate
     parsed = urlparse(candidate)
     if not parsed.netloc:
@@ -67,11 +43,84 @@ def normalize_url(raw: str) -> str:
     return candidate
 
 
-def parse_link_type(raw: str | None) -> LinkType:
-    """Coerce a submitted string to a LinkType, defaulting to `other`."""
-    if not raw:
-        return LinkType.other
-    try:
-        return LinkType(raw)
-    except ValueError:
-        return LinkType.other
+# ---------- section helpers ---------- #
+
+
+def section_name_key(raw: str) -> str:
+    """Lowercase + trim. The on-disk uniqueness key — never user-facing."""
+    return (raw or "").strip().lower()
+
+
+async def find_section_by_name_key(
+    db: AsyncSession, project_id: uuid.UUID, name_key: str
+) -> LinkSection | None:
+    """Look up a section by its case-insensitive key. Used when the link
+    modal's combobox submits an existing-or-new section name — if the
+    key matches, reuse; otherwise create."""
+    if not name_key:
+        return None
+    result = await db.execute(
+        select(LinkSection).where(
+            LinkSection.project_id == project_id,
+            LinkSection.name_key == name_key,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_section_by_id(
+    db: AsyncSession, project_id: uuid.UUID, section_id: uuid.UUID
+) -> LinkSection | None:
+    """Scoped lookup so a crafted section_id can't jump projects."""
+    result = await db.execute(
+        select(LinkSection).where(
+            LinkSection.id == section_id,
+            LinkSection.project_id == project_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def next_section_sort_order(
+    db: AsyncSession, project_id: uuid.UUID
+) -> int:
+    """One past the max — appends to the bottom of the section list."""
+    result = await db.execute(
+        select(func.max(LinkSection.sort_order)).where(
+            LinkSection.project_id == project_id
+        )
+    )
+    current = result.scalar_one_or_none()
+    return 0 if current is None else current + 1
+
+
+# ---------- link helpers ---------- #
+
+
+async def get_link_by_id(
+    db: AsyncSession, project_id: uuid.UUID, link_id: uuid.UUID
+) -> ProjectLink | None:
+    """Scoped via the section join — we still want owner-isolation even
+    though links no longer carry a project_id directly."""
+    result = await db.execute(
+        select(ProjectLink)
+        .join(LinkSection, LinkSection.id == ProjectLink.section_id)
+        .where(
+            ProjectLink.id == link_id,
+            LinkSection.project_id == project_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def next_link_sort_order(
+    db: AsyncSession, section_id: uuid.UUID
+) -> int:
+    """One past the max within the given section. Sort order is per-section."""
+    result = await db.execute(
+        select(func.max(ProjectLink.sort_order)).where(
+            ProjectLink.section_id == section_id
+        )
+    )
+    current = result.scalar_one_or_none()
+    return 0 if current is None else current + 1

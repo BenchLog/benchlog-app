@@ -25,7 +25,6 @@ from benchlog.models import (
     ActivityEventType,
     JournalEntry,
     Project,
-    ProjectLink,
     ProjectStatus,
 )
 from benchlog.storage import get_storage
@@ -471,161 +470,13 @@ async def test_deleting_file_version_purges_only_that_version_event(client, db):
 
 
 # ---------- write path: links ---------- #
-
-
-async def test_create_link_records_link_added(client, db):
-    alice = await make_user(db, email="alice@test.com", username="alice")
-    project = await _project(db, alice, slug="bench")
-
-    await login(client, "alice")
-    token = await csrf_token(client, f"/u/alice/{project.slug}")
-    resp = await client.post(
-        f"/u/alice/{project.slug}/links",
-        data={
-            "_csrf": token,
-            "title": "Upstream spec",
-            "url": "https://example.com/spec",
-            "link_type": "other",
-        },
-    )
-    assert resp.status_code == 302
-
-    link = (
-        await db.execute(
-            select(ProjectLink).where(ProjectLink.project_id == project.id)
-        )
-    ).scalar_one()
-
-    events = await _events(db, project_id=project.id)
-    assert [e.event_type for e in events] == [ActivityEventType.link_added]
-    payload = events[0].payload
-    assert payload["link_id"] == str(link.id)
-    assert payload["label"] == "Upstream spec"
-    assert payload["url"] == "https://example.com/spec"
-
-
-async def test_delete_link_records_link_removed_and_preserves_link_added(client, db):
-    alice = await make_user(db, email="alice@test.com", username="alice")
-    project = await _project(db, alice, slug="bench")
-
-    await login(client, "alice")
-    token = await csrf_token(client, f"/u/alice/{project.slug}")
-    await client.post(
-        f"/u/alice/{project.slug}/links",
-        data={
-            "_csrf": token,
-            "title": "Upstream spec",
-            "url": "https://example.com/spec",
-            "link_type": "other",
-        },
-    )
-    link = (
-        await db.execute(
-            select(ProjectLink).where(ProjectLink.project_id == project.id)
-        )
-    ).scalar_one()
-    link_id = link.id
-
-    await post_form(
-        client,
-        f"/u/alice/{project.slug}/links/{link_id}/delete",
-        csrf_path=f"/u/alice/{project.slug}",
-    )
-
-    events = await _events(db, project_id=project.id)
-    assert [e.event_type for e in events] == [
-        ActivityEventType.link_added,
-        ActivityEventType.link_removed,
-    ]
-    # The earlier link_added row is intentionally NOT purged — the payload
-    # just orphans its link_id.
-    added = events[0]
-    assert added.payload["link_id"] == str(link_id)
-
-    removed = events[1]
-    assert removed.payload == {
-        "label": "Upstream spec",
-        "url": "https://example.com/spec",
-    }
-
-
-async def test_edit_link_records_no_event(client, db):
-    alice = await make_user(db, email="alice@test.com", username="alice")
-    project = await _project(db, alice, slug="bench")
-
-    await login(client, "alice")
-    token = await csrf_token(client, f"/u/alice/{project.slug}")
-    await client.post(
-        f"/u/alice/{project.slug}/links",
-        data={
-            "_csrf": token,
-            "title": "Upstream",
-            "url": "https://example.com/spec",
-            "link_type": "other",
-        },
-    )
-    link = (
-        await db.execute(
-            select(ProjectLink).where(ProjectLink.project_id == project.id)
-        )
-    ).scalar_one()
-
-    events_before = await _events(db, project_id=project.id)
-    assert [e.event_type for e in events_before] == [ActivityEventType.link_added]
-
-    # Edit the link — mirrors journal-edit's convention of not emitting.
-    token = await csrf_token(client, f"/u/alice/{project.slug}")
-    resp = await client.post(
-        f"/u/alice/{project.slug}/links/{link.id}",
-        data={
-            "_csrf": token,
-            "title": "Upstream v2",
-            "url": "https://example.com/spec-v2",
-            "link_type": "other",
-        },
-    )
-    assert resp.status_code == 302
-
-    events_after = await _events(db, project_id=project.id)
-    assert [e.event_type for e in events_after] == [ActivityEventType.link_added]
-
-
-async def test_link_events_follow_project_visibility(client, db):
-    alice = await make_user(db, email="alice@test.com", username="alice")
-    pub = await _project(db, alice, slug="pub", is_public=True)
-    priv = await _project(db, alice, slug="priv", is_public=False)
-
-    await login(client, "alice")
-    for slug in (pub.slug, priv.slug):
-        token = await csrf_token(client, f"/u/alice/{slug}")
-        await client.post(
-            f"/u/alice/{slug}/links",
-            data={
-                "_csrf": token,
-                "title": "Upstream",
-                "url": f"https://example.com/{slug}",
-                "link_type": "other",
-            },
-        )
-
-    # Guest global firehose: public only.
-    events = await list_global_activity(db, viewer_id=None)
-    project_ids = {e.project_id for e in events if e.event_type == ActivityEventType.link_added}
-    assert pub.id in project_ids
-    assert priv.id not in project_ids
-
-    # Third-party profile view: same rule.
-    bob = await make_user(db, email="bob@test.com", username="bob")
-    events = await list_user_activity(db, alice.id, viewer_id=bob.id)
-    project_ids = {e.project_id for e in events if e.event_type == ActivityEventType.link_added}
-    assert pub.id in project_ids
-    assert priv.id not in project_ids
-
-    # Owner sees both on her own profile.
-    events = await list_user_activity(db, alice.id, viewer_id=alice.id)
-    project_ids = {e.project_id for e in events if e.event_type == ActivityEventType.link_added}
-    assert pub.id in project_ids
-    assert priv.id in project_ids
+#
+# Link/section activity-event coverage is rebuilt in `tests/test_links.py`
+# alongside the new section + link CRUD routes (plan Tasks 12, 21). The
+# old route shape (form `link_type` field, project_id-keyed link rows)
+# was deleted in the rebuild, so the previous tests here would be a
+# net-zero rewrite — they're dropped and the new ones are owned by the
+# links suite.
 
 
 # ---------- visibility: list_user_activity ---------- #
@@ -911,27 +762,11 @@ async def _seed_every_event_type(client, db, alice, bob):
         mime="text/plain",
         csrf_path="/u/alice/shared",
     )
-    # Link add + remove
-    token = await csrf_token(client, "/u/alice/shared")
-    await client.post(
-        "/u/alice/shared/links",
-        data={
-            "_csrf": token,
-            "title": "Upstream",
-            "url": "https://example.com/spec",
-            "link_type": "other",
-        },
-    )
-    link = (
-        await db.execute(
-            select(ProjectLink).where(ProjectLink.url == "https://example.com/spec")
-        )
-    ).scalar_one()
-    await post_form(
-        client,
-        f"/u/alice/shared/links/{link.id}/delete",
-        csrf_path="/u/alice/shared",
-    )
+    # NOTE: Link add/remove events used to be seeded here too, but the
+    # link routes are stubbed during the sections-redesign rebuild. The
+    # cross-page render test below proves the activity surfaces handle
+    # the remaining event types; the missing link events get coverage
+    # back via tests/test_links.py once the new routes ship.
     # Logout; bob forks
     await client.post(
         "/logout", data={"_csrf": await csrf_token(client, "/explore")}

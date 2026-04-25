@@ -1,0 +1,59 @@
+{# One link card. Caller passes `link`, `is_owner`, `project_url`. #}
+<li class="link-card" data-link-id="{{ link.id }}" data-section-id="{{ link.section_id }}">
+    {% if is_owner %}
+    <span class="drag-handle" aria-label="Drag link" title="Drag to reorder">
+        <i data-lucide="grip-vertical" class="w-4 h-4"></i>
+    </span>
+    {% endif %}
+    <div class="link-thumb" aria-hidden="true">
+        {% if link.og_image_url %}
+        <img src="{{ link.og_image_url }}" alt="" loading="lazy"
+             onerror="this.parentElement.classList.add('link-thumb-fallback'); this.remove();">
+        {% else %}
+        <i data-lucide="image-off" class="w-5 h-5 text-ink-muted"></i>
+        {% endif %}
+    </div>
+    <div class="min-w-0 flex-1">
+        <div class="meta flex items-center gap-1.5">
+            {% if link.favicon_url %}
+            <img src="{{ link.favicon_url }}" alt="" class="w-3.5 h-3.5 rounded-sm"
+                 onerror="this.replaceWith(Object.assign(document.createElement('i'),{dataset:{lucide:'globe'},className:'w-3.5 h-3.5'}))">
+            {% else %}
+            <i data-lucide="globe" class="w-3.5 h-3.5"></i>
+            {% endif %}
+            <span class="truncate">{{ link.og_site_name or link.url }}</span>
+        </div>
+        <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer"
+           class="link-title text-ink hover:text-rust font-medium no-underline break-words">
+            {{ link.og_title or link.title }}
+            <i data-lucide="arrow-up-right" class="inline w-3.5 h-3.5 align-text-top text-ink-muted"></i>
+        </a>
+        {% if link.note %}
+        <p class="link-note italic text-ink-muted text-sm m-0 mt-1">{{ link.note }}</p>
+        {% endif %}
+        <div class="meta mt-1 truncate">{{ link.url }}</div>
+    </div>
+    {% if is_owner %}
+    <div class="link-actions flex items-center gap-2 shrink-0">
+        <button type="button" class="btn-ghost text-xs"
+                data-link-edit-trigger
+                data-link-id="{{ link.id }}"
+                data-link-edit-url="{{ project_url }}/links/{{ link.id }}/edit"
+                data-link-submit-url="{{ project_url }}/links/{{ link.id }}">
+            <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+            <span class="sr-only">Edit</span>
+        </button>
+        <form method="post" action="{{ project_url }}/links/{{ link.id }}/delete"
+              data-confirm
+              data-confirm-title="Delete link?"
+              data-confirm-body="{{ link.title }} will be removed from this project."
+              data-confirm-ok="Delete link">
+            {% include "components/_csrf.html" %}
+            <button type="submit" class="btn-ghost text-xs">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                <span class="sr-only">Delete</span>
+            </button>
+        </form>
+    </div>
+    {% endif %}
+</li>

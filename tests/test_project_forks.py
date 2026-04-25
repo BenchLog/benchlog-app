@@ -19,7 +19,7 @@ from sqlalchemy.orm import selectinload
 from benchlog.config import settings
 from benchlog.models import (
     FileVersion,
-    LinkType,
+    LinkSection,
     Project,
     ProjectFile,
     ProjectLink,
@@ -92,7 +92,7 @@ async def _load_fork_by_slug(db, user_id, slug):
         select(Project)
         .options(
             selectinload(Project.journal_entries),
-            selectinload(Project.links),
+            selectinload(Project.sections).selectinload(LinkSection.links),
             selectinload(Project.files).selectinload(ProjectFile.versions),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
         )
@@ -207,13 +207,20 @@ async def test_fork_copies_journal_links_files_and_versions(client, db):
             is_public=False,
         )
     )
-    # Links
+    # Links — section + link.
+    src_section = LinkSection(
+        project_id=src.id,
+        name="Source",
+        name_key="source",
+        sort_order=0,
+    )
+    db.add(src_section)
+    await db.flush()
     db.add(
         ProjectLink(
-            project_id=src.id,
+            section_id=src_section.id,
             title="Source",
             url="https://example.test/foo",
-            link_type=LinkType.github,
             sort_order=1,
         )
     )
@@ -267,10 +274,12 @@ async def test_fork_copies_journal_links_files_and_versions(client, db):
     titles = {u.title for u in fork.journal_entries}
     assert titles == {"First", None}
 
-    # Links
-    assert len(fork.links) == 1
-    assert fork.links[0].url == "https://example.test/foo"
-    assert fork.links[0].link_type == LinkType.github
+    # Links — one section, one link inside it.
+    assert len(fork.sections) == 1
+    fork_section = fork.sections[0]
+    assert fork_section.name == "Source"
+    assert len(fork_section.links) == 1
+    assert fork_section.links[0].url == "https://example.test/foo"
 
     # Files: two (notes.txt and cover.png).
     filenames = sorted(f.filename for f in fork.files)

@@ -11,6 +11,7 @@ from benchlog.models import (
     ActivityEventType,
     FileVersion,
     JournalEntry,
+    LinkSection,
     Project,
     ProjectFile,
     ProjectLink,
@@ -153,7 +154,7 @@ async def fork_project(
             selectinload(Project.tags),
             selectinload(Project.categories),
             selectinload(Project.journal_entries),
-            selectinload(Project.links),
+            selectinload(Project.sections).selectinload(LinkSection.links),
             selectinload(Project.files).selectinload(ProjectFile.versions),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
         )
@@ -205,17 +206,35 @@ async def fork_project(
             )
         )
 
-    # ---- outbound links ----
-    for link in source_project.links:
-        db.add(
-            ProjectLink(
-                project_id=new_project.id,
-                title=link.title,
-                url=link.url,
-                link_type=link.link_type,
-                sort_order=link.sort_order,
-            )
+    # ---- outbound link sections + links ----
+    # Sections are owned by the project; copy each one and re-add its
+    # links under the new section. Section IDs are not preserved (forks
+    # are independent — no cross-project relationships on links).
+    for src_section in source_project.sections:
+        new_section = LinkSection(
+            project_id=new_project.id,
+            name=src_section.name,
+            name_key=src_section.name_key,
+            sort_order=src_section.sort_order,
         )
+        db.add(new_section)
+        await db.flush()
+        for link in src_section.links:
+            db.add(
+                ProjectLink(
+                    section_id=new_section.id,
+                    title=link.title,
+                    url=link.url,
+                    note=link.note,
+                    og_title=link.og_title,
+                    og_description=link.og_description,
+                    og_image_url=link.og_image_url,
+                    og_site_name=link.og_site_name,
+                    favicon_url=link.favicon_url,
+                    metadata_fetched_at=link.metadata_fetched_at,
+                    sort_order=link.sort_order,
+                )
+            )
 
     # ---- files + versions + physical blobs ----
     storage = get_storage()
@@ -357,7 +376,7 @@ async def get_project_by_username_and_slug(
             selectinload(Project.tags),
             selectinload(Project.categories),
             selectinload(Project.journal_entries),
-            selectinload(Project.links),
+            selectinload(Project.sections).selectinload(LinkSection.links),
             selectinload(Project.files).selectinload(ProjectFile.current_version),
             selectinload(Project.cover_file).selectinload(ProjectFile.current_version),
             # Fork parent: the header renders "Forked from @user/slug" when

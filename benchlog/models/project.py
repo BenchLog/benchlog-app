@@ -125,11 +125,11 @@ class Project(TimestampMixin, Base):
         # feed as a single list with pin markers, not two visual sections.
         order_by="(JournalEntry.is_pinned.desc(), JournalEntry.created_at.desc())",
     )
-    links: Mapped[list["ProjectLink"]] = relationship(  # noqa: F821
+    sections: Mapped[list["LinkSection"]] = relationship(  # noqa: F821
         back_populates="project",
         cascade="all, delete-orphan",
         lazy="raise_on_sql",
-        order_by="(ProjectLink.sort_order, ProjectLink.created_at)",
+        order_by="(LinkSection.sort_order, LinkSection.created_at)",
     )
     files: Mapped[list["ProjectFile"]] = relationship(  # noqa: F821
         back_populates="project",

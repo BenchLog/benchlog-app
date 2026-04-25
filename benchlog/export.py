@@ -7,8 +7,9 @@ journal entries is honoured — a guest exporting a public project only
 gets the public entries, matching what they'd see on the web.
 
 Caller is expected to pass a `Project` with the standard eager loads
-already populated: `user`, `tags`, `journal_entries`, `links`, `files`,
-plus `files.current_version` and `cover_file.current_version`.
+already populated: `user`, `tags`, `journal_entries`, `sections` (with
+their `links`), `files`, plus `files.current_version` and
+`cover_file.current_version`.
 """
 
 import io
@@ -77,17 +78,30 @@ def _journal_entries_meta(
 
 
 def _links_meta(project: Project) -> list[dict]:
+    """Flat list of every link in the project, with the containing
+    section's name attached so consumers can re-group on import."""
     out: list[dict] = []
-    for link in sorted(project.links, key=lambda x: (x.sort_order, x.created_at)):
-        out.append(
-            {
-                "title": link.title,
-                "url": link.url,
-                "link_type": link.link_type.value,
-                "sort_order": link.sort_order,
-                "created_at": _iso(link.created_at),
-            }
-        )
+    for section in sorted(
+        project.sections, key=lambda s: (s.sort_order, s.created_at)
+    ):
+        for link in sorted(
+            section.links, key=lambda x: (x.sort_order, x.created_at)
+        ):
+            out.append(
+                {
+                    "section": section.name,
+                    "title": link.title,
+                    "url": link.url,
+                    "note": link.note,
+                    "og_title": link.og_title,
+                    "og_description": link.og_description,
+                    "og_image_url": link.og_image_url,
+                    "og_site_name": link.og_site_name,
+                    "favicon_url": link.favicon_url,
+                    "sort_order": link.sort_order,
+                    "created_at": _iso(link.created_at),
+                }
+            )
     return out
 
 
@@ -162,9 +176,20 @@ def build_readme(project: Project, data: dict) -> str:
     if data["links"]:
         lines.append("## Links")
         lines.append("")
+        # Group by section, preserving the order links appeared in (which
+        # already reflects section sort_order + per-section sort_order).
+        by_section: dict[str, list[dict]] = {}
         for link in data["links"]:
-            lines.append(f"- [{link['title']}]({link['url']}) — {link['link_type']}")
-        lines.append("")
+            by_section.setdefault(link["section"], []).append(link)
+        for section_name, section_links in by_section.items():
+            lines.append(f"### {section_name}")
+            lines.append("")
+            for link in section_links:
+                label = link.get("og_title") or link["title"]
+                note = link.get("note")
+                suffix = f" — {note}" if note else ""
+                lines.append(f"- [{label}]({link['url']}){suffix}")
+            lines.append("")
 
     if data["files"]:
         lines.extend(_render_files_section(data))

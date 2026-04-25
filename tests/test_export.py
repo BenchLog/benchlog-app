@@ -14,7 +14,7 @@ import pytest
 from benchlog.config import settings
 from benchlog.models import (
     JournalEntry,
-    LinkType,
+    LinkSection,
     Project,
     ProjectLink,
     ProjectStatus,
@@ -86,12 +86,19 @@ async def _seed_rich_project(db, *, is_public: bool = True) -> Project:
             ),
         ]
     )
+    section = LinkSection(
+        project_id=project.id,
+        name="References",
+        name_key="references",
+        sort_order=0,
+    )
+    db.add(section)
+    await db.flush()
     db.add(
         ProjectLink(
-            project_id=project.id,
+            section_id=section.id,
             title="Inspiration",
             url="https://example.com/bench",
-            link_type=LinkType.website,
             sort_order=0,
         )
     )

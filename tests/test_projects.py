@@ -1921,6 +1921,184 @@ async def test_filter_composes_with_status_and_tag(client, db):
     assert "NoTag" not in resp.text
 
 
+async def test_filter_by_parent_category_includes_descendants(client, db):
+    """Filtering by a parent category matches projects tagged on any
+    descendant — picking "Crafts" surfaces projects assigned to
+    "Crafts › Leather" so users can browse broadly without manually
+    fanning out the subtree."""
+    from benchlog.categories import set_project_categories
+
+    crafts = await _seed_cat(db, slug="crafts", name="Crafts")
+    leather = await _seed_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+    pottery = await _seed_cat(
+        db, slug="pottery", name="Pottery", parent_id=crafts.id
+    )
+    elec = await _seed_cat(db, slug="elec", name="Electronics")
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    p_leather = Project(
+        user_id=user.id,
+        title="Leather Wallet",
+        slug="leather-wallet",
+        status=ProjectStatus.in_progress,
+    )
+    p_pottery = Project(
+        user_id=user.id,
+        title="Clay Mug",
+        slug="clay-mug",
+        status=ProjectStatus.in_progress,
+    )
+    p_elec = Project(
+        user_id=user.id,
+        title="LED Strip",
+        slug="led-strip",
+        status=ProjectStatus.in_progress,
+    )
+    db.add_all([p_leather, p_pottery, p_elec])
+    await db.commit()
+    for p in (p_leather, p_pottery, p_elec):
+        await db.refresh(p)
+    await set_project_categories(db, p_leather, [str(leather.id)])
+    await set_project_categories(db, p_pottery, [str(pottery.id)])
+    await set_project_categories(db, p_elec, [str(elec.id)])
+    await db.commit()
+
+    # Picking just the parent surfaces both children, drops the unrelated
+    # sibling subtree.
+    resp = await client.get(f"/projects?category={crafts.id}")
+    assert "Leather Wallet" in resp.text
+    assert "Clay Mug" in resp.text
+    assert "LED Strip" not in resp.text
+
+
+async def test_filter_all_mode_with_subtree_expansion(client, db):
+    """`category_mode=all` requires a project to match each requested
+    subtree independently — Crafts (subtree) AND Electronics (subtree).
+    A project with only one of them is excluded; a project with a leaf
+    under each passes."""
+    from benchlog.categories import set_project_categories
+
+    crafts = await _seed_cat(db, slug="crafts", name="Crafts")
+    leather = await _seed_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+    elec = await _seed_cat(db, slug="elec", name="Electronics")
+    arduino = await _seed_cat(
+        db, slug="arduino", name="Arduino", parent_id=elec.id
+    )
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    both = Project(
+        user_id=user.id,
+        title="Smart Wallet",
+        slug="smart-wallet",
+        status=ProjectStatus.in_progress,
+    )
+    only_crafts = Project(
+        user_id=user.id,
+        title="Plain Wallet",
+        slug="plain-wallet",
+        status=ProjectStatus.in_progress,
+    )
+    db.add_all([both, only_crafts])
+    await db.commit()
+    for p in (both, only_crafts):
+        await db.refresh(p)
+    await set_project_categories(db, both, [str(leather.id), str(arduino.id)])
+    await set_project_categories(db, only_crafts, [str(leather.id)])
+    await db.commit()
+
+    resp = await client.get(
+        f"/projects?category={crafts.id}&category={elec.id}"
+    )
+    assert "Smart Wallet" in resp.text
+    assert "Plain Wallet" not in resp.text
+
+
+async def test_set_project_categories_drops_ancestor_when_descendant_present(
+    client, db,
+):
+    """Submitting both a parent and one of its descendants collapses to
+    the more-specific descendant. Sibling subtrees stay independent."""
+    from sqlalchemy.orm import selectinload
+
+    from benchlog.categories import set_project_categories
+
+    crafts = await _seed_cat(db, slug="crafts", name="Crafts")
+    leather = await _seed_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+    pottery = await _seed_cat(
+        db, slug="pottery", name="Pottery", parent_id=crafts.id
+    )
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+
+    project = Project(
+        user_id=user.id,
+        title="Mixed",
+        slug="mixed",
+        status=ProjectStatus.idea,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    # Crafts + Crafts > Leather → only Leather sticks.
+    await set_project_categories(
+        db, project, [str(crafts.id), str(leather.id)]
+    )
+    await db.commit()
+    db.expunge_all()
+    refreshed = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.id == project.id)
+        )
+    ).scalar_one()
+    assert sorted(c.slug for c in refreshed.categories) == ["leather"]
+
+    # Sibling leaves under the same parent both stick — they're peers,
+    # not an ancestor/descendant pair.
+    await set_project_categories(
+        db, refreshed, [str(leather.id), str(pottery.id)]
+    )
+    await db.commit()
+    db.expunge_all()
+    refreshed2 = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.id == project.id)
+        )
+    ).scalar_one()
+    assert sorted(c.slug for c in refreshed2.categories) == ["leather", "pottery"]
+
+
+async def test_category_combobox_payload_includes_ancestor_ids(client, db):
+    """The new-project form ships ancestor ids per option so the picker
+    can hide ancestors/descendants of an already-selected category."""
+    parent = await _seed_cat(db, slug="crafts", name="Crafts")
+    await _seed_cat(db, slug="leather", name="Leather", parent_id=parent.id)
+
+    await make_user(db, email="alice@test.com", username="alice")
+    await login(client, "alice")
+
+    resp = await client.get("/projects/new")
+    # The combobox config carries an `ancestors` array per option so the
+    # client-side poolFilter can resolve overlap. Bare existence of the
+    # key is enough — the JSON shape itself is exercised by the UI.
+    assert '"ancestors"' in resp.text
+    assert str(parent.id) in resp.text
+
+
 async def test_project_card_shows_leaf_name_with_breadcrumb_tooltip(client, db):
     from benchlog.categories import set_project_categories
 

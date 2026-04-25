@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from benchlog.activity import list_project_activity, record_event
 from benchlog.categories import (
     get_categories_flat,
+    get_descendants_map,
     set_project_categories,
 )
 from benchlog.collections import (
@@ -79,6 +80,11 @@ async def load_project_header_ctx(
       ``status_chip_options`` — ``[(value, label)]`` pairs for the owner's
         status dropdown. Always returned so the shared header renders the
         same list on every tab (overview/journal/files/gallery/links).
+      ``known_tags`` / ``known_categories`` — vocabularies for the inline
+        Manage modals (tags + categories) that the header renders. Owner-
+        only — guests get empty lists since the modals are gated on
+        ``is_owner``. Loaded here (not per-route) so every tab — not just
+        the overview — opens with a populated picker.
     """
     if viewer is None:
         viewer_collections: list = []
@@ -88,12 +94,20 @@ async def load_project_header_ctx(
         project_collection_ids = await get_project_collection_memberships(
             db, viewer.id, project.id
         )
+    is_owner = viewer is not None and project.user_id == viewer.id
+    known_tags: list[str] = []
+    known_categories: list[dict] = []
+    if is_owner:
+        known_tags = await get_user_tag_slugs(db, viewer.id)
+        known_categories = await get_categories_flat(db)
     category_breadcrumbs = await _breadcrumbs_for(db, project.categories)
     return {
         "viewer_collections": viewer_collections,
         "project_collection_ids": project_collection_ids,
         "category_breadcrumbs": category_breadcrumbs,
         "status_chip_options": _status_options(),
+        "known_tags": known_tags,
+        "known_categories": known_categories,
     }
 
 
@@ -286,6 +300,7 @@ def _apply_filter_query(
     tag_mode: str = "all",
     categories: list[str] | None = None,
     category_mode: str = "all",
+    category_descendants_map: dict | None = None,
 ):
     """Apply the shared status/tag/category filters to a Project select.
 
@@ -296,10 +311,17 @@ def _apply_filter_query(
       least one of the selected slugs (useful for corralling spelling
       variants like "3d-printing" / "3d-printed" on Explore).
     - ``categories`` with ``category_mode="all"`` (default) → AND: project
-      must be assigned to every selected category. ``category_mode="any"``
-      → OR: project must be assigned to at least one. Curated taxonomies
-      still benefit from the "any" escape — e.g. browsing across siblings
-      under the same parent without manually clicking each.
+      must be assigned to every selected category (or any of its
+      descendants — see below). ``category_mode="any"`` → OR: project
+      must match at least one selected category subtree. Curated
+      taxonomies still benefit from the "any" escape for browsing across
+      siblings.
+    - ``category_descendants_map`` (optional) — ``{cat_id: {self+descendants}}``
+      from `get_descendants_map`. When supplied, each requested category
+      expands to its full subtree before going into the IN clause, so
+      filtering by "Crafts" matches projects tagged "Crafts › Leather".
+      Caller is responsible for pre-fetching it; the helper stays sync
+      so the existing call shape doesn't change.
     """
     if statuses:
         query = query.where(Project.status.in_(statuses))
@@ -324,20 +346,46 @@ def _apply_filter_query(
         query = query.where(Project.id.in_(matching))
 
     if categories:
-        # Same subquery shape as tags. Using ProjectCategory directly
-        # avoids touching the raise_on_sql `Project.categories` collection.
-        cat_match = (
-            select(ProjectCategory.project_id)
-            .where(ProjectCategory.category_id.in_(categories))
-        )
-        if category_mode == "all":
-            cat_match = cat_match.group_by(ProjectCategory.project_id).having(
-                func.count(func.distinct(ProjectCategory.category_id))
-                == len(categories)
+        # Expand each requested category to its full subtree (self +
+        # descendants) so picking a parent matches projects tagged on
+        # any leaf below it. Falls back to a singleton group when the
+        # map is unavailable or doesn't know the id (stale URL, etc.).
+        groups: list[set[str]] = []
+        for raw in categories:
+            try:
+                cid = uuid.UUID(raw)
+            except (ValueError, TypeError):
+                groups.append({raw})
+                continue
+            subtree = (
+                category_descendants_map.get(cid)
+                if category_descendants_map
+                else None
             )
-        # "any" mode: no HAVING — the IN subquery already returns project
-        # ids with at least one matching category.
-        query = query.where(Project.id.in_(cat_match))
+            if subtree:
+                groups.append({str(d) for d in subtree})
+            else:
+                groups.append({str(cid)})
+
+        if category_mode == "all":
+            # AND: project must have at least one category in *each* of
+            # the requested subtrees. Per-group IN subqueries match the
+            # tag pattern but skip the HAVING-count trick — counting
+            # distinct ids inside an expanded subtree would mis-AND when
+            # one project has multiple leaves under the same root.
+            for grp in groups:
+                sub = (
+                    select(ProjectCategory.project_id)
+                    .where(ProjectCategory.category_id.in_(grp))
+                )
+                query = query.where(Project.id.in_(sub))
+        else:
+            # any: union all subtrees, single IN.
+            sub = (
+                select(ProjectCategory.project_id)
+                .where(ProjectCategory.category_id.in_(set().union(*groups)))
+            )
+            query = query.where(Project.id.in_(sub))
     return query
 
 
@@ -465,6 +513,9 @@ async def list_projects(
         )
         .where(Project.user_id == user.id)
     )
+    descendants_map = (
+        await get_descendants_map(db) if current_categories else None
+    )
     query = _apply_filter_query(
         query,
         statuses=current_statuses,
@@ -472,6 +523,7 @@ async def list_projects(
         tag_mode=current_tag_mode,
         categories=current_categories,
         category_mode=current_category_mode,
+        category_descendants_map=descendants_map,
     )
     query = _apply_search_query(query, q=current_q)
     if current_visibility == "public":
@@ -661,13 +713,6 @@ async def project_detail(
     incoming_visible = filter_visible(incoming_raw, "source", viewer_id)
     outgoing_groups = _group_relations_by_type(outgoing_visible)
     incoming_groups = _group_relations_by_type(incoming_visible)
-    # Owner-only pickers need their vocabularies hydrated. Skip the extra
-    # queries for guests / non-owners where the inline edit UI isn't rendered.
-    known_tags: list[str] = []
-    known_categories: list[dict] = []
-    if is_owner:
-        known_tags = await get_user_tag_slugs(db, user.id)
-        known_categories = await get_categories_flat(db)
     # Viewing from a shared context — tag chips link to /explore for discovery.
     return templates.TemplateResponse(
         request,
@@ -684,8 +729,6 @@ async def project_detail(
             "featured_in_collections": featured_in_collections,
             "outgoing_relation_groups": outgoing_groups,
             "incoming_relation_groups": incoming_groups,
-            "known_tags": known_tags,
-            "known_categories": known_categories,
             "user_pickable_relation_types": [
                 (t.value, t.label, t.icon)
                 for t in (

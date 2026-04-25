@@ -938,6 +938,9 @@ async def _render_file_detail(
         "viewer_collections": [],
         "project_collection_ids": set(),
         "category_breadcrumbs": {},
+        "status_chip_options": [],
+        "known_tags": [],
+        "known_categories": [],
     }
     if db is not None:
         header_ctx = await load_project_header_ctx(db, user, project)

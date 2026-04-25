@@ -358,6 +358,13 @@
     </form>
 </dialog>
 
+{# Header behaviour (chip dropdowns, click-to-edit title, slug + Manage
+   modals) is wired by this script. Loaded from the partial itself so
+   every page that includes `_project_header.html` gets it — not just
+   the overview tab. Defer keeps it out of the parser's way; the script
+   is an IIFE that bails when `[data-project-header]` isn't present. #}
+<script src="{{ url_for('static', path='js/project-inline-edit.js') }}" defer></script>
+
 {# Categories add-modal — same auto-save shape as tags. #}
 <dialog id="project-categories-modal" class="modal" data-categories-modal>
     <form method="dialog" class="space-y-3" data-categories-modal-form>

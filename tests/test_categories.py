@@ -11,6 +11,7 @@ from benchlog.categories import (
     get_categories_flat,
     get_category_by_slug_path,
     get_category_tree,
+    get_descendants_map,
     set_project_categories,
 )
 from benchlog.models import Category, Project, ProjectStatus
@@ -202,6 +203,81 @@ async def test_set_project_categories_drops_unknown_ids(db):
         )
     ).scalar_one()
     assert [c.slug for c in reloaded.categories] == ["good"]
+
+
+async def test_get_descendants_map(db):
+    crafts = await _mk_cat(db, slug="crafts", name="Crafts")
+    leather = await _mk_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+    pottery = await _mk_cat(
+        db, slug="pottery", name="Pottery", parent_id=crafts.id
+    )
+    elec = await _mk_cat(db, slug="elec", name="Electronics")
+
+    descendants = await get_descendants_map(db)
+
+    # Each node always includes itself.
+    assert descendants[leather.id] == {leather.id}
+    assert descendants[elec.id] == {elec.id}
+    # Parent contains the whole subtree (self + immediate children).
+    assert descendants[crafts.id] == {crafts.id, leather.id, pottery.id}
+
+
+async def test_categories_flat_includes_ancestor_ids(db):
+    crafts = await _mk_cat(db, slug="crafts", name="Crafts")
+    leather = await _mk_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+    nested = await _mk_cat(
+        db, slug="vegtan", name="Veg Tan", parent_id=leather.id
+    )
+
+    flat = await get_categories_flat(db)
+    by_id = {row["id"]: row for row in flat}
+
+    # Top-level node has no ancestors.
+    assert by_id[crafts.id]["ancestor_ids"] == []
+    # One level deep — single parent.
+    assert by_id[leather.id]["ancestor_ids"] == [str(crafts.id)]
+    # Two levels deep — closest parent first, root last.
+    assert by_id[nested.id]["ancestor_ids"] == [
+        str(leather.id),
+        str(crafts.id),
+    ]
+
+
+async def test_set_project_categories_drops_ancestor_with_descendant(db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    crafts = await _mk_cat(db, slug="crafts", name="Crafts")
+    leather = await _mk_cat(
+        db, slug="leather", name="Leather", parent_id=crafts.id
+    )
+
+    project = Project(
+        user_id=user.id,
+        title="Wallet",
+        slug="wallet",
+        status=ProjectStatus.idea,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    # Both submitted — only the descendant should remain.
+    await set_project_categories(
+        db, project, [str(crafts.id), str(leather.id)]
+    )
+    await db.commit()
+
+    reloaded = (
+        await db.execute(
+            select(Project)
+            .options(selectinload(Project.categories))
+            .where(Project.id == project.id)
+        )
+    ).scalar_one()
+    assert [c.slug for c in reloaded.categories] == ["leather"]
 
 
 async def test_delete_category_with_children_blocked(db):

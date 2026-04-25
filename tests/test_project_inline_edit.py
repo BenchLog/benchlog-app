@@ -706,6 +706,71 @@ async def test_owner_sees_manage_tag_and_category_buttons(client, db):
     assert "Manage categories" in resp.text
 
 
+async def test_manage_modals_populated_on_every_tab(client, db):
+    """The Manage tags / Manage categories modals live in the shared
+    project header — every tab (overview/journal/files/gallery/links/
+    activity) needs the picker vocabularies hydrated, not just the
+    overview. Regression test for the case where the modals rendered
+    empty on non-overview pages because only the detail route loaded
+    `known_tags` / `known_categories`."""
+    from benchlog.models import Category, Tag
+
+    # Seed one tag and one category so we can assert they show up in
+    # the modal config payload on every tab.
+    cat = Category(slug="woodworking", name="Woodworking")
+    db.add(cat)
+    tag = Tag(slug="lasercut")
+    db.add(tag)
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id,
+        title="Bench",
+        slug="bench",
+        status=ProjectStatus.in_progress,
+    )
+    db.add(project)
+    await db.commit()
+    # `Project.tags` is raise_on_sql; eager-load it before set_project_tags
+    # mutates the collection.
+    await db.refresh(project, ["tags"])
+    # Attach the tag to the user's tag vocab — the picker pulls from
+    # `get_user_tag_slugs`, which is "tags this user has used somewhere,"
+    # not the global tag table.
+    from benchlog.tags import set_project_tags
+
+    await set_project_tags(db, project, ["lasercut"])
+    await db.commit()
+
+    await login(client, "alice")
+
+    # Hit each tab that uses _layout.html → _project_header.html and
+    # confirm the modals + their option vocabularies are present.
+    for path in (
+        "/u/alice/bench",
+        "/u/alice/bench/journal",
+        "/u/alice/bench/files",
+        "/u/alice/bench/gallery",
+        "/u/alice/bench/links",
+        "/u/alice/bench/activity",
+    ):
+        resp = await client.get(path)
+        assert resp.status_code == 200, path
+        assert "data-project-tags-open" in resp.text, path
+        assert "data-project-categories-open" in resp.text, path
+        # The shared category combobox renders the breadcrumb name into
+        # the JSON config blob — its presence confirms the option list
+        # was hydrated for the modal on this tab.
+        assert "Woodworking" in resp.text, path
+        # And the tag picker pre-loads the user's vocab so suggestions
+        # autocomplete inside the modal.
+        assert "lasercut" in resp.text, path
+        # And the script that wires the modal open/close + auto-save
+        # has to be loaded on every tab. Without this, the markup is
+        # dead — the open buttons swallow the click and nothing happens.
+        assert "project-inline-edit.js" in resp.text, path
+
+
 async def test_non_owner_does_not_see_manage_buttons(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     await make_user(db, email="bob@test.com", username="bob")

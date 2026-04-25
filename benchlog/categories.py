@@ -109,18 +109,42 @@ async def get_category_tree(db: AsyncSession) -> list[dict]:
     return build(None)
 
 
+def _ancestor_chain(
+    by_id: dict[uuid.UUID, Category], cat: Category
+) -> list[uuid.UUID]:
+    """Walk up `parent_id` and collect ancestor ids (closest first).
+
+    Self is *not* included. Bounded against malformed cycles the same way
+    `_build_breadcrumb_maps` is — admin form prevents cycles, but cheap
+    insurance against bad data is fine.
+    """
+    out: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    cursor: Category | None = (
+        by_id.get(cat.parent_id) if cat.parent_id else None
+    )
+    while cursor is not None and cursor.id not in seen:
+        seen.add(cursor.id)
+        out.append(cursor.id)
+        cursor = by_id.get(cursor.parent_id) if cursor.parent_id else None
+    return out
+
+
 async def get_categories_flat(db: AsyncSession) -> list[dict]:
     """Flattened list for a searchable picker.
 
-    Each entry: ``{id, slug, name, breadcrumb, breadcrumb_parts}``. Sorted
-    by breadcrumb alphabetically so the combobox search feel is consistent
-    regardless of ``sort_order`` tweaks at individual levels.
-    `breadcrumb_parts` is the same path as a list — templates use it to
-    render Lucide chevron icons between segments instead of the literal
-    `›` character.
+    Each entry: ``{id, slug, name, breadcrumb, breadcrumb_parts,
+    ancestor_ids}``. Sorted by breadcrumb alphabetically so the combobox
+    search feel is consistent regardless of ``sort_order`` tweaks at
+    individual levels. `breadcrumb_parts` is the same path as a list —
+    templates use it to render Lucide chevron icons between segments
+    instead of the literal `›` character. `ancestor_ids` (string-form,
+    closest parent first, excluding self) lets the picker reject
+    ancestor/descendant overlaps with already-selected categories.
     """
     cats = await _all_categories(db)
     string_map, parts_map = _build_breadcrumb_maps(cats)
+    by_id = {c.id: c for c in cats}
     flat = [
         {
             "id": cat.id,
@@ -128,11 +152,42 @@ async def get_categories_flat(db: AsyncSession) -> list[dict]:
             "name": cat.name,
             "breadcrumb": string_map[cat.id],
             "breadcrumb_parts": parts_map[cat.id],
+            "ancestor_ids": [str(a) for a in _ancestor_chain(by_id, cat)],
         }
         for cat in cats
     ]
     flat.sort(key=lambda x: x["breadcrumb"].lower())
     return flat
+
+
+async def get_descendants_map(
+    db: AsyncSession,
+) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """Map each category id to the set of descendant ids (including self).
+
+    Used by filter routes so picking a parent like "Crafts" matches
+    projects assigned to its children ("Crafts › Leather"). Computed in
+    one pass over the full taxonomy — small admin-curated tree, cheap.
+    """
+    cats = await _all_categories(db)
+    children_by_parent: dict[uuid.UUID | None, list[uuid.UUID]] = {}
+    for cat in cats:
+        children_by_parent.setdefault(cat.parent_id, []).append(cat.id)
+
+    cache: dict[uuid.UUID, set[uuid.UUID]] = {}
+
+    def collect(node_id: uuid.UUID) -> set[uuid.UUID]:
+        if node_id in cache:
+            return cache[node_id]
+        subtree = {node_id}
+        for child_id in children_by_parent.get(node_id, ()):
+            subtree |= collect(child_id)
+        cache[node_id] = subtree
+        return subtree
+
+    for cat in cats:
+        collect(cat.id)
+    return cache
 
 
 async def get_category_by_slug_path(
@@ -185,6 +240,11 @@ async def set_project_categories(
     - UUIDs; invalid ones dropped silently.
     - Non-existent IDs dropped silently (so a stale form submission can't
       500 the request).
+    - When both an ancestor and one of its descendants are present, the
+      ancestor is dropped — "Crafts" + "Crafts › Leather" collapses to
+      just "Crafts › Leather". Sibling subtrees are independent. The
+      picker enforces the same rule client-side, so this is mostly
+      defensive against hand-crafted submissions.
     - Caller owns the commit.
 
     Implementation: assigns through the ORM's ``project.categories``
@@ -215,4 +275,22 @@ async def set_project_categories(
     # whatever order the IN came back in.
     by_id = {cat.id: cat for cat in rows}
     ordered = [by_id[cid] for cid in parsed if cid in by_id]
+
+    # Drop ancestors when a descendant is also in the set: "Crafts" plus
+    # "Crafts › Leather" collapses to just "Crafts › Leather" — the more
+    # specific designation wins. Sibling subtrees are independent so two
+    # leaves under the same parent both stick. Defensive against
+    # hand-crafted form posts; the picker itself also hides these overlaps.
+    if len(ordered) > 1:
+        all_cats = await _all_categories(db)
+        all_by_id: dict[uuid.UUID, Category] = {c.id: c for c in all_cats}
+        kept_ids = {c.id for c in ordered}
+        to_drop: set[uuid.UUID] = set()
+        for cat in ordered:
+            for ancestor_id in _ancestor_chain(all_by_id, cat):
+                if ancestor_id in kept_ids:
+                    to_drop.add(ancestor_id)
+        if to_drop:
+            ordered = [c for c in ordered if c.id not in to_drop]
+
     project.categories = ordered

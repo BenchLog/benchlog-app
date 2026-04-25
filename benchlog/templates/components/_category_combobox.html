@@ -9,8 +9,13 @@
   Args:
     name         — form field name. Default "category".
     selected_ids — list[str] of initially-selected category UUIDs
-    options      — list[{id, slug, name, breadcrumb, breadcrumb_parts}]
-                   from get_categories_flat
+    options      — list[{id, slug, name, breadcrumb, breadcrumb_parts,
+                   ancestor_ids}] from get_categories_flat. The
+                   `ancestor_ids` list (closest parent first, excluding
+                   self) drives the picker's overlap rules: ancestors of
+                   any selected leaf are hidden, and selecting a
+                   descendant of an already-selected node collapses the
+                   broader pick away to mirror the server-side dedup.
     placeholder  — optional placeholder text
 #}
 {% set _cc_name = name or "category" %}
@@ -24,6 +29,7 @@
         "value": opt.id|string,
         "label": opt.breadcrumb or opt.name,
         "parts": opt.breadcrumb_parts,
+        "ancestors": opt.ancestor_ids or [],
     }) %}
 {% endfor %}
 {% set _cc_config = {
@@ -83,6 +89,25 @@
       });
     };
 
+    // One-way filter: hide ancestors of an already-selected leaf so
+    // the user can't broaden after going specific (pick "Crafts ›
+    // Leather" → "Crafts" disappears). Descendants of a selected
+    // node *stay* visible — picking a child after the parent is a
+    // valid "I want to be more specific now" move, and the post-add
+    // hook below collapses the parent away so the local state matches
+    // the server's dedup-on-save behaviour.
+    const optionsByValue = new Map();
+    (cfg.options || []).forEach((o) => optionsByValue.set(o.value, o));
+    cfg.poolFilter = (option, selectedIds) => {
+      for (const sid of selectedIds) {
+        if (sid === option.value) continue;
+        const sOpt = optionsByValue.get(sid);
+        const sAncestors = (sOpt && sOpt.ancestors) || [];
+        if (sAncestors.includes(option.value)) return false;
+      }
+      return true;
+    };
+
     cfg.matchFn = (option, q) =>
       (option.label || "").toLowerCase().includes(q);
     cfg.pillRenderer = (option, container) => {
@@ -91,6 +116,33 @@
     cfg.optionRenderer = (option, container) => {
       appendBreadcrumb(container, option.parts || [option.label]);
     };
-    window.benchlogMountCombobox(root, cfg);
+    const handle = window.benchlogMountCombobox(root, cfg);
+
+    // After every selection change, drop any ancestor that's already
+    // covered by a more-specific descendant. Mirrors the server-side
+    // dedup in `set_project_categories` so the pills the user sees
+    // match what gets saved — picking "Crafts › Leather" while
+    // "Crafts" is selected silently removes "Crafts" from the chips.
+    let collapsing = false;
+    root.addEventListener("combobox-change", (e) => {
+      if (collapsing) return;
+      const ids = (e.detail && e.detail.selected) || [];
+      const keep = new Set(ids);
+      for (const id of ids) {
+        const opt = optionsByValue.get(id);
+        const ancestors = (opt && opt.ancestors) || [];
+        for (const a of ancestors) {
+          if (keep.has(a)) keep.delete(a);
+        }
+      }
+      if (keep.size !== ids.length) {
+        collapsing = true;
+        try {
+          handle.setSelected([...keep]);
+        } finally {
+          collapsing = false;
+        }
+      }
+    });
   });
 </script>

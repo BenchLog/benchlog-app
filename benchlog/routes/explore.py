@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from benchlog.activity import ACTIVITY_PAGE_SIZE, list_global_activity
-from benchlog.categories import get_categories_flat
+from benchlog.categories import get_categories_flat, get_descendants_map
 from benchlog.database import get_db
 from benchlog.dependencies import current_user
 from benchlog.models import Project, ProjectFile, User
@@ -87,6 +87,9 @@ async def explore(
         )
         .where(Project.is_public.is_(True))
     )
+    descendants_map = (
+        await get_descendants_map(db) if current_categories else None
+    )
     query = _apply_filter_query(
         query,
         statuses=current_statuses,
@@ -94,6 +97,7 @@ async def explore(
         tag_mode=current_tag_mode,
         categories=current_categories,
         category_mode=current_category_mode,
+        category_descendants_map=descendants_map,
     )
     query = _apply_search_query(query, q=current_q)
     # With a query, sort by relevance (ts_rank_cd) and fall back to recency

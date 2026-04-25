@@ -1,16 +1,17 @@
 {% extends "projects/_layout.html" %}
 {% block title %}{{ project.title }} · BenchLog{% endblock %}
 {% block head_extra %}
-    {# Only owners actually need the editor assets — but they'll also be the
-       people visiting their own project pages most often, so conditional
-       loading on `is_owner` keeps the public view lean. #}
+    {# Description editor assets — overview-only since the inline editor
+       only renders here. The shared `project-inline-edit.js` (header
+       chips + Manage modals) is loaded by `_project_header.html`
+       itself so every tab gets the wiring without each tab re-listing
+       it here. #}
     {% if is_owner %}
     <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
     <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/description-edit.js') }}" defer></script>
-    <script src="{{ url_for('static', path='js/project-inline-edit.js') }}" defer></script>
     {% endif %}
 {% endblock %}
 {% block project_content %}

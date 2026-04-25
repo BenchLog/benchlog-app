@@ -64,6 +64,12 @@
     const onCreate = typeof cfg.onCreate === "function" ? cfg.onCreate : null;
     const onStatus = typeof cfg.onStatus === "function" ? cfg.onStatus : null;
     const onChange = typeof cfg.onChange === "function" ? cfg.onChange : null;
+    // Optional pool filter — runs after the "already selected" pruning,
+    // letting hosts hide options that conflict with the current selection
+    // beyond simple identity (e.g. category picker hides ancestors/
+    // descendants of any selected leaf so the taxonomy stays clean).
+    const poolFilter =
+      typeof cfg.poolFilter === "function" ? cfg.poolFilter : null;
     const normalizeCreate =
       typeof cfg.normalizeCreate === "function" ? cfg.normalizeCreate : (s) => s.trim();
     const changeEventName = cfg.changeEventName || "combobox-change";
@@ -95,7 +101,10 @@
     const visibleOptions = () => {
       const qRaw = currentQuery();
       const q = qRaw.toLowerCase();
-      const pool = options.filter((o) => !selected.includes(o.value));
+      let pool = options.filter((o) => !selected.includes(o.value));
+      if (poolFilter) {
+        pool = pool.filter((o) => poolFilter(o, selected));
+      }
       const matches = (q
         ? pool.filter((o) => matchFn(o, q))
         : pool

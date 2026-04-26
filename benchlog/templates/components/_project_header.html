@@ -10,6 +10,159 @@
         data-project-url="{{ project_url }}"
         data-settings-url="{{ settings_url }}"
         data-is-owner="{{ '1' if is_owner else '' }}">
+    {# Banner — full-width 16:9 cover with title + short description + actions
+       overlaid. Renders only when the project has an image cover; otherwise
+       the header falls back to the paper-background layout below. Crop math
+       mirrors `components/project_card.html` exactly: full-resolution
+       /download source when a crop is saved (cropper can zoom past 100% of
+       the wrapper), /download + object-cover when there's no crop. The
+       banner always uses /download (not /thumb) because the 600px thumb
+       blurs visibly when stretched across a wide hero.
+
+       Structure: the OUTER element (data-project-banner) is `position:
+       relative` WITHOUT overflow-hidden — important so the More-actions
+       dropdown can extend past the bottom of the banner without being
+       clipped. The INNER aspect-video div carries overflow-hidden and
+       clips just the cover image to 16:9. The title/short-desc/actions
+       overlay is a sibling absolute element that sits at the bottom of
+       the parent, on top of the image.
+
+       Intentionally NOT lazy-loaded (the card partial is): the banner is
+       above the fold on every project page, so `loading="lazy"` would
+       delay the hero image and regress LCP. #}
+    {% set _has_banner = project.cover_file and project.cover_file.current_version and project.cover_file.current_version.is_image %}
+
+    {% if _has_banner %}
+    <div class="relative -mx-4 sm:mx-0 mb-4" data-project-banner>
+        <div class="aspect-video relative overflow-hidden sm:rounded bg-paper-surface border-b sm:border border-edge">
+            {% if project.cover_crop_width %}
+                {% set cw = project.cover_crop_width %}
+                {% set ch = project.cover_crop_height %}
+                {% set cx = project.cover_crop_x %}
+                {% set cy = project.cover_crop_y %}
+                <img src="{{ project_url }}/files/{{ project.cover_file.id }}/download"
+                     alt=""
+                     class="absolute max-w-none"
+                     style="left: {{ '%.4f'|format(-100 * cx / cw) }}%; top: {{ '%.4f'|format(-100 * cy / ch) }}%; width: {{ '%.4f'|format(100 / cw) }}%; height: {{ '%.4f'|format(100 / ch) }}%;">
+            {% else %}
+                <img src="{{ project_url }}/files/{{ project.cover_file.id }}/download"
+                     alt=""
+                     class="w-full h-full object-cover">
+            {% endif %}
+            {# Gradient overlay for title legibility — strongest at the bottom
+               where the title sits; transparent at top so the photo reads. #}
+            <div class="absolute inset-0 bg-linear-to-b from-transparent via-black/30 to-black/80 pointer-events-none"></div>
+        </div>
+        {# Title overlay — sibling of the image-clip wrapper, NOT inside it.
+           That way the More-actions dropdown can extend below the banner
+           without overflow-hidden cropping it. The data-project-title-*
+           and data-project-short-desc-* attributes are picked up by
+           static/js/project-inline-edit.js. #}
+        <div class="absolute inset-x-0 bottom-0 px-4 sm:px-6 py-4 z-10
+                    flex flex-wrap items-end justify-between gap-3">
+            <div class="flex-1 min-w-0">
+                <h1 class="text-4xl leading-tight text-paper m-0 drop-shadow {% if is_owner %}project-title-editable{% endif %}"
+                    data-project-title-read
+                    {% if is_owner %}title="Click to edit"{% endif %}>{{ project.title }}</h1>
+                {% if is_owner %}
+                <input type="text"
+                       name="title"
+                       maxlength="256"
+                       class="hidden text-4xl leading-tight w-full rounded border border-paper/40 bg-black/85 text-paper px-2 py-1"
+                       data-project-title-edit
+                       data-original-title="{{ project.title }}"
+                       value="{{ project.title }}">
+                <p class="hidden text-sm text-paper bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-title-error role="alert"></p>
+                {% endif %}
+                {# Short description on banner — light italic styling on the
+                   dark gradient. Owner can click to edit; the textarea uses
+                   the same dark backdrop as the title input so the input
+                   chrome reads on the photo. The paper-bg copy below
+                   the banner is hidden with `{% if not _has_banner %}` so
+                   we don't render it twice. #}
+                {% if is_owner %}
+                <div class="mt-1" data-project-short-desc>
+                    <p class="text-base text-paper italic project-title-editable m-0
+                              {% if not project.short_description %}opacity-70{% endif %}"
+                       data-project-short-desc-read
+                       title="Click to edit card summary">{% if project.short_description %}{{ project.short_description }}{% else %}Add a one-line summary for cards…{% endif %}</p>
+                    <textarea name="short_description"
+                              rows="2"
+                              maxlength="200"
+                              class="hidden text-base w-full rounded border border-paper/40 bg-black/85 text-paper px-2 py-1 italic"
+                              placeholder="One-line summary shown on project cards (200 chars max)."
+                              data-project-short-desc-edit
+                              data-original-short-desc="{{ project.short_description or '' }}">{{ project.short_description or '' }}</textarea>
+                    <p class="hidden text-sm text-paper bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-short-desc-error role="alert"></p>
+                </div>
+                {% elif project.short_description %}
+                <p class="mt-1 text-base text-paper italic m-0">{{ project.short_description }}</p>
+                {% endif %}
+            </div>
+            <div class="flex gap-2 shrink-0">
+                {# Fork button — paper-on-translucent-dark variant of btn-ghost
+                   so it reads on the gradient. #}
+                {% if user is not none and user.id != project.user_id and project.is_public %}
+                <form method="post"
+                      action="{{ project_url }}/fork"
+                      class="inline">
+                    {% include "components/_csrf.html" %}
+                    <button type="submit"
+                            class="btn-ghost text-sm bg-black/40 text-paper border border-paper/30 hover:bg-black/60"
+                            title="Create a private copy of this project in your workspace">
+                        <i data-lucide="git-branch" class="inline w-3.5 h-3.5 mr-1"></i>
+                        Fork
+                    </button>
+                </form>
+                {% endif %}
+                <details class="relative" data-menu data-more-actions-menu>
+                    <summary class="btn-ghost text-sm list-none cursor-pointer bg-black/40 text-paper border border-paper/30 hover:bg-black/60"
+                             title="More actions">
+                        <i data-lucide="more-horizontal" class="w-3.5 h-3.5"></i>
+                        <span class="sr-only">More actions</span>
+                    </summary>
+                    {# z-30 so the dropdown sits above the sticky tab bar (z-10)
+                       and other page content. The parent banner has no
+                       overflow-hidden, so the dropdown can paint over the
+                       paper-bg meta rows below. #}
+                    <div role="menu" class="absolute right-0 mt-2 min-w-48 rounded-md border border-edge bg-paper-surface shadow-md py-1 text-sm z-30">
+                        <a href="{{ project_url }}/export"
+                           role="menuitem"
+                           class="flex items-center gap-2 px-3 py-2 text-ink-muted hover:bg-edge/60 hover:text-rust"
+                           title="Download a zip with every file, all metadata, and a README">
+                            <i data-lucide="package" class="w-3.5 h-3.5"></i>
+                            Export
+                        </a>
+                        {% if is_owner %}
+                        <button type="button"
+                                role="menuitem"
+                                data-slug-modal-open
+                                class="w-full flex items-center gap-2 px-3 py-2 text-ink-muted hover:bg-edge/60 hover:text-rust text-left">
+                            <i data-lucide="link" class="w-3.5 h-3.5"></i>
+                            Change URL slug…
+                        </button>
+                        <div class="border-t border-edge my-1"></div>
+                        <form method="post" action="{{ project_url }}/delete"
+                              class="block"
+                              data-confirm
+                              data-confirm-title="Delete project?"
+                              data-confirm-body="{{ project.title }} and everything attached to it will be permanently removed."
+                              data-confirm-ok="Delete project">
+                            {% include "components/_csrf.html" %}
+                            <button type="submit"
+                                    role="menuitem"
+                                    class="w-full flex items-center gap-2 px-3 py-2 text-rust-deep hover:bg-edge/60 text-left">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                Delete project…
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+    {% endif %}
     <div class="meta mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
         {% if is_owner %}
             <a href="/projects" class="hover:text-rust">My Projects</a>
@@ -139,6 +292,7 @@
         {% endif %}
     </div>
     {% endif %}
+    {% if not _has_banner %}
     <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="flex-1 min-w-0">
             {# Title — click-to-edit for owners. Read view is an <h1>; edit
@@ -159,12 +313,18 @@
             {% endif %}
         </div>
         <div class="flex gap-2 shrink-0">
+            {# Fork button + More-actions — same as in the banner overlay above,
+               but with the original paper-bg styling. Kept inline (rather
+               than pulled into a macro) because there are only two call
+               sites and a macro hides the contextual styling difference.
+               If you change one (add a menu item, rename a button), update
+               the other to match. #}
             {% if user is not none and user.id != project.user_id and project.is_public %}
             {# Fork button: logged-in non-owners on public projects only.
                No self-fork, no anonymous fork — the route enforces the
                same gate on POST. #}
             <form method="post"
-                  action="/u/{{ project.user.username }}/{{ project.slug }}/fork"
+                  action="{{ project_url }}/fork"
                   class="inline">
                 {% include "components/_csrf.html" %}
                 <button type="submit"
@@ -218,10 +378,18 @@
             </details>
         </div>
     </div>
+    {% endif %}
     {# Short description — one-line plain-text summary used on cards. Owner
        can click to edit (mirrors the title pattern); non-owners see it
        only when set. Empty owner state shows a click-to-add prompt so
-       there's a discoverable affordance for filling it in. #}
+       there's a discoverable affordance for filling it in.
+
+       Only rendered here when there's NO banner — when a banner is shown,
+       the short description sits inside the banner overlay instead, so
+       rendering it here would duplicate it. The data attributes used by
+       the inline-edit JS are identical in both locations; the JS picks
+       up whichever element is present. #}
+    {% if not _has_banner %}
     {% if is_owner %}
     <div class="mt-1" data-project-short-desc>
         <p class="text-base text-ink-muted italic project-title-editable m-0
@@ -239,6 +407,7 @@
     </div>
     {% elif project.short_description %}
     <p class="mt-1 text-base text-ink-muted italic m-0">{{ project.short_description }}</p>
+    {% endif %}
     {% endif %}
 
     <div class="meta mt-2">

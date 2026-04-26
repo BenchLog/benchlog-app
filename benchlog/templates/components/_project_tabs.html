@@ -1,7 +1,20 @@
 {# Tab bar rendered below the project header on every project-scoped page,
    so the user can always navigate between sections and deep-link to one.
    Expects `project` in scope; additional tabs appear here as new feature
-   areas (files, bom, links, images) come online. #}
+   areas (files, bom, links, images) come online.
+
+   Sticky behavior: the nav uses `position: sticky; top: 0` so it pins to
+   the top of the viewport once the banner / header content scrolls away.
+   `bg-paper` keeps content scrolling underneath from showing through; a
+   small always-on `shadow-sm` provides visual separation in both stuck
+   and unstuck states (no JS scroll-detection needed). z-10 keeps the
+   bar above per-tab dropdowns + lightboxes during scroll.
+
+   Scroll preservation: a deferred script reads `data-project-tabs` to
+   save the current scrollY when a tab link is clicked, then restores it
+   on the destination page. So a user reading deep into Journal who
+   clicks Files lands at the same vertical position. See
+   `static/js/project-tab-scroll.js`. #}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 {% set tabs = [
     ('',         'Overview'),
@@ -12,7 +25,9 @@
     ('/activity', 'Activity'),
 ] %}
 {% set path = request.url.path %}
-<nav class="mb-6 border-b border-edge" aria-label="Project sections">
+<nav class="sticky top-0 z-10 mb-6 bg-paper border-b border-edge shadow-sm"
+     aria-label="Project sections"
+     data-project-tabs>
     <ul class="flex flex-wrap -mb-px list-none p-0 m-0">
         {% for suffix, label in tabs %}
             {% set href = project_url + suffix %}
@@ -32,3 +47,4 @@
         {% endfor %}
     </ul>
 </nav>
+<script src="{{ url_for('static', path='js/project-tab-scroll.js') }}" defer></script>

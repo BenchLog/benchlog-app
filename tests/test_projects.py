@@ -2310,3 +2310,134 @@ async def test_card_falls_back_to_excerpt_when_short_description_missing(client,
     # plain_excerpt strips the `**` markers, so the card shows clean text.
     assert "Restoring a 1950s gooseneck lamp." in resp.text
     assert "**Restoring**" not in resp.text
+
+
+# ---------- cover banner in project header ---------- #
+
+
+async def _make_project_with_image_cover(client, db, *, slug: str = "bench"):
+    """Create alice + a project with a real PNG cover_file_id set.
+
+    Mirrors `_setup_alice_with_image` in test_files.py — duplicated here
+    so test_projects.py stays self-contained.
+    """
+    import io
+    import functools
+    from PIL import Image
+    from sqlalchemy import select
+    from benchlog.models import Project, ProjectFile
+
+    @functools.cache
+    def _png_bytes() -> bytes:
+        img = Image.new("RGB", (32, 24), color=(180, 80, 60))
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug=slug, status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    # Upload a PNG via the normal route so all the file/version/thumbnail
+    # plumbing happens — that gives us a ProjectFile with current_version.
+    token = await csrf_token(client, f"/u/alice/{slug}")
+    resp = await client.post(
+        f"/u/alice/{slug}/files",
+        data={"_csrf": token},
+        files={"upload": ("hero.png", _png_bytes(), "image/png")},
+    )
+    assert resp.status_code in (200, 302)
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "hero.png"))
+    ).scalar_one()
+
+    # Set as cover (no crop) — write directly via the model so we don't
+    # need to spin through the cover route's CSRF/POST plumbing here.
+    project = (
+        await db.execute(select(Project).where(Project.slug == slug))
+    ).scalar_one()
+    project.cover_file_id = file.id
+    await db.commit()
+    return user, project, file
+
+
+async def test_header_renders_banner_when_cover_set(client, db):
+    _, _, _ = await _make_project_with_image_cover(client, db)
+    resp = await client.get("/u/alice/bench")
+    assert resp.status_code == 200
+    assert "data-project-banner" in resp.text
+
+
+async def test_header_no_banner_when_no_cover(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bare", slug="bare", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    resp = await client.get("/u/alice/bare")
+    assert resp.status_code == 200
+    # No banner markup, no /download or /thumb cover img source either.
+    assert "data-project-banner" not in resp.text
+
+
+async def test_banner_uses_download_url_when_crop_saved(client, db):
+    _, project, file = await _make_project_with_image_cover(client, db)
+    # Save a crop directly on the model — the banner template branches
+    # on cover_crop_width to decide between /download and /thumb URLs.
+    project.cover_crop_x = 0.1
+    project.cover_crop_y = 0.1
+    project.cover_crop_width = 0.6
+    project.cover_crop_height = 0.45
+    await db.commit()
+
+    resp = await client.get("/u/alice/bench")
+    assert resp.status_code == 200
+    assert f"/files/{file.id}/download" in resp.text
+    assert f"/files/{file.id}/thumb" not in resp.text
+
+
+async def test_banner_uses_download_url_when_no_crop(client, db):
+    # Banner always uses /download (not /thumb) so the hero reads sharp
+    # at full width — the 600px thumb blurs visibly when stretched.
+    _, _, file = await _make_project_with_image_cover(client, db)
+    resp = await client.get("/u/alice/bench")
+    assert resp.status_code == 200
+    assert f"/files/{file.id}/download" in resp.text
+    assert f"/files/{file.id}/thumb" not in resp.text
+
+
+async def test_banner_renders_on_every_project_tab(client, db):
+    _, _, _ = await _make_project_with_image_cover(client, db)
+    # Every tab template extends `projects/_layout.html` which includes
+    # `_project_header.html`, so the banner should appear identically on
+    # all of them. This is a regression guard against accidentally
+    # hoisting the banner into one tab template instead of the shared
+    # header partial.
+    for path in [
+        "/u/alice/bench",
+        "/u/alice/bench/journal",
+        "/u/alice/bench/files",
+        "/u/alice/bench/gallery",
+        "/u/alice/bench/links",
+        "/u/alice/bench/activity",
+    ]:
+        resp = await client.get(path)
+        assert resp.status_code == 200, f"{path} → {resp.status_code}"
+        assert "data-project-banner" in resp.text, f"{path} missing banner"
+
+
+async def test_tab_bar_is_sticky(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="P", slug="p", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    resp = await client.get("/u/alice/p")
+    assert resp.status_code == 200
+    # The project-section nav must carry the sticky utility class so the
+    # bar pins to the top of the viewport once the banner scrolls away.
+    # Match the whole class attribute fragment so we don't false-positive
+    # on a `sticky` substring elsewhere on the page.
+    assert 'aria-label="Project sections"' in resp.text
+    nav_open = resp.text.index('aria-label="Project sections"')
+    nav_chunk = resp.text[max(0, nav_open - 200) : nav_open + 200]
+    assert "sticky" in nav_chunk, f"sticky class missing on project tabs nav: {nav_chunk}"

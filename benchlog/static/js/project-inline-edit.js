@@ -171,6 +171,10 @@
   }
 
   // ---- click-to-edit title ----
+  // The input itself carries a dark background (bg-black/85) when on the
+  // banner so it reads cleanly without needing a separate full-banner
+  // scrim. The "scrim only behind the input" treatment lives entirely in
+  // the input's own classes — no JS toggle needed.
   const titleRead = header.querySelector("[data-project-title-read]");
   const titleEdit = header.querySelector("[data-project-title-edit]");
   const titleError = header.querySelector("[data-project-title-error]");

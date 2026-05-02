@@ -8,6 +8,9 @@
     <link rel="stylesheet" href="{{ url_for('static', path='css/toastui-editor.min.css') }}">
     <script src="{{ url_for('static', path='js/toastui-editor.min.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/toastui-init.js') }}" defer></script>
+    {% if is_owner %}
+    <script src="{{ url_for('static', path='js/gps-review.js') }}" defer></script>
+    {% endif %}
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/journal-edit.js') }}" defer></script>
 {% endblock %}
@@ -34,7 +37,8 @@
      data-journal-section
      data-create-url="{{ project_url }}/journal"
      data-file-index='{{ file_index | tojson if file_index else "[]" }}'
-     data-entry-index='{{ entry_index | tojson if entry_index else "[]" }}'>
+     data-entry-index='{{ entry_index | tojson if entry_index else "[]" }}'
+     {% if is_owner %}data-upload-url="{{ project_url }}/files"{% endif %}>
     <h2 class="text-xl">Journal</h2>
     {% if is_owner %}
     <button type="button" class="btn-primary text-sm" data-journal-new>New entry</button>
@@ -101,4 +105,7 @@
       ?.addEventListener('click', () => notice.remove());
   })();
 </script>
+{% if is_owner %}
+{% include "components/_gps_review_modal.html" %}
+{% endif %}
 {% endblock %}

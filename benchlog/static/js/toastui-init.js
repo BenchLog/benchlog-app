@@ -14,16 +14,18 @@
 (() => {
   "use strict";
 
-  // Default toolbar layout — mirrors toast-ui's out-of-the-box grouping so
-  // the editor keeps every built-in action. We copy it explicitly because
-  // any override of `toolbarItems` replaces the default wholesale.
+  // Default toolbar layout — mirrors toast-ui's out-of-the-box grouping
+  // minus `scrollSync`. Sync is a toggle for split-pane scroll mirroring;
+  // mobile only renders one pane so the switch does nothing there, and
+  // dropping it gives the overflow `…` button less to swallow on phones.
+  // Any override of `toolbarItems` replaces the default wholesale, so we
+  // copy the full list explicitly.
   const DEFAULT_TOOLBAR = [
     ["heading", "bold", "italic", "strike"],
     ["hr", "quote"],
     ["ul", "ol", "task", "indent", "outdent"],
     ["table", "image", "link"],
     ["code", "codeblock"],
-    ["scrollSync"],
   ];
 
   function buildToolbar(hasFileIndex, hasEntryIndex) {
@@ -53,6 +55,99 @@
     return [...DEFAULT_TOOLBAR, extras];
   }
 
+  function csrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || "";
+  }
+
+  // Toast-ui's default image handler base64-encodes the blob into the
+  // markdown source. That breaks two things at scale: (1) Postgres rejects
+  // the resulting tsvector when the description grows past ~1 MB, and
+  // (2) every render serializes a multi-MB string into the DOM. The hook
+  // we install instead uploads the blob through the project files
+  // endpoint and inserts a `files/<filename>` reference, which the
+  // server-side markdown rewriter resolves to a canonical `/raw` URL.
+  // That keeps embeds resilient to filename normalization and means the
+  // image lives in the file tree where it can be moved or replaced.
+  function makeImageUploadHook(uploadUrl) {
+    return async (blob, callback) => {
+      const file = blob instanceof File
+        ? blob
+        : new File([blob], blob.name || "pasted-image", { type: blob.type });
+      const fd = new FormData();
+      fd.append("_csrf", csrfToken());
+      fd.append("path", "");
+      fd.append("description", "");
+      fd.append("upload", file, file.name);
+      try {
+        const resp = await fetch(uploadUrl, {
+          method: "POST",
+          body: fd,
+          headers: { Accept: "application/json" },
+        });
+        if (!resp.ok) {
+          let msg = `Image upload failed (${resp.status}).`;
+          try {
+            const data = await resp.json();
+            if (data && typeof data.detail === "string") msg = data.detail;
+          } catch (_) { /* keep default */ }
+          window.alert(msg);
+          return;
+        }
+        const data = await resp.json();
+        // Use the server-canonical filename — `safe_filename` strips
+        // unsafe characters and the upload route may rewrite HEIC to
+        // JPEG, so the original blob name can drift from what's stored.
+        // Always inserted at the project root since `path` was empty;
+        // the user can move it via the Files tab afterward and the
+        // markdown reference will follow if they update the link.
+        const filename = data.filename || file.name;
+        const insert = () => callback(`files/${filename}`, file.name);
+
+        if (data.is_quarantined && window.benchlogGpsReview) {
+          // GPS detected — defer the editor insert until the user picks
+          // Strip / Keep / Discard. Crucially we do NOT reload (would
+          // wipe unsaved description content); on Discard we just don't
+          // insert anything and the file is gone. The page that hosts
+          // the editor must include `_gps_review_modal.html` and load
+          // gps-review.js.
+          window.benchlogGpsReview.show([data], {
+            batchUrlBase: uploadUrl,
+            csrfToken: csrfToken(),
+            onDone: ({ action }) => {
+              if (action === "discard") return;
+              insert();
+            },
+          });
+          return;
+        }
+
+        // Quarantined fallback when the modal isn't loaded on this page:
+        // alert the user so they're not staring at a broken image with
+        // no idea what happened.
+        if (data.is_quarantined) {
+          window.alert(
+            "Image was uploaded but contains GPS data and is awaiting " +
+              "review. Visit the project's Files tab to strip or keep it.",
+          );
+          return;
+        }
+        insert();
+      } catch (_) {
+        window.alert("Image upload failed — network error.");
+      }
+    };
+  }
+
+  // Stand-in for editors with no project context (bio, collection forms).
+  // Keeps the user from silently base64-embedding multi-MB images that
+  // the server-side description size cap would later reject.
+  const NO_UPLOAD_HOOK = (_blob, _callback) => {
+    window.alert(
+      "Image embedding isn't supported in this editor. Add a link to an " +
+        "image hosted elsewhere instead.",
+    );
+  };
+
   function mountOne(mount) {
     if (mount.dataset.toastuiInitialized === "1") return;
     mount.dataset.toastuiInitialized = "1";
@@ -61,6 +156,7 @@
 
     const hasFileIndex = Boolean(mount.dataset.toastuiFileIndex);
     const hasEntryIndex = Boolean(mount.dataset.toastuiEntryIndex);
+    const uploadUrl = mount.dataset.toastuiUploadUrl || "";
 
     const editor = new window.toastui.Editor({
       el: mount,
@@ -83,6 +179,11 @@
       // users who prefer WYSIWYG can still flip — default is markdown.
       hideModeSwitch: false,
       toolbarItems: buildToolbar(hasFileIndex, hasEntryIndex),
+      hooks: {
+        addImageBlobHook: uploadUrl
+          ? makeImageUploadHook(uploadUrl)
+          : NO_UPLOAD_HOOK,
+      },
     });
     mount.__toastuiEditor = editor;
 

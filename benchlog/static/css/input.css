@@ -601,7 +601,13 @@ html[data-theme="dark"] {
   /* Hover-reveal row actions (edit / delete) inside the name cell. The
      container wraps the buttons so they appear as a single cluster to
      the right of the filename/folder label. Forms inside reset their
-     defaults so they don't add margin/padding. */
+     defaults so they don't add margin/padding.
+
+     Hover-reveal is gated on `(hover: hover)` — touch devices have no
+     hover state, so the icons would stay invisible-but-clickable
+     (clickable area still triggers; just opacity 0). On touch we always
+     show via the kebab variant below; on desktop the inline strip
+     fades in on hover. */
   & .file-tree-row-actions {
     display: inline-flex;
     align-items: center;
@@ -609,12 +615,16 @@ html[data-theme="dark"] {
     gap: 0.125rem;
     margin-left: auto;
     padding-left: 0.5rem;
-    opacity: 0;
-    transition: opacity 0.12s ease;
   }
-  & tr:hover .file-tree-row-actions,
-  & .file-tree-row-actions:focus-within {
-    opacity: 1;
+  @media (hover: hover) {
+    & .file-tree-row-actions {
+      opacity: 0;
+      transition: opacity 0.12s ease;
+    }
+    & tr:hover .file-tree-row-actions,
+    & .file-tree-row-actions:focus-within {
+      opacity: 1;
+    }
   }
   & .file-tree-row-actions form {
     display: inline-flex;
@@ -636,6 +646,87 @@ html[data-theme="dark"] {
   & .file-tree-action-btn:hover {
     background-color: color-mix(in srgb, var(--color-ink) 12%, transparent);
     color: var(--color-ink);
+  }
+
+  /* Mobile kebab variant of the row actions: a single triple-dot button
+     that opens a dropdown menu with the same actions. The panel uses
+     `position: fixed` (positioned by JS on toggle) so it escapes the
+     table's `overflow: hidden` rounded-corner clip. Hidden by default;
+     shown below the `sm` breakpoint where the inline strip is hidden. */
+  & .file-tree-row-actions-menu {
+    display: none;
+    margin-left: auto;
+    padding-left: 0.5rem;
+    flex-shrink: 0;
+    position: relative;
+  }
+  & .file-tree-row-actions-menu summary {
+    list-style: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 4px;
+    color: var(--color-ink-muted);
+  }
+  & .file-tree-row-actions-menu summary::-webkit-details-marker {
+    display: none;
+  }
+  & .file-tree-row-actions-menu[open] summary,
+  & .file-tree-row-actions-menu summary:hover {
+    background-color: color-mix(in srgb, var(--color-ink) 12%, transparent);
+    color: var(--color-ink);
+  }
+  & .file-tree-row-menu-panel {
+    position: fixed;
+    z-index: 50;
+    min-width: 11rem;
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-edge);
+    background-color: var(--color-paper-surface);
+    box-shadow: 0 4px 12px var(--color-shadow);
+    padding: 0.25rem 0;
+    font-size: 0.875rem;
+  }
+  & .file-tree-row-menu-panel form {
+    display: block;
+    margin: 0;
+  }
+  & .file-tree-row-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 0;
+    color: var(--color-ink-muted);
+    text-decoration: none;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    white-space: normal;
+  }
+  & .file-tree-row-menu-item:hover {
+    background-color: color-mix(in srgb, var(--color-edge) 60%, transparent);
+    color: var(--color-rust);
+  }
+
+  @media (max-width: 639px) {
+    & .col-size,
+    & .col-modified,
+    & thead .col-size,
+    & thead .col-modified {
+      display: none;
+    }
+    & .file-tree-row-actions {
+      display: none;
+    }
+    & .file-tree-row-actions-menu {
+      display: inline-flex;
+    }
   }
 
   /* Drag & drop states. During a drag the source row fades to indicate
@@ -701,6 +792,151 @@ html[data-theme="dark"] {
   margin-bottom: 0.75rem;
   font-size: 0.8125rem;
   font-family: var(--font-mono);
+}
+
+/* GPS warning chip — icon-only badge next to a filename that still has
+   GPS metadata. The map-pin alone reads as the warning; the descriptive
+   text lives in `title` (native tooltip on hover) and `aria-label` (for
+   screen readers). Styled in rust so it's visible but not alarming. */
+@utility gps-warning {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.125rem;
+  margin-left: 0.5rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--color-rust-deep);
+  color: var(--color-rust-deep);
+  line-height: 1;
+}
+
+/* Quarantine badge — shown on the version-history list when a version
+   contains GPS data and is awaiting the owner's review decision.
+   Filled rust so it reads as more urgent than the plain GPS chip. */
+@utility quarantine-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6875rem;
+  padding: 0.0625rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--color-rust-deep);
+  color: var(--color-paper);
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+/* Subtle accent on a version row that's awaiting review so it stands
+   out from the published versions in the same list. */
+@utility version-row-quarantined {
+  border-left: 3px solid var(--color-rust-deep);
+}
+
+/* Pending-review section — shown at the top of the Files tab (owner-only)
+   when quarantined uploads await a GPS decision. */
+@utility pending-review {
+  background: var(--color-paper-surface);
+  border: 1px solid var(--color-rust-deep);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@utility pending-review-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+  & > li {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    background: var(--color-paper);
+    border-radius: 0.375rem;
+    border: 1px solid var(--color-edge);
+  }
+  @media (max-width: 640px) {
+    & > li {
+      grid-template-columns: 48px 1fr;
+    }
+    & .pending-review-actions {
+      grid-column: 1 / -1;
+      justify-content: flex-end;
+    }
+  }
+}
+
+@utility pending-review-thumb {
+  width: 48px;
+  height: 48px;
+  overflow: hidden;
+  border-radius: 0.25rem;
+  background: var(--color-paper-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+@utility pending-review-meta {
+  & strong {
+    display: block;
+    word-break: break-word;
+  }
+}
+
+@utility pending-review-actions {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+/* GPS review modal — wider than the default .modal */
+dialog.modal.modal-wide {
+  max-width: 42rem;
+}
+
+/* GPS review grid inside the post-upload confirmation modal */
+.gps-review-grid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.gps-review-grid > li {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid var(--color-edge);
+  border-radius: 0.375rem;
+}
+
+.gps-review-thumb { width: 56px; height: 56px; overflow: hidden; border-radius: 0.25rem; background: var(--color-paper-surface); display: flex; align-items: center; justify-content: center; }
+.gps-review-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.gps-review-meta strong { display: block; word-break: break-word; }
+.gps-review-actions { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+
+@media (max-width: 640px) {
+  .gps-review-grid > li {
+    grid-template-columns: 56px 1fr;
+  }
+  .gps-review-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }
 
 /*
@@ -2051,11 +2287,43 @@ dialog.modal[open] {
   }
 
   /* Collapsed-toolbar dropdown (appears when the toolbar overflows to a
-     `…` trigger and the hidden buttons fly out below it). */
+     `…` trigger and the hidden buttons fly out below it). The vendored
+     CSS gives the popup z-index:30 — same as the toolbar buttons — so
+     the More button's hover/active state ends up painting over the
+     popup that just opened. Bump it above any in-toolbar paint. */
   .toastui-editor-dropdown-toolbar {
     background-color: var(--color-paper-surface) !important;
     border: 1px solid var(--color-edge) !important;
     box-shadow: 0 4px 12px var(--color-shadow) !important;
+    z-index: 40 !important;
+  }
+
+  /* Mobile popup treatment — image/link/table/heading dialogs and the
+     More-overflow toolbar all render as `position: absolute` anchored
+     to their trigger, which on phones lands them off-screen or behind
+     the keyboard. Below `sm` we pin the dialog popups as a full-width
+     bottom sheet (standard mobile pattern), and let the More dropdown
+     wrap to multiple rows so every overflow button stays in reach. */
+  @media (max-width: 639px) {
+    .toastui-editor-popup {
+      position: fixed !important;
+      top: auto !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      margin: 0 !important;
+      width: 100vw !important;
+      max-width: 100vw !important;
+      max-height: 80dvh;
+      overflow-y: auto;
+      border-radius: 8px 8px 0 0 !important;
+      z-index: 1000 !important;
+    }
+    .toastui-editor-dropdown-toolbar {
+      flex-wrap: wrap !important;
+      height: auto !important;
+      max-width: calc(100vw - 16px) !important;
+    }
   }
 
   /* Tooltip shown on toolbar-button hover. Defaults are light grey on

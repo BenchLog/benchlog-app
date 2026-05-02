@@ -113,6 +113,12 @@ class FileVersion(Base):
     height: Mapped[int | None] = mapped_column(Integer)
     thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
 
+    # See alembic migration a3a4d5e6f7b8 for the semantics.
+    has_gps: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_quarantined: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     file: Mapped["ProjectFile"] = relationship(
         back_populates="versions", foreign_keys=[file_id]
     )

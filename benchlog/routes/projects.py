@@ -391,6 +391,32 @@ def _apply_filter_query(
 
 SHORT_DESCRIPTION_MAX_LEN = 200
 
+# Hard cap on the markdown description, in UTF-8 bytes. The `projects` table
+# carries a STORED generated `tsvector` over title + description, and Postgres
+# rejects any tsvector value over ~1 MB. Embedded base64 image data URLs from
+# the toast-ui editor blow past that ceiling instantly (a single phone photo
+# is several MB), surfacing as an opaque 500. Reject early with a friendly
+# message instead — and 256 KB is still ~250k characters of prose, well past
+# anything a real description needs.
+DESCRIPTION_MAX_BYTES = 256 * 1024
+
+
+def _description_size_error(text: str | None) -> str | None:
+    """Return a user-facing error if `text` would overflow the search index.
+
+    Returns None when the text is fine. Callers turn the message into either
+    a form re-render or a JSON 400, depending on the endpoint's contract.
+    """
+    if not text:
+        return None
+    if len(text.encode("utf-8")) <= DESCRIPTION_MAX_BYTES:
+        return None
+    return (
+        "Description is too large. If you pasted or dropped an image into the "
+        "editor it was embedded as inline data — upload it via the Files tab "
+        "and link to it with `files/your-image.jpg` instead."
+    )
+
 
 def _clean_short_description(raw: str) -> str:
     """Trim and collapse internal whitespace runs in a short description.
@@ -653,6 +679,8 @@ async def create_project(
         return await fail(
             f"Short description must be {SHORT_DESCRIPTION_MAX_LEN} characters or fewer."
         )
+    if (err := _description_size_error(values["description"])) is not None:
+        return await fail(err)
 
     if values["slug"]:
         normalized = normalize_slug(values["slug"])
@@ -761,6 +789,8 @@ async def project_detail(
                     RelationType.depends_on,
                 )
             ],
+            "error": request.session.pop("flash_error", None),
+            "notice": request.session.pop("flash_notice", None),
         },
     )
 
@@ -1053,6 +1083,8 @@ async def update_project(
         return await fail(
             f"Short description must be {SHORT_DESCRIPTION_MAX_LEN} characters or fewer."
         )
+    if (err := _description_size_error(values["description"])) is not None:
+        return await fail(err)
 
     normalized = normalize_slug(values["slug"])
     if not normalized:
@@ -1113,7 +1145,19 @@ async def update_description(
         form = await request.form()
         description = str(form.get("description") or "").strip()
 
-    # Matches the main edit path: empty → NULL; no upper-bound enforced.
+    if (err := _description_size_error(description)) is not None:
+        # JSON: surfaced inline in the editor's error span. Form fallback:
+        # surface via the flash channel that the project detail already
+        # renders, then redirect back so the no-JS path stays consistent
+        # with the rest of the project edit flow.
+        if is_json:
+            raise HTTPException(status_code=400, detail=err)
+        request.session["flash_error"] = err
+        return RedirectResponse(
+            f"/u/{user.username}/{project.slug}", status_code=302
+        )
+
+    # Matches the main edit path: empty → NULL.
     project.description = description or None
     await db.commit()
 

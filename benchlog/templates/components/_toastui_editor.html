@@ -20,6 +20,13 @@
                   dict: {slug, title}. Share the file_index gate — editors
                   that get a file_index also get this one, empty list if
                   the project has no titled entries yet.
+    - upload_url  (str|None, optional) project files endpoint to receive
+                  inline image uploads (paste / drop / toolbar "Add
+                  image"). When set, toast-ui's default base64 embed is
+                  replaced with a real upload that returns a `files/…`
+                  reference, picked up by the file-link rewriter at
+                  render time. Omit on contexts with no project (bio,
+                  collection forms) — image embeds are blocked there.
 
   The <textarea> stays in the DOM (hidden) so form submits pick up its
   value — `toastui-init.js` keeps it synced on every change and on form
@@ -43,6 +50,7 @@
          data-toastui-source-id="toastui-source-{{ id_suffix }}"
          {% if file_index is defined and file_index is not none %}data-toastui-file-index='{{ file_index|tojson }}'{% endif %}
          {% if entry_index is defined and entry_index is not none %}data-toastui-entry-index='{{ entry_index|tojson }}'{% endif %}
+         {% if upload_url is defined and upload_url %}data-toastui-upload-url="{{ upload_url }}"{% endif %}
          {% if placeholder %}data-toastui-placeholder="{{ placeholder }}"{% endif %}
          id="toastui-mount-{{ id_suffix }}"
          class="h-full"></div>

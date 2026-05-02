@@ -318,6 +318,72 @@ async def test_fork_copies_journal_links_files_and_versions(client, db):
     assert len(fork_versions) == 3  # 2 notes + 1 cover
 
 
+async def test_fork_skips_quarantined_versions(client, db):
+    """Quarantined source versions are owner-internal — alice never published
+    them. A fork should inherit only what a non-owner could see, otherwise
+    the forker (as new owner) gets bytes alice deliberately withheld."""
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    src = await _make_project(db, alice, slug="widget", is_public=True)
+
+    await login(client, "alice")
+
+    # v1: clean JPEG, published.
+    img = Image.new("RGB", (40, 30), color=(180, 80, 60))
+    exif = img.getexif()
+    exif[0x010E] = "no gps"
+    buf_clean = io.BytesIO()
+    img.save(buf_clean, format="JPEG", exif=exif.tobytes())
+    up1 = await _upload(
+        client, f"/u/alice/{src.slug}/files",
+        filename="photo.jpg", content=buf_clean.getvalue(), mime="image/jpeg",
+        csrf_path=f"/u/alice/{src.slug}",
+    )
+    assert up1.status_code == 302
+    file_row = (await db.execute(select(ProjectFile))).scalar_one()
+
+    # v2: same file, GPS-tagged → quarantined.
+    img2 = Image.new("RGB", (40, 30), color=(180, 80, 60))
+    exif2 = img2.getexif()
+    gps = exif2.get_ifd(0x8825)
+    gps[0x001B] = b"FORK_GPS_CANARY"
+    buf_gps = io.BytesIO()
+    img2.save(buf_gps, format="JPEG", exif=exif2.tobytes())
+    token = await csrf_token(client, f"/u/alice/{src.slug}/files/{file_row.id}")
+    resp = await client.post(
+        f"/u/alice/{src.slug}/files/{file_row.id}/version",
+        data={"_csrf": token, "changelog": ""},
+        files={"upload": ("photo.jpg", buf_gps.getvalue(), "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_quarantined"] is True
+
+    # Bob forks alice's project.
+    await client.post("/logout", data={"_csrf": await csrf_token(client, "/projects")})
+    await login(client, "bob")
+    fork_token = await csrf_token(client, "/projects")
+    fork_resp = await client.post(
+        f"/u/alice/{src.slug}/fork", data={"_csrf": fork_token}
+    )
+    assert fork_resp.status_code == 302
+
+    fork = await _load_fork_by_slug(db, bob.id, src.slug)
+    assert len(fork.files) == 1
+    forked_file = fork.files[0]
+    # Only v1 carried over; v2 was quarantined and skipped.
+    assert len(forked_file.versions) == 1
+    assert forked_file.versions[0].version_number == 1
+    assert forked_file.current_version is not None
+    assert forked_file.current_version.version_number == 1
+
+    # The GPS canary must not exist anywhere in the fork's storage.
+    storage = get_storage()
+    for v in forked_file.versions:
+        on_disk = storage.full_path(v.storage_path).read_bytes()
+        assert b"FORK_GPS_CANARY" not in on_disk
+
+
 async def test_fork_creates_fork_of_relation(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     bob = await make_user(db, email="bob@test.com", username="bob")

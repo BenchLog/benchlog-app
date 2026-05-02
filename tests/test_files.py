@@ -2,6 +2,7 @@
 
 import functools
 import io
+import uuid
 import shutil
 import zipfile
 from pathlib import Path
@@ -19,7 +20,7 @@ from benchlog.files import (
     preview_kind,
     safe_filename,
 )
-from benchlog.markdown import rewrite_project_file_links
+from benchlog.markdown import rewrite_project_file_images, rewrite_project_file_links
 from benchlog.models import (
     FileVersion,
     Project,
@@ -588,6 +589,78 @@ async def test_thumbnail_404s_for_non_image(client, db):
     )
     file = (await db.execute(select(ProjectFile))).scalar_one()
     resp = await client.get(f"/u/alice/bench/files/{file.id}/thumb")
+    assert resp.status_code == 404
+
+
+async def test_raw_endpoint_serves_image_inline(client, db):
+    # `/raw` is what `<img src="files/...">` embeds in descriptions resolve
+    # to: it must serve the image bytes inline (not as an attachment) with
+    # the original mime type so the browser actually renders it.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="photo.png",
+        content=_png_bytes(),
+        mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    # `inline` (not `attachment`) so the browser renders rather than downloads.
+    assert resp.headers["content-disposition"].startswith("inline;")
+    # `nosniff` matters here — without it a misdeclared mime could trick a
+    # browser into running an HTML/SVG payload same-origin.
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_raw_endpoint_404s_for_non_allowlisted_mime(client, db):
+    # The allowlist exists to keep us from serving SVG (script-bearing) or
+    # arbitrary types inline same-origin. A plain text file must be rejected
+    # — owners can still grab it via /download, just not via /raw.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="notes.txt",
+        content=b"hello",
+        mime="text/plain",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert resp.status_code == 404
+
+
+async def test_raw_endpoint_respects_project_visibility(client, db):
+    # Mirrors the visibility framing used everywhere else: a stranger
+    # asking for a raw file on a private project gets 404, not 403, so
+    # the URL doesn't leak that the project exists.
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(Project(user_id=alice.id, title="Bench", slug="bench", status=ProjectStatus.idea, is_public=False))
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="photo.png",
+        content=_png_bytes(),
+        mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    await login(client, "bob")
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/raw")
     assert resp.status_code == 404
 
 
@@ -2888,7 +2961,10 @@ async def test_upload_returns_204_json_on_success(client, db):
         files=files,
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "file_id" in body
+    assert isinstance(body.get("version_number"), int) and body["version_number"] >= 1
     f = (await db.execute(select(ProjectFile))).scalar_one()
     assert f.filename == "dropped.md"
     assert f.path == "drop-target"
@@ -2934,7 +3010,8 @@ async def test_upload_via_dnd_to_nested_folder_creates_path(client, db):
         files=files,
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    assert "file_id" in resp.json()
     f = (await db.execute(select(ProjectFile))).scalar_one()
     assert f.path == "drop-into/dropped-folder"
     assert f.filename == "nested.md"
@@ -2965,7 +3042,8 @@ async def test_upload_collision_creates_new_version(client, db):
         files=files2,
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
+    assert "file_id" in resp.json()
     rows = (await db.execute(select(ProjectFile))).scalars().all()
     assert len(rows) == 1  # same row, new version
     versions = (await db.execute(select(FileVersion))).scalars().all()
@@ -3282,6 +3360,34 @@ def test_markdown_rewriter_leaves_other_links_alone():
     html = '<p><a href="https://example.com">ext</a></p>'
     out = rewrite_project_file_links(html, "alice", "bench", lambda p, n: None)
     assert 'href="https://example.com"' in out
+
+
+def test_image_rewriter_resolves_to_raw_url():
+    # Embedded images need the `/raw` suffix so the browser receives the
+    # actual bytes — the bare `/files/{id}` URL renders the HTML detail
+    # page, which would render as a broken `<img>`.
+    html = '<p><img src="files/photos/build.jpg" alt="build"></p>'
+
+    def lookup(path, name):
+        return "abc123" if (path, name) == ("photos", "build.jpg") else None
+
+    out = rewrite_project_file_images(html, "alice", "bench", lookup)
+    assert 'src="/u/alice/bench/files/abc123/raw"' in out
+
+
+def test_image_rewriter_leaves_unknown_files_untouched():
+    # On a lookup miss we deliberately keep the original src so the image
+    # renders as broken — that's a visible signal to the author that the
+    # link is dangling, much louder than silently rewriting to a folder URL.
+    html = '<p><img src="files/missing.jpg" alt=""></p>'
+    out = rewrite_project_file_images(html, "alice", "bench", lambda p, n: None)
+    assert 'src="files/missing.jpg"' in out
+
+
+def test_image_rewriter_leaves_external_images_alone():
+    html = '<p><img src="https://example.com/foo.png" alt=""></p>'
+    out = rewrite_project_file_images(html, "alice", "bench", lambda p, n: None)
+    assert 'src="https://example.com/foo.png"' in out
 
 
 # ---------- delete / restore individual version ---------- #
@@ -4264,7 +4370,7 @@ async def test_gallery_upload_honors_show_in_gallery_flag(client, db):
         files=files,
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
 
     # show_in_gallery=0 (explicit opt-out — kept for future UI surfaces).
     token = await csrf_token(client, "/u/alice/bench")
@@ -4275,7 +4381,7 @@ async def test_gallery_upload_honors_show_in_gallery_flag(client, db):
         files=files,
         headers={"Accept": "application/json"},
     )
-    assert resp.status_code == 204
+    assert resp.status_code == 200
 
     rows = {
         f.filename: f.show_in_gallery
@@ -4451,3 +4557,1055 @@ async def test_lightbox_toolbar_hidden_for_anonymous_viewer(client, db):
     assert '<dialog class="gallery-lightbox"' in body
     assert "data-lightbox-toolbar" not in body
     assert "data-lightbox-cover-btn" not in body
+
+
+# ---------- GPS quarantine ---------- #
+
+
+def _build_jpeg_with_gps(canary: str = "GPS_CANARY") -> bytes:
+    """JPEG with a minimal GPS IFD so has_gps_data returns True."""
+    img = Image.new("RGB", (40, 30), color=(180, 80, 60))
+    exif = img.getexif()
+    gps = exif.get_ifd(0x8825)
+    gps[0x0001] = "N"   # GPSLatitudeRef
+    gps[0x001B] = canary.encode()  # GPSProcessingMethod — carries canary
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", exif=exif.tobytes())
+    return buf.getvalue()
+
+
+def _build_jpeg_without_gps() -> bytes:
+    """Plain JPEG with no EXIF at all."""
+    img = Image.new("RGB", (40, 30), color=(180, 80, 60))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+async def test_upload_with_gps_quarantines(client, db):
+    """GPS-tagged upload: version row has has_gps=True + is_quarantined=True,
+    file row has current_version_id=None (not published)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    img = _build_jpeg_with_gps("UPLOAD_GPS")
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("photo.jpg", img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_gps"] is True
+    assert body["is_quarantined"] is True
+    assert "version_id" in body
+    assert "file_id" in body
+
+    # DB: file row exists, but current_version_id is None (not published yet).
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    await db.refresh(file)
+    assert file.current_version_id is None
+
+    # Version row exists with correct flags.
+    version = await db.get(FileVersion, uuid.UUID(body["version_id"]))
+    assert version is not None
+    assert version.has_gps is True
+    assert version.is_quarantined is True
+
+
+async def test_upload_without_gps_publishes(client, db):
+    """Non-GPS upload: file is published immediately (current_version_id set)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    img = _build_jpeg_without_gps()
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("clean.jpg", img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_gps"] is False
+    assert body["is_quarantined"] is False
+    assert "version_id" in body
+    assert "file_id" in body
+
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    await db.refresh(file)
+    assert file.current_version_id is not None
+
+
+async def test_quarantined_file_has_no_current_version(client, db):
+    """A GPS-tagged upload leaves current_version_id=None so the file is
+    unpublished. The files tab hides it from the tree and shows it only in
+    the pending-review section (owner-only).
+    """
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    img = _build_jpeg_with_gps("HIDDEN_GPS")
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("geotagged.jpg", img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_quarantined"] is True
+
+    # DB invariant: quarantined file has no current_version.
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    await db.refresh(file)
+    assert file.current_version_id is None
+
+    # Files tab loads without error. The filename appears in the
+    # pending-review section (owner) but not in the file-tree table.
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    # The filename appears in the pending-review section (owner-only).
+    assert "geotagged.jpg" in resp.text
+    # But the file-tree row (data-file-filename attribute) must NOT be present.
+    assert 'data-file-filename="geotagged.jpg"' not in resp.text
+
+
+async def test_non_image_upload_not_quarantined(client, db):
+    """Non-image uploads bypass GPS detection and are never quarantined."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("notes.txt", b"hello world", "text/plain")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["has_gps"] is False  # None → False in JSON
+    assert body["is_quarantined"] is False
+
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    await db.refresh(file)
+    assert file.current_version_id is not None
+
+
+async def test_new_version_with_gps_quarantines(client, db):
+    """upload_new_version: GPS version is quarantined, current_version_id unchanged."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    # Upload v1 (clean).
+    img_clean = _build_jpeg_without_gps()
+    resp1 = await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="photo.jpg",
+        content=img_clean,
+        mime="image/jpeg",
+        csrf_path="/u/alice/bench",
+    )
+    assert resp1.status_code == 302
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    v1_id = file.current_version_id
+
+    # Upload v2 (GPS-tagged) via the version endpoint.
+    img_gps = _build_jpeg_with_gps("NEW_VERSION_GPS")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp2 = await client.post(
+        f"/u/alice/bench/files/{file.id}/version",
+        data={"_csrf": token, "changelog": ""},
+        files={"upload": ("photo.jpg", img_gps, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp2.status_code == 200
+    body = resp2.json()
+    assert body["has_gps"] is True
+    assert body["is_quarantined"] is True
+    # Detail-page modal needs these to populate + call the batch endpoint.
+    assert "version_id" in body
+    assert isinstance(body.get("version_number"), int) and body["version_number"] >= 1
+    assert "filename" in body
+
+    # current_version_id must still point to v1.
+    await db.refresh(file)
+    assert file.current_version_id == v1_id
+
+
+# ---------- single-version GPS action endpoints ---------- #
+
+
+async def _upload_gps_file(client, db, *, username: str, slug: str) -> tuple:
+    """Helper: upload a GPS-tagged JPEG; return (file_row, version_row)."""
+    img = _build_jpeg_with_gps("CANARY")
+    token = await csrf_token(client, f"/u/{username}/{slug}")
+    resp = await client.post(
+        f"/u/{username}/{slug}/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("geo.jpg", img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_quarantined"] is True
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    version = await db.get(FileVersion, uuid.UUID(body["version_id"]))
+    return file, version
+
+
+async def _post_action(client, url: str, *, csrf_url: str) -> object:
+    """POST to an action endpoint with a CSRF token, return response."""
+    token = await csrf_token(client, csrf_url)
+    return await client.post(url, data={"_csrf": token})
+
+
+async def test_strip_gps_endpoint_rewrites_bytes(client, db):
+    """POST strip-gps: bytes on disk have GPS removed, has_gps=False,
+    is_quarantined=False, current_version_id set. No new version row created."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    file, version = await _upload_gps_file(client, db, username="alice", slug="bench")
+    storage = get_storage()
+    original_bytes = await storage.read(version.storage_path)
+    assert b"CANARY" in original_bytes  # sanity check: GPS canary is in raw bytes
+
+    resp = await _post_action(
+        client,
+        f"/u/alice/bench/files/{file.id}/version/1/strip-gps",
+        csrf_url=f"/u/alice/bench/files/{file.id}",
+    )
+    assert resp.status_code == 204
+
+    await db.refresh(file)
+    await db.refresh(version)
+
+    # Flags updated.
+    assert version.has_gps is False
+    assert version.is_quarantined is False
+    # File is now published.
+    assert file.current_version_id == version.id
+    # Bytes on disk have GPS stripped (canary is gone).
+    stripped_bytes = await storage.read(version.storage_path)
+    assert b"CANARY" not in stripped_bytes
+    # size_bytes and checksum updated to match new bytes.
+    import hashlib
+    assert version.size_bytes == len(stripped_bytes)
+    assert version.checksum == hashlib.sha256(stripped_bytes).hexdigest()
+    # No new version row created: still only v1.
+    versions = (await db.execute(
+        select(FileVersion).where(FileVersion.file_id == file.id)
+    )).scalars().all()
+    assert len(versions) == 1
+
+
+async def test_release_endpoint_publishes_unchanged(client, db):
+    """POST release: is_quarantined=False, bytes unchanged, current_version_id set."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    file, version = await _upload_gps_file(client, db, username="alice", slug="bench")
+    storage = get_storage()
+    original_bytes = await storage.read(version.storage_path)
+
+    resp = await _post_action(
+        client,
+        f"/u/alice/bench/files/{file.id}/version/1/release",
+        csrf_url=f"/u/alice/bench/files/{file.id}",
+    )
+    assert resp.status_code == 204
+
+    await db.refresh(file)
+    await db.refresh(version)
+
+    assert version.is_quarantined is False
+    assert file.current_version_id == version.id
+    # Bytes are unchanged.
+    after_bytes = await storage.read(version.storage_path)
+    assert after_bytes == original_bytes
+    # has_gps still True (release doesn't strip).
+    assert version.has_gps is True
+
+
+async def test_discard_endpoint_deletes_first_version_file(client, db):
+    """POST discard on only version: file row deleted, version row deleted, blob deleted."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    file, version = await _upload_gps_file(client, db, username="alice", slug="bench")
+    file_id = file.id
+    version_id = version.id
+    storage_path = version.storage_path
+
+    resp = await _post_action(
+        client,
+        f"/u/alice/bench/files/{file.id}/version/1/discard",
+        csrf_url=f"/u/alice/bench/files/{file.id}",
+    )
+    assert resp.status_code == 204
+
+    # Expire the session to clear the identity map cache so db.get re-queries.
+    await db.rollback()
+    # File row gone.
+    gone_file = await db.get(ProjectFile, file_id)
+    assert gone_file is None
+    # Version row gone.
+    gone_version = await db.get(FileVersion, version_id)
+    assert gone_version is None
+    # Blob gone (best-effort; storage backend should raise FileNotFoundError or return False).
+    storage = get_storage()
+    assert not await storage.exists(storage_path)
+
+
+async def test_discard_endpoint_keeps_file_for_subsequent_version(client, db):
+    """POST discard on v2 (GPS): v2 gone, file row intact, current_version stays v1."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    # Upload v1 (clean, published).
+    img_clean = _build_jpeg_without_gps()
+    resp1 = await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="photo.jpg",
+        content=img_clean,
+        mime="image/jpeg",
+        csrf_path="/u/alice/bench",
+    )
+    assert resp1.status_code == 302
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    v1_id = file.current_version_id
+    assert v1_id is not None
+
+    # Upload v2 (GPS, quarantined) via the version endpoint.
+    img_gps = _build_jpeg_with_gps("V2_GPS")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp2 = await client.post(
+        f"/u/alice/bench/files/{file.id}/version",
+        data={"_csrf": token, "changelog": ""},
+        files={"upload": ("photo.jpg", img_gps, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp2.status_code == 200
+    body = resp2.json()
+    v2_id = uuid.UUID(body["version_id"])
+    assert body["is_quarantined"] is True
+
+    # Discard v2.
+    resp = await _post_action(
+        client,
+        f"/u/alice/bench/files/{file.id}/version/2/discard",
+        csrf_url=f"/u/alice/bench/files/{file.id}",
+    )
+    assert resp.status_code == 204
+
+    # File row survives.
+    await db.refresh(file)
+    assert file is not None
+    # current_version still v1.
+    assert file.current_version_id == v1_id
+    # v2 row gone.
+    gone_v2 = await db.get(FileVersion, v2_id)
+    assert gone_v2 is None
+
+
+async def test_strip_gps_owner_only(client, db):
+    """Non-owner POST to strip-gps returns 404."""
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    project = Project(
+        user_id=alice.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+
+    await login(client, "alice")
+    file, _ = await _upload_gps_file(client, db, username="alice", slug="bench")
+
+    # Now log in as Bob and try to strip GPS.
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/strip-gps",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_strip_gps_unknown_file_404(client, db):
+    """POST to strip-gps with a nonexistent file_id returns 404."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    fake_id = uuid.uuid4()
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        f"/u/alice/bench/files/{fake_id}/version/1/strip-gps",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_strip_gps_unknown_version_404(client, db):
+    """POST to strip-gps with a bad version_number returns 404."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    file, _ = await _upload_gps_file(client, db, username="alice", slug="bench")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/999/strip-gps",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_strip_gps_idempotent_on_already_clean(client, db):
+    """POST strip-gps on a version where has_gps=False returns 204 without error."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    # Upload a clean (no GPS) image.
+    img_clean = _build_jpeg_without_gps()
+    resp1 = await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="clean.jpg",
+        content=img_clean,
+        mime="image/jpeg",
+        csrf_path="/u/alice/bench",
+    )
+    assert resp1.status_code == 302
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+    v = (await db.execute(select(FileVersion))).scalar_one()
+    assert v.has_gps is False
+
+    # strip-gps on a clean version is a no-op, returns 204.
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}/version/1/strip-gps",
+        data={"_csrf": token},
+    )
+    assert resp.status_code == 204
+
+
+async def test_quarantined_version_hidden_from_non_owner_history(client, db):
+    """Non-owner viewing a public file detail page sees v1 in the version
+    history but NOT v2 (which is quarantined). The quarantined row leaks
+    timestamp + size + 'GPS-positive' marker even when the bytes 404."""
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    project = Project(
+        user_id=alice.id, title="Bench", slug="bench",
+        status=ProjectStatus.in_progress, is_public=True,
+    )
+    db.add(project)
+    await db.commit()
+
+    await login(client, "alice")
+    img_clean = _build_jpeg_without_gps()
+    resp1 = await _upload(
+        client, "/u/alice/bench/files",
+        filename="photo.jpg", content=img_clean, mime="image/jpeg",
+        csrf_path="/u/alice/bench",
+    )
+    assert resp1.status_code == 302
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    img_gps = _build_jpeg_with_gps("V2_HIDDEN")
+    token = await csrf_token(client, f"/u/alice/bench/files/{file.id}")
+    resp2 = await client.post(
+        f"/u/alice/bench/files/{file.id}/version",
+        data={"_csrf": token, "changelog": ""},
+        files={"upload": ("photo.jpg", img_gps, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp2.status_code == 200
+    body = resp2.json()
+    v2_id = body["version_id"]
+
+    # Owner sees both rows.
+    resp_owner = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp_owner.status_code == 200
+    assert f'data-version-id="{v2_id}"' in resp_owner.text
+    assert "Awaiting review" in resp_owner.text
+
+    # Non-owner sees v1 row but NOT v2.
+    await login(client, "bob")
+    resp_bob = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp_bob.status_code == 200
+    assert f'data-version-id="{v2_id}"' not in resp_bob.text
+    assert "Awaiting review" not in resp_bob.text
+
+
+# ---------- batch GPS action endpoints ---------- #
+
+
+async def _upload_gps_quarantined(client, db, *, username: str, slug: str, name: str = "geo.jpg") -> tuple:
+    """Upload one GPS-tagged JPEG; return (file_row, version_row, version_id_str)."""
+    img = _build_jpeg_with_gps(f"CANARY_{name}")
+    token = await csrf_token(client, f"/u/{username}/{slug}")
+    resp = await client.post(
+        f"/u/{username}/{slug}/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": (name, img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_quarantined"] is True
+    file = await db.get(ProjectFile, uuid.UUID(body["file_id"]))
+    version = await db.get(FileVersion, uuid.UUID(body["version_id"]))
+    return file, version, body["version_id"]
+
+
+async def _make_alice_project(db, client) -> tuple:
+    """Create alice + bench project, log in. Return (user, project)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea)
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+    return user, project
+
+
+async def test_strip_gps_batch_processes_multiple(client, db):
+    """Upload 3 GPS files, batch-strip → all 3 published, has_gps=False."""
+    await _make_alice_project(db, client)
+
+    v_ids = []
+    versions = []
+    for i in range(3):
+        file, version, v_id = await _upload_gps_quarantined(
+            client, db, username="alice", slug="bench", name=f"photo{i}.jpg"
+        )
+        v_ids.append(v_id)
+        versions.append(version)
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files/strip-gps-batch",
+        json={"version_ids": v_ids},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 3
+    assert body["errors"] == []
+
+    for v in versions:
+        await db.refresh(v)
+        assert v.has_gps is False
+        assert v.is_quarantined is False
+
+
+async def test_release_batch_publishes_all(client, db):
+    """Upload 2 quarantined files, batch-release → all published, has_gps still True."""
+    await _make_alice_project(db, client)
+
+    v_ids = []
+    versions = []
+    files = []
+    for i in range(2):
+        file, version, v_id = await _upload_gps_quarantined(
+            client, db, username="alice", slug="bench", name=f"geo{i}.jpg"
+        )
+        v_ids.append(v_id)
+        versions.append(version)
+        files.append(file)
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files/release-batch",
+        json={"version_ids": v_ids},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 2
+    assert body["errors"] == []
+
+    for v, f in zip(versions, files):
+        await db.refresh(v)
+        await db.refresh(f)
+        assert v.is_quarantined is False
+        assert v.has_gps is True  # release keeps GPS data
+        assert f.current_version_id == v.id
+
+
+async def test_discard_batch_deletes_all(client, db):
+    """Upload 3 quarantined files, batch-discard → all gone."""
+    await _make_alice_project(db, client)
+
+    v_ids = []
+    file_ids = []
+    version_ids_uuid = []
+    for i in range(3):
+        file, version, v_id = await _upload_gps_quarantined(
+            client, db, username="alice", slug="bench", name=f"drop{i}.jpg"
+        )
+        v_ids.append(v_id)
+        file_ids.append(file.id)
+        version_ids_uuid.append(version.id)
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files/discard-batch",
+        json={"version_ids": v_ids},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 3
+    assert body["errors"] == []
+
+    # Expire identity map so db.get re-queries from the DB.
+    await db.rollback()
+
+    # All file and version rows gone.
+    for fid in file_ids:
+        assert await db.get(ProjectFile, fid) is None
+    for vid in version_ids_uuid:
+        assert await db.get(FileVersion, vid) is None
+
+
+async def test_batch_endpoint_404s_for_cross_project_version(client, db):
+    """version_id from another project → entire batch 404."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    proj_alice = Project(user_id=user.id, title="Alice Bench", slug="bench", status=ProjectStatus.idea)
+    proj_bob = Project(user_id=bob.id, title="Bob Bench", slug="bobproject", status=ProjectStatus.idea)
+    db.add(proj_alice)
+    db.add(proj_bob)
+    await db.commit()
+
+    # Upload as alice.
+    await login(client, "alice")
+    _, _, alice_v_id = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="alice.jpg"
+    )
+
+    # Upload as bob.
+    await login(client, "bob")
+    _, _, bob_v_id = await _upload_gps_quarantined(
+        client, db, username="bob", slug="bobproject", name="bob.jpg"
+    )
+
+    # Alice tries to batch-strip including bob's version_id.
+    await login(client, "alice")
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files/strip-gps-batch",
+        json={"version_ids": [alice_v_id, bob_v_id]},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_batch_endpoint_owner_only(client, db):
+    """Non-owner POST → 404."""
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    proj = Project(user_id=alice.id, title="Bench", slug="bench", status=ProjectStatus.idea)
+    db.add(proj)
+    await db.commit()
+
+    await login(client, "alice")
+    _, _, v_id = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="secret.jpg"
+    )
+
+    # Bob tries to strip — the URL says alice's project, but Bob is logged in.
+    await login(client, "bob")
+    token = await csrf_token(client, "/projects")
+    resp = await client.post(
+        "/u/alice/bench/files/strip-gps-batch",
+        json={"version_ids": [v_id]},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 404
+
+
+async def test_batch_endpoint_rejects_oversize_version_id_list(client, db):
+    """Owner-only endpoints still bound the per-request workload: an
+    arbitrarily long version_ids list is rejected before any per-id work."""
+    await _make_alice_project(db, client)
+
+    token = await csrf_token(client, "/u/alice/bench")
+    too_many = [str(uuid.uuid4()) for _ in range(201)]
+    resp = await client.post(
+        "/u/alice/bench/files/strip-gps-batch",
+        json={"version_ids": too_many},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 400
+    assert "200" in resp.json()["detail"]
+
+
+async def test_batch_endpoint_partial_errors_continue(client, db):
+    """One version's blob deleted before strip → error recorded, others succeed."""
+    await _make_alice_project(db, client)
+
+    file0, version0, v_id0 = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="good.jpg"
+    )
+    file1, version1, v_id1 = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="bad.jpg"
+    )
+
+    # Delete the blob for version1 so strip will fail.
+    storage = get_storage()
+    await storage.delete(version1.storage_path)
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files/strip-gps-batch",
+        # bad.jpg first so we verify processing continues after error
+        json={"version_ids": [v_id1, v_id0]},
+        headers={"X-CSRF-Token": token},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["processed"] == 1
+    assert len(body["errors"]) == 1
+    assert "bad.jpg" in body["errors"][0]
+
+    # good.jpg was stripped successfully.
+    await db.refresh(version0)
+    assert version0.has_gps is False
+    assert version0.is_quarantined is False
+
+
+# ---------- pending review section + GPS warning chip ---------- #
+
+
+async def test_files_tab_shows_pending_review_section_for_owner(client, db):
+    """Quarantined upload → owner sees the pending-review section in the Files tab."""
+    user, project = await _make_alice_project(db, client)
+    await _upload_gps_quarantined(client, db, username="alice", slug="bench", name="photo.jpg")
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert 'aria-label="Uploads awaiting GPS review"' in resp.text
+    assert "GPS review" in resp.text
+    assert "Strip from all" in resp.text
+    assert "photo.jpg" in resp.text
+
+
+async def test_files_tab_no_pending_section_when_no_quarantined(client, db):
+    """No quarantined uploads → pending-review section is not rendered."""
+    user, project = await _make_alice_project(db, client)
+    # Upload a clean (non-GPS) file so the page has content.
+    img = _build_jpeg_without_gps()
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("clean.jpg", img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 200
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    # The pending-review *section* must not be rendered. Check both the class
+    # (only present when section is rendered) and the aria-label to ensure the
+    # entire section markup is absent, not just a single button label.
+    assert 'class="pending-review"' not in resp.text
+    assert 'aria-label="Uploads awaiting GPS review"' not in resp.text
+
+
+async def test_files_tab_no_pending_section_for_non_owner(client, db):
+    """Non-owner viewer does not see the pending-review section even if quarantined files exist."""
+    # Set up alice's public project with a quarantined file.
+    user, project = await _make_alice_project(db, client)
+    project.is_public = True
+    await db.commit()
+    await _upload_gps_quarantined(client, db, username="alice", slug="bench", name="geo.jpg")
+
+    # Log in as bob (non-owner) and visit alice's public project.
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await login(client, "bob")
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert "data-pending-review" not in resp.text
+    assert "Strip from all" not in resp.text
+
+
+async def test_file_thumbnail_accepts_version_param(client, db):
+    """GET /files/{file_id}/thumb?v=N serves a quarantined version's thumbnail."""
+    user, project = await _make_alice_project(db, client)
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="gps.jpg"
+    )
+    # Quarantined file has no current_version, so bare /thumb would 404.
+    resp_bare = await client.get(f"/u/alice/bench/files/{file.id}/thumb")
+    assert resp_bare.status_code == 404
+
+    # With ?v=<version_number> it should serve the thumbnail (if one exists).
+    if version.thumbnail_path:
+        resp_v = await client.get(f"/u/alice/bench/files/{file.id}/thumb?v={version.version_number}")
+        assert resp_v.status_code == 200
+        assert resp_v.headers["content-type"].startswith("image/")
+
+
+async def test_gps_warning_chip_shown_for_published_gps_file(client, db):
+    """A published file that still has has_gps=True shows the GPS warning chip."""
+    user, project = await _make_alice_project(db, client)
+    file, version, v_id = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="tagged.jpg"
+    )
+    # Manually promote the quarantined version to current so it's published
+    # but still has GPS (simulating user chose Keep).
+    version.is_quarantined = False
+    file.current_version_id = version.id
+    await db.commit()
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert "Contains GPS" in resp.text
+
+
+async def test_detail_page_shows_strip_button_for_gps_version(client, db):
+    """Owner viewing a published-with-GPS file sees the GPS chip and Strip GPS button."""
+    user, project = await _make_alice_project(db, client)
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="tagged.jpg"
+    )
+    # Promote to published but leave has_gps=True (simulating user chose Keep).
+    version.is_quarantined = False
+    file.current_version_id = version.id
+    await db.commit()
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    assert "Contains GPS" in resp.text
+    assert "Strip GPS" in resp.text
+    assert "/strip-gps" in resp.text
+
+
+async def test_detail_page_no_strip_button_for_clean_version(client, db):
+    """Clean image — no GPS chip or Strip GPS button on the detail page."""
+    user, project = await _make_alice_project(db, client)
+    await _upload(
+        client, "/u/alice/bench/files",
+        filename="clean.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile).where(ProjectFile.project_id == project.id))).scalar_one()
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    assert "Contains GPS" not in resp.text
+    assert "/strip-gps" not in resp.text
+
+
+async def test_detail_page_no_strip_button_for_non_owner(client, db):
+    """Non-owner viewing a public project's GPS file — no Strip GPS button."""
+    user, project = await _make_alice_project(db, client)
+    project.is_public = True
+    await db.commit()
+
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="tagged.jpg"
+    )
+    version.is_quarantined = False
+    file.current_version_id = version.id
+    await db.commit()
+
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await login(client, "bob")
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200
+    assert "Contains GPS" in resp.text
+    assert "/strip-gps" not in resp.text
+
+
+# ---------- visibility audit ---------- #
+
+
+async def test_quarantined_file_hidden_from_files_tab_tree(client, db):
+    """Owner uploads a GPS file (quarantines). Files tab tree does NOT include
+    the file row — only the pending-review section shows it to the owner."""
+    user, project = await _make_alice_project(db, client)
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="geo.jpg"
+    )
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    # The file-tree row carries data-file-filename on its <tr>. If the
+    # quarantined file leaked into the tree, this attribute would be present.
+    assert 'data-file-filename="geo.jpg"' not in resp.text
+    # The filename still appears in the pending-review section (owner).
+    assert "geo.jpg" in resp.text
+
+
+async def test_quarantined_file_hidden_from_files_tab_tree_non_owner(client, db):
+    """Non-owner viewer's files tab does not include the quarantined file at all."""
+    user, project = await _make_alice_project(db, client)
+    project.is_public = True
+    await db.commit()
+
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="geo.jpg"
+    )
+
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await login(client, "bob")
+
+    resp = await client.get("/u/alice/bench/files")
+    assert resp.status_code == 200
+    assert 'data-file-filename="geo.jpg"' not in resp.text
+    # Pending-review section is owner-only — should be absent entirely.
+    assert "geo.jpg" not in resp.text
+
+
+async def test_quarantined_file_hidden_from_gallery(client, db):
+    """Public gallery doesn't show a quarantined image."""
+    user, project = await _make_alice_project(db, client)
+    project.is_public = True
+    await db.commit()
+
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="secret.jpg"
+    )
+
+    # Clear alice's session and view as an anonymous visitor.
+    client.cookies.clear()
+    resp = await client.get("/u/alice/bench/gallery")
+    assert resp.status_code == 200
+    assert "secret.jpg" not in resp.text
+
+
+async def test_quarantined_file_excluded_from_zip_download(client, db):
+    """Zip download doesn't include quarantined files but does include clean ones."""
+    user, project = await _make_alice_project(db, client)
+
+    # Upload a clean file (publishes).
+    clean_resp = await _upload(
+        client, "/u/alice/bench/files",
+        filename="clean.png", content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    # Upload a GPS file (quarantines).
+    gps_img = _build_jpeg_with_gps("ZIP_TEST")
+    token = await csrf_token(client, "/u/alice/bench")
+    gps_resp = await client.post(
+        "/u/alice/bench/files",
+        data={"_csrf": token, "path": "", "description": ""},
+        files={"upload": ("gps.jpg", gps_img, "image/jpeg")},
+        headers={"Accept": "application/json"},
+    )
+    assert gps_resp.status_code == 200
+    assert gps_resp.json()["is_quarantined"] is True
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.get(
+        "/u/alice/bench/files/download-zip",
+        headers={"_csrf": token},
+    )
+    assert resp.status_code == 200
+    z = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = z.namelist()
+    assert "clean.png" in names
+    assert "gps.jpg" not in names
+
+
+async def test_quarantined_file_detail_404_for_non_owner(client, db):
+    """Non-owner cannot access the detail page of a quarantined-only file."""
+    user, project = await _make_alice_project(db, client)
+    project.is_public = True
+    await db.commit()
+
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="geo.jpg"
+    )
+    # Quarantined: file.current_version_id is None.
+    assert file.current_version_id is None
+
+    bob = await make_user(db, email="bob@test.com", username="bob")
+    await login(client, "bob")
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 404
+
+
+async def test_quarantined_file_detail_accessible_to_owner(client, db):
+    """Owner can still access the detail page of a quarantined file."""
+    user, project = await _make_alice_project(db, client)
+    file, version, _ = await _upload_gps_quarantined(
+        client, db, username="alice", slug="bench", name="geo.jpg"
+    )
+
+    resp = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert resp.status_code == 200

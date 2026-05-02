@@ -59,13 +59,19 @@ def test_section_name_key_empty_for_empty_input():
 # ---------- config ---------- #
 
 
-def test_settings_metadata_fetch_allow_private_default_false():
+def test_settings_metadata_fetch_allow_private_default_false(monkeypatch):
     """The flag must default to False — the safe choice for any
     multi-user deployment. Self-hosted single-user instances flip it on
-    via env to enable previews of LAN URLs."""
+    via env to enable previews of LAN URLs.
+
+    Bypass both the developer's local `.env` file and any pre-set process
+    env var so this test asserts the class default rather than whatever
+    the maintainer has configured locally.
+    """
     from benchlog.config import Settings
 
-    assert Settings().metadata_fetch_allow_private is False
+    monkeypatch.delenv("BENCHLOG_METADATA_FETCH_ALLOW_PRIVATE", raising=False)
+    assert Settings(_env_file=None).metadata_fetch_allow_private is False
 
 
 # ---------- section CRUD ---------- #

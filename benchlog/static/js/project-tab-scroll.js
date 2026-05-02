@@ -1,25 +1,31 @@
 /*
- * Preserve scroll position across project tab switches.
+ * Auto-scroll the tab bar to the top of the viewport on tab switches.
  *
  * Clicking a tab triggers a real page load (each tab is its own URL),
- * so the browser scrolls to the top by default. When a user is reading
- * deep into a journal page and switches to Files, that's a context loss.
- * This script saves window.scrollY when a project tab link is clicked
- * and restores it on the destination page if the load is the click's
- * target and recent. sessionStorage scopes the entry to the current
- * browser tab/window so multiple BenchLog tabs don't fight.
+ * so the browser would otherwise scroll to the top, leaving the cover
+ * image / project header taking up most of the screen. For a user who
+ * just chose a tab, the content under that tab is what they came for —
+ * not the banner they already saw. So when the destination page loads,
+ * scroll down until the sticky tab bar pins to the top. If the page is
+ * too short to scroll that far, the browser clamps to the max scroll
+ * automatically (which is fine — the tab bar is already on screen).
+ *
+ * A sessionStorage hand-off (set on click, read on next load) limits
+ * this behavior to actual tab-switch navigations: a fresh visit, a
+ * back-button, or a refresh land at the natural top.
  *
  * Scoped to <nav data-project-tabs> so non-tab links (header breadcrumbs,
- * footer, modals) don't save anything. New-window clicks (meta/ctrl/etc.)
- * are skipped because the current page isn't actually navigating.
+ * footer, modals) don't trigger the hand-off. New-window clicks
+ * (meta/ctrl/etc.) are skipped because the current page isn't actually
+ * navigating.
  */
 (() => {
   "use strict";
 
   const KEY = "benchlog:tabs:scroll";
-  // Restore only if the save is recent — guards against a stale entry
-  // surviving an unrelated navigation that happens to land on the same
-  // URL later.
+  // Restore only if the hand-off is recent — guards against a stale
+  // entry surviving an unrelated navigation that happens to land on the
+  // same URL later.
   const TTL_MS = 5000;
 
   const nav = document.querySelector("[data-project-tabs]");
@@ -28,13 +34,12 @@
       const link = e.target.closest("a[href]");
       if (!link) return;
       // Only intercept plain left-clicks. Modifier-clicks open in a new
-      // tab, so the current page isn't navigating and saving scrollY
+      // tab, so the current page isn't navigating and the hand-off
       // would just confuse the next legit click.
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       try {
         sessionStorage.setItem(KEY, JSON.stringify({
           target: link.href,
-          y: window.scrollY,
           ts: Date.now(),
         }));
       } catch (_) {
@@ -48,7 +53,7 @@
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return;
     const saved = JSON.parse(raw);
-    if (!saved || typeof saved.y !== "number") {
+    if (!saved || typeof saved.target !== "string") {
       sessionStorage.removeItem(KEY);
       return;
     }
@@ -57,12 +62,16 @@
       sessionStorage.removeItem(KEY);
       return;
     }
-    // One-shot: clear before restoring so a refresh doesn't re-jump.
+    // One-shot: clear before scrolling so a refresh doesn't re-jump.
     sessionStorage.removeItem(KEY);
-    // requestAnimationFrame so the layout is computed before we scroll;
-    // `behavior: "instant"` avoids the smooth-scroll jolt on first paint.
+    // requestAnimationFrame so the layout is computed before we read
+    // the tab bar's position; `behavior: "instant"` avoids a smooth-
+    // scroll jolt on first paint.
     requestAnimationFrame(() => {
-      window.scrollTo({ top: saved.y, behavior: "instant" });
+      const targetNav = document.querySelector("[data-project-tabs]");
+      if (!targetNav) return;
+      const y = targetNav.getBoundingClientRect().top + window.scrollY;
+      window.scrollTo({ top: y, behavior: "instant" });
     });
   } catch (_) {
     // Malformed entry — drop it and bail.

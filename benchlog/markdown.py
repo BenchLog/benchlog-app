@@ -109,6 +109,15 @@ _FILES_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Same shape as `_FILES_LINK_RE` but for inline image embeds —
+# `![alt](files/path/to/img.png)` produces `<img src="files/...">`. We
+# rewrite to the `/raw` route so the browser actually receives the image
+# bytes (the bare `/files/{id}` URL renders an HTML detail page).
+_FILES_IMG_RE = re.compile(
+    r'(<img\s[^>]*?)src="files/([^"]*)"',
+    re.IGNORECASE,
+)
+
 _JOURNAL_LINK_RE = re.compile(
     r'(<a\s[^>]*?)href="journal/([^"]*)"',
     re.IGNORECASE,
@@ -150,6 +159,39 @@ def rewrite_project_file_links(
     return _FILES_LINK_RE.sub(_replace, html)
 
 
+def rewrite_project_file_images(
+    html: str,
+    username: str,
+    slug: str,
+    file_lookup: FileLookup | None = None,
+) -> str:
+    """Rewrite `<img src="files/...">` to canonical inline image URLs.
+
+    Mirrors `rewrite_project_file_links` but targets the `/raw` route so
+    the browser receives image bytes (the bare `/files/{id}` URL renders
+    an HTML detail page, which a `<img>` would render as a broken icon).
+    On a lookup miss we leave the src untouched: it'll render as a
+    visible broken image, which is exactly the "fix this link" signal an
+    author wants.
+    """
+    base = f"/u/{username}/{slug}/files"
+
+    def _replace(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        rel = match.group(2)
+        if "/" in rel:
+            path, filename = rel.rsplit("/", 1)
+        else:
+            path, filename = "", rel
+
+        file_id = file_lookup(path, filename) if file_lookup else None
+        if not file_id:
+            return match.group(0)
+        return f'{prefix}src="{base}/{file_id}/raw"'
+
+    return _FILES_IMG_RE.sub(_replace, html)
+
+
 def rewrite_project_journal_links(
     html: str,
     username: str,
@@ -184,6 +226,7 @@ def render_for_project(
 ) -> str:
     html = render(text)
     html = rewrite_project_file_links(html, username, slug, file_lookup)
+    html = rewrite_project_file_images(html, username, slug, file_lookup)
     html = rewrite_project_journal_links(html, username, slug)
     return html
 
@@ -197,5 +240,7 @@ def build_file_lookup_from_files(files) -> FileLookup:
     """
     index: dict[tuple[str, str], str] = {}
     for f in files:
+        if f.current_version is None:
+            continue  # quarantined-only file — exclude from markdown link resolution
         index[(f.path or "", f.filename)] = str(f.id)
     return lambda path, filename: index.get((path, filename))

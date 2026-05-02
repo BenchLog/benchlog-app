@@ -64,6 +64,13 @@ ADMIN_SMTP_UPDATED = "admin.smtp.updated"
 ADMIN_OIDC_PROVIDER_SAVED = "admin.oidc_provider.saved"
 ADMIN_OIDC_PROVIDER_DELETED = "admin.oidc_provider.deleted"
 
+# Files domain — GPS quarantine flow
+FILES_UPLOAD_GPS_DETECTED = "files.upload.gps_detected"
+FILES_UPLOAD_GPS_CLEAN = "files.upload.gps_clean"
+FILES_GPS_STRIPPED = "files.gps.stripped"
+FILES_GPS_RELEASED = "files.gps.released"
+FILES_GPS_DISCARDED = "files.gps.discarded"
+
 
 # ---- action catalog ------------------------------------------------------
 # Grouped for the audit-page filter UI. Keeping this next to the constants
@@ -115,6 +122,16 @@ ACTIONS_BY_DOMAIN: tuple[tuple[str, tuple[str, ...]], ...] = (
             ADMIN_SMTP_UPDATED,
             ADMIN_OIDC_PROVIDER_SAVED,
             ADMIN_OIDC_PROVIDER_DELETED,
+        ),
+    ),
+    (
+        "Files",
+        (
+            FILES_UPLOAD_GPS_DETECTED,
+            FILES_UPLOAD_GPS_CLEAN,
+            FILES_GPS_STRIPPED,
+            FILES_GPS_RELEASED,
+            FILES_GPS_DISCARDED,
         ),
     ),
 )

@@ -125,7 +125,14 @@
         body: formData,
         headers: { Accept: "application/json" },
       });
-      if (resp.ok) return { ok: true };
+      if (resp.ok) {
+        try {
+          const body = await resp.json();
+          return { ok: true, body };
+        } catch {
+          return { ok: true, body: null };
+        }
+      }
       let msg = `${item.file.name} (${resp.status})`;
       try {
         const payload = await resp.json();
@@ -141,16 +148,21 @@
     const statusEl = opts.statusEl || null;
     if (!items.length) {
       clearStatus(statusEl);
-      return { failures: [] };
+      return { failures: [], successes: [] };
     }
     let done = 0;
     const failures = [];
+    const successes = [];
     setStatus(statusEl, `Uploading 0 / ${items.length}…`);
     const concurrency = opts.concurrency ?? 4;
     await runWithConcurrency(items, concurrency, async (item) => {
       const result = await uploadOne(item, opts);
       done += 1;
-      if (!result.ok) failures.push(result.msg);
+      if (result.ok) {
+        if (result.body) successes.push(result.body);
+      } else {
+        failures.push(result.msg);
+      }
       setStatus(
         statusEl,
         `Uploaded ${done - failures.length} / ${items.length}` +
@@ -164,9 +176,9 @@
       setStatus(statusEl, "Refreshing…");
       location.reload();
     } else if (typeof opts.onComplete === "function") {
-      opts.onComplete({ failures });
+      opts.onComplete({ failures, successes });
     }
-    return { failures };
+    return { failures, successes };
   }
 
   async function handleDrop(dataTransfer, opts = {}) {

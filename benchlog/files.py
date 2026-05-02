@@ -29,6 +29,11 @@ from benchlog.file_references import (
     rewrite_folder_references,
     rewrite_journal_references,
 )
+from benchlog.gps_metadata import (
+    has_gps_data,
+    transcode_heic_to_jpeg,
+    StripFailed,
+)
 from benchlog.models import FileVersion, Project, ProjectFile
 from benchlog.storage import LocalStorage
 
@@ -43,6 +48,14 @@ _THUMB_MAX_DIMENSION = 600
 _THUMB_FORMAT = "WEBP"
 _THUMB_QUALITY = 82
 _CHUNK = 64 * 1024
+
+# HEIC uploads are buffered fully in memory before transcoding (pillow_heif
+# needs the whole file). The global `max_upload_size` (500 MB by default) is
+# generous for streamed uploads but would let a handful of concurrent HEIC
+# requests pin gigabytes of RAM per worker. Phone-shot HEIC is typically
+# under 10 MB; 64 MB gives headroom for high-res burst shots without leaving
+# the door open to a memory-exhaustion DoS from an authenticated owner.
+_HEIC_MAX_BYTES = 64 * 1024 * 1024
 
 
 class UploadTooLarge(Exception):
@@ -480,6 +493,13 @@ class StoredBlob:
     height: int | None
     thumbnail_path: str | None
     detected_mime: str | None
+    # True/False when the file is an image we could probe; None for
+    # non-image uploads (STL/gcode/etc.) where the question doesn't apply.
+    has_gps: bool | None = None
+    # Set by HEIC → JPEG transcode at upload. Routes use these to rewrite
+    # the file row's filename/mime before persisting the FileVersion.
+    rewritten_filename: str | None = None
+    rewritten_mime: str | None = None
 
 
 async def store_upload(
@@ -488,22 +508,47 @@ async def store_upload(
     file_id: uuid.UUID,
     version_number: int,
     source: BinaryIO,
+    original_filename: str,
     declared_mime: str,
     max_bytes: int,
 ) -> StoredBlob:
-    """Write the upload to storage, checksum it, generate thumbnail if image.
+    """Write the upload to storage; transcode HEIC; detect GPS.
 
-    Returns the metadata needed to construct the FileVersion row. The caller
-    persists that row in its own transaction. Raises UploadTooLarge if the
-    streamed body exceeds `max_bytes`.
+    For HEIC/HEIF: read fully into memory (capped at max_bytes), transcode
+    to JPEG (preserving EXIF so GPS detection still works), then proceed
+    with the JPEG bytes. Returns ``rewritten_filename`` / ``rewritten_mime``
+    so the caller updates the FileVersion row.
+
+    For other images: stream to disk, then read back to check has_gps.
+    For non-images: stream to disk, leave has_gps as None.
+
+    Raises ``UploadTooLarge`` for oversize streams. Raises ``StripFailed``
+    if HEIC transcode fails (corrupt or unsupported).
     """
+    rewritten_filename: str | None = None
+    rewritten_mime: str | None = None
+
+    declared_lower = (declared_mime or "").lower()
+    if declared_lower in {"image/heic", "image/heif"}:
+        # Apply the tighter HEIC-specific cap on top of the global limit:
+        # `transcode_heic_to_jpeg` materialises the entire input in memory.
+        heic_cap = min(max_bytes, _HEIC_MAX_BYTES)
+        head = source.read(heic_cap + 1)
+        if len(head) > heic_cap:
+            raise UploadTooLarge()
+        transcoded = transcode_heic_to_jpeg(head)
+        source = io.BytesIO(transcoded)
+        declared_mime = "image/jpeg"
+        rewritten_mime = "image/jpeg"
+        stem = original_filename.rsplit(".", 1)[0] or original_filename
+        rewritten_filename = stem + ".jpg"
+
     storage_path = f"files/{file_id}/{version_number}"
     try:
         size_bytes, checksum = await _save_with_checksum(
             storage, storage_path, source, max_bytes=max_bytes
         )
     except UploadTooLarge:
-        # Clean up the partial blob so we don't leak disk on a rejected upload.
         try:
             await storage.delete(storage_path)
         except (FileNotFoundError, ValueError):
@@ -514,28 +559,27 @@ async def store_upload(
     height: int | None = None
     thumbnail_path: str | None = None
     detected_mime: str | None = None
+    has_gps: bool | None = None
+
     if (declared_mime or "").startswith("image/"):
         try:
             data = await storage.read(storage_path)
             with Image.open(io.BytesIO(data)) as img:
                 img.load()
-                # WebP output drops EXIF, so orientation metadata would be
-                # lost and the thumbnail would render sideways. Bake the
-                # rotation into pixel data first.
                 oriented = ImageOps.exif_transpose(img)
                 width, height = oriented.size
                 detected_mime = Image.MIME.get(img.format)
                 thumbnail_path = await _save_thumbnail(
                     storage, file_id, version_number, oriented
                 )
+            # Run GPS detection on the bytes we just persisted (post-
+            # transcode for HEIC, original bytes otherwise).
+            has_gps = has_gps_data(data, declared_mime)
         except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
-            # Fall through with image fields left null — declared_mime was
-            # wrong, the bytes are corrupt, or the decoded pixel count
-            # exceeded MAX_IMAGE_PIXELS. The file still uploads OK; it just
-            # won't appear in the gallery.
             width = height = None
             thumbnail_path = None
             detected_mime = None
+            has_gps = False  # we tried, the bytes were broken — nothing to leak
     # Note: `regenerate_thumbnail_from_storage` below reuses this same
     # decode+thumbnail path for restored versions. Keep them in sync.
 
@@ -547,6 +591,9 @@ async def store_upload(
         height=height,
         thumbnail_path=thumbnail_path,
         detected_mime=detected_mime,
+        has_gps=has_gps,
+        rewritten_filename=rewritten_filename,
+        rewritten_mime=rewritten_mime,
     )
 
 

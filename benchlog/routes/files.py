@@ -9,6 +9,8 @@ Route ordering matters: literal-suffix routes (`/files/move`, `/files/folder/*`,
 otherwise FastAPI matches the literal as a UUID param and 422s.
 """
 
+import hashlib
+import io
 import mimetypes
 import os
 import tempfile
@@ -33,6 +35,8 @@ from benchlog.activity import (
 from benchlog.config import settings
 from benchlog.database import get_db
 from benchlog.dependencies import current_user, require_user
+from benchlog import audit
+from benchlog.gps_metadata import StripFailed, strip_gps
 from benchlog.files import (
     StoredBlob,
     UploadTooLarge,
@@ -198,6 +202,8 @@ def _build_file_tree(
         "max_modified": None,
     }
     for f in project.files:
+        if f.current_version is None:
+            continue  # quarantined-only file — hide from the tree
         node = root
         if f.path:
             for seg in f.path.split("/"):
@@ -344,7 +350,7 @@ async def files_tab(
     # Total storage footprint = sum of every FileVersion blob (not just the
     # current version). Old versions still occupy disk, so the aggregate is
     # the number that answers "how big is this project on disk today".
-    total_file_count = sum(1 for _ in project.files)
+    total_file_count = sum(1 for f in project.files if f.current_version_id is not None)
     total_storage_bytes = (
         await db.execute(
             select(func.coalesce(func.sum(FileVersion.size_bytes), 0))
@@ -352,6 +358,20 @@ async def files_tab(
             .where(ProjectFile.project_id == project.id)
         )
     ).scalar_one()
+    pending_versions: list[dict] = []
+    if is_owner:
+        result = await db.execute(
+            select(FileVersion)
+            .options(selectinload(FileVersion.file))
+            .join(ProjectFile, ProjectFile.id == FileVersion.file_id)
+            .where(
+                ProjectFile.project_id == project.id,
+                FileVersion.is_quarantined.is_(True),
+            )
+            .order_by(FileVersion.uploaded_at.desc())
+        )
+        for v in result.scalars().unique().all():
+            pending_versions.append({"version": v, "file": v.file})
     header_ctx = await load_project_header_ctx(db, user, project)
     return templates.TemplateResponse(
         request,
@@ -366,6 +386,7 @@ async def files_tab(
             "sort_direction": sort_direction,
             "total_file_count": total_file_count,
             "total_storage_bytes": int(total_storage_bytes or 0),
+            "pending_versions": pending_versions,
             "notice": request.session.pop("flash_notice", None),
             "error": request.session.pop("flash_error", None),
             **header_ctx,
@@ -465,6 +486,7 @@ async def upload_file(
             file_id=target_file.id,
             version_number=version_number,
             source=upload.file,
+            original_filename=filename,
             declared_mime=declared_mime,
             max_bytes=settings.max_upload_size,
         )
@@ -473,6 +495,46 @@ async def upload_file(
             f"File is too large (max {settings.max_upload_size // (1024 * 1024)} MB).",
             status=413,
         )
+    except StripFailed as e:
+        # HEIC bytes couldn't decode — drop the just-created file row if new.
+        if is_new_file:
+            await db.delete(target_file)
+        await db.commit()
+        return fail(
+            f"We couldn't process {filename} — the file may be corrupt or unsupported. ({e})",
+            status=400,
+        )
+
+    # HEIC → JPEG rename, only on the first upload of this slot. If a file
+    # with the rewritten name already exists, version onto it rather than
+    # creating a duplicate row.
+    if blob.rewritten_filename and is_new_file:
+        prior = await get_existing_file(
+            db, project.id, normalized_path, blob.rewritten_filename
+        )
+        if prior is not None:
+            await db.delete(target_file)
+            target_file = prior
+            is_new_file = False
+            version_number = await next_version_number(db, prior.id)
+            new_storage_path = f"files/{prior.id}/{version_number}"
+            await copy_blob(storage, blob.storage_path, new_storage_path)
+            try:
+                await storage.delete(blob.storage_path)
+            except (FileNotFoundError, ValueError):
+                pass
+            if blob.thumbnail_path:
+                new_thumbnail_path = f"thumbnails/{prior.id}/{version_number}.webp"
+                await copy_blob(storage, blob.thumbnail_path, new_thumbnail_path)
+                try:
+                    await storage.delete(blob.thumbnail_path)
+                except (FileNotFoundError, ValueError):
+                    pass
+                blob.thumbnail_path = new_thumbnail_path
+            blob.storage_path = new_storage_path
+        target_file.filename = blob.rewritten_filename
+
+    quarantined = blob.has_gps is True
 
     version = FileVersion(
         file_id=target_file.id,
@@ -480,43 +542,60 @@ async def upload_file(
         storage_path=blob.storage_path,
         original_name=upload.filename,
         size_bytes=blob.size_bytes,
-        mime_type=blob.detected_mime or declared_mime,
+        mime_type=blob.rewritten_mime or blob.detected_mime or declared_mime,
         checksum=blob.checksum,
         width=blob.width,
         height=blob.height,
         thumbnail_path=blob.thumbnail_path,
+        has_gps=blob.has_gps,
+        is_quarantined=quarantined,
     )
     db.add(version)
     await db.flush()
-    target_file.current_version_id = version.id
-    if is_new_file:
-        await record_event(
-            db,
-            actor=user,
-            project=project,
-            event_type=ActivityEventType.file_uploaded,
-            payload={
-                "file_id": str(target_file.id),
-                "filename": target_file.filename,
-            },
-        )
-    else:
-        await record_event(
-            db,
-            actor=user,
-            project=project,
-            event_type=ActivityEventType.file_version_added,
-            payload={
-                "file_id": str(target_file.id),
-                "version_number": version_number,
-            },
-        )
+    if not quarantined:
+        target_file.current_version_id = version.id
+        if is_new_file:
+            await record_event(
+                db,
+                actor=user,
+                project=project,
+                event_type=ActivityEventType.file_uploaded,
+                payload={
+                    "file_id": str(target_file.id),
+                    "filename": target_file.filename,
+                },
+            )
+        else:
+            await record_event(
+                db,
+                actor=user,
+                project=project,
+                event_type=ActivityEventType.file_version_added,
+                payload={
+                    "file_id": str(target_file.id),
+                    "version_number": version_number,
+                },
+            )
+    # Quarantined: no activity event. Strip/release endpoints record events
+    # when the version is finally published.
     await db.commit()
 
     if json_mode:
-        return Response(status_code=204)
+        return JSONResponse({
+            "file_id": str(target_file.id),
+            "version_id": str(version.id),
+            "version_number": version.version_number,
+            "filename": target_file.filename,
+            "has_gps": bool(blob.has_gps),
+            "is_quarantined": quarantined,
+            "thumbnail_url": (
+                f"/u/{user.username}/{project.slug}/files/{target_file.id}/thumb"
+                if blob.thumbnail_path else None
+            ),
+            "rewritten_from_heic": blob.rewritten_filename is not None,
+        })
     return RedirectResponse(
-        f"/u/{user.username}/{project.slug}/files/{target_file.id}",
+        f"/u/{user.username}/{project.slug}/files",
         status_code=302,
     )
 
@@ -858,6 +937,462 @@ async def delete_folder_route(
     )
 
 
+# ---------- GPS quarantine actions (owner-only) ---------- #
+#
+# Route ordering matters: literal-suffix batch routes (`/files/strip-gps-batch`,
+# etc.) MUST be declared before the `{file_id}`-parameterised single-version
+# routes, otherwise FastAPI tries to parse the literal as a UUID and 422s.
+
+
+def _is_latest(file: ProjectFile, target: FileVersion) -> bool:
+    """True if ``target`` has the highest version_number among file.versions.
+
+    Caches the max on the file object so a batch loop processing N versions
+    of the same file is O(N) rather than O(N²). The cache is request-scoped
+    in practice — the file row only lives as long as the current SQLAlchemy
+    session.
+    """
+    cached = getattr(file, "_cached_max_version_number", None)
+    if cached is None:
+        cached = max(v.version_number for v in file.versions)
+        file._cached_max_version_number = cached
+    return target.version_number == cached
+
+
+# ---- per-version helpers (called by both single and batch endpoints) ---- #
+
+
+async def _strip_version_inplace(
+    db: AsyncSession,
+    project: Project,
+    file: ProjectFile,
+    target: FileVersion,
+    request: Request,
+    user: User,
+    storage,
+) -> None:
+    """Strip GPS from *target* in place and publish it if quarantined.
+
+    Idempotent: no-op when has_gps=False and not quarantined.
+    Raises on hard failures (FileNotFoundError, StripFailed).
+    """
+    if not target.has_gps and not target.is_quarantined:
+        return
+
+    if target.has_gps:
+        original = await storage.read(target.storage_path)
+        stripped = strip_gps(original, target.mime_type)
+        await storage.save(target.storage_path, io.BytesIO(stripped))
+        target.size_bytes = len(stripped)
+        target.checksum = hashlib.sha256(stripped).hexdigest()
+        target.has_gps = False
+
+        if target.thumbnail_path:
+            try:
+                await storage.delete(target.thumbnail_path)
+            except (FileNotFoundError, ValueError):
+                pass
+        new_w, new_h, new_thumb = await regenerate_thumbnail_from_storage(
+            storage,
+            file_id=file.id,
+            version_number=target.version_number,
+            storage_path=target.storage_path,
+        )
+        target.width = new_w
+        target.height = new_h
+        target.thumbnail_path = new_thumb
+
+    was_quarantined = target.is_quarantined
+    target.is_quarantined = False
+    if file.current_version_id is None or _is_latest(file, target):
+        file.current_version_id = target.id
+
+    await audit.record(
+        db,
+        action=audit.FILES_GPS_STRIPPED,
+        request=request,
+        actor=user,
+        target_type="file",
+        target_id=file.id,
+        target_label=file.filename,
+        metadata={
+            "version_id": str(target.id),
+            "version_number": target.version_number,
+            "was_quarantined": was_quarantined,
+        },
+    )
+    if was_quarantined:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=(
+                ActivityEventType.file_uploaded
+                if target.version_number == 1
+                else ActivityEventType.file_version_added
+            ),
+            payload={"file_id": str(file.id), "filename": file.filename},
+        )
+
+
+async def _release_version_inplace(
+    db: AsyncSession,
+    project: Project,
+    file: ProjectFile,
+    target: FileVersion,
+    request: Request,
+    user: User,
+) -> None:
+    """Publish *target* as-is (keep GPS). No-op if not quarantined."""
+    if not target.is_quarantined:
+        return
+
+    target.is_quarantined = False
+    became_current = file.current_version_id is None or _is_latest(file, target)
+    if became_current:
+        file.current_version_id = target.id
+
+    await audit.record(
+        db,
+        action=audit.FILES_GPS_RELEASED,
+        request=request,
+        actor=user,
+        target_type="file",
+        target_id=file.id,
+        target_label=file.filename,
+        metadata={
+            "version_id": str(target.id),
+            "version_number": target.version_number,
+        },
+    )
+    # Only record the activity event when the release actually publishes
+    # this version (i.e., the current pointer moved). Otherwise the feed
+    # shows "version added" for a version that's still not the current one.
+    if became_current:
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=(
+                ActivityEventType.file_uploaded
+                if target.version_number == 1
+                else ActivityEventType.file_version_added
+            ),
+            payload={"file_id": str(file.id), "filename": file.filename},
+        )
+
+
+async def _discard_version_inplace(
+    db: AsyncSession,
+    project: Project,
+    file: ProjectFile,
+    target: FileVersion,
+    request: Request,
+    user: User,
+    storage,
+) -> None:
+    """Delete *target* and its blob. If it is the only version, delete the file too."""
+    file_id = file.id
+    is_only_version = len(file.versions) <= 1
+
+    await audit.record(
+        db,
+        action=audit.FILES_GPS_DISCARDED,
+        request=request,
+        actor=user,
+        target_type="file",
+        target_id=file.id,
+        target_label=file.filename,
+        metadata={
+            "version_id": str(target.id),
+            "version_number": target.version_number,
+            "was_only_version": is_only_version,
+        },
+    )
+
+    if is_only_version:
+        if project.cover_file_id == file.id:
+            project.cover_file_id = None
+            _apply_crop(project, None)
+        file.current_version_id = None
+        await db.flush()
+        await db.delete(file)
+        await db.flush()
+        await purge_file_events(db, file_id)
+    else:
+        target_version_number = target.version_number
+        if file.current_version_id == target.id:
+            replacement = next(
+                (
+                    v
+                    for v in sorted(
+                        file.versions, key=lambda x: x.version_number, reverse=True
+                    )
+                    if v.id != target.id and not v.is_quarantined
+                ),
+                None,
+            )
+            file.current_version_id = replacement.id if replacement else None
+        await db.delete(target)
+        await db.flush()
+        await purge_file_version_events(db, file_id, target_version_number)
+
+    # Best-effort blob cleanup — runs before commit so caller can still catch
+    # storage errors, but failures here are non-fatal.
+    await delete_blob(storage, target)
+
+
+# ---- batch endpoints ---- #
+#
+# These literal-path routes (`/files/strip-gps-batch`, `/files/release-batch`,
+# `/files/discard-batch`) are declared BEFORE the single-version
+# `{file_id}`-parameterised routes below, consistent with the route-ordering
+# convention used throughout this module (literal before parameterised).
+
+
+# Cap on a single batch request. Each entry triggers per-version work
+# (strip = decode + re-encode + thumbnail regen), so an unbounded list is
+# a self-DoS vector even though the endpoints are owner-only. 200 covers
+# realistic review-modal batches; the modal pages users through anyway.
+_BATCH_VERSION_IDS_MAX = 200
+
+
+def _parse_version_ids(payload: dict) -> list[uuid.UUID]:
+    """Validate and parse version_ids from a JSON body dict."""
+    raw_ids = payload.get("version_ids", [])
+    if not isinstance(raw_ids, list):
+        raise HTTPException(status_code=400, detail="version_ids must be a list.")
+    if len(raw_ids) > _BATCH_VERSION_IDS_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many version_ids (max {_BATCH_VERSION_IDS_MAX}).",
+        )
+    try:
+        return [uuid.UUID(s) for s in raw_ids]
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid version_id in list.")
+
+
+async def _fetch_versions_for_project(
+    db: AsyncSession, project_id: uuid.UUID, version_ids: list[uuid.UUID]
+) -> list[FileVersion]:
+    """Load FileVersion rows that belong to *project_id*.
+
+    Raises 404 if any requested id is missing or belongs to another project.
+    """
+    result = await db.execute(
+        select(FileVersion)
+        .join(ProjectFile, ProjectFile.id == FileVersion.file_id)
+        .where(
+            FileVersion.id.in_(version_ids),
+            ProjectFile.project_id == project_id,
+        )
+        .options(
+            selectinload(FileVersion.file).selectinload(ProjectFile.versions),
+        )
+    )
+    versions = list(result.scalars().unique().all())
+    if len(versions) != len(version_ids):
+        raise HTTPException(status_code=404)
+    return versions
+
+
+@router.post("/u/{username}/{slug}/files/strip-gps-batch")
+async def strip_gps_batch(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Strip GPS from a list of FileVersion ids in one request.
+
+    Accepts ``{"version_ids": [uuid, ...]}``. Processes serially; accumulates
+    per-item errors silently. Returns ``{"processed": N, "errors": [...]}``.
+    All version_ids must belong to this project — any mismatch 404s the whole
+    batch (owner-scoped check).
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    version_ids = _parse_version_ids(await request.json())
+    versions = await _fetch_versions_for_project(db, project.id, version_ids)
+
+    storage = get_storage()
+    processed = 0
+    errors: list[str] = []
+    for v in versions:
+        try:
+            await _strip_version_inplace(db, project, v.file, v, request, user, storage)
+            processed += 1
+        except Exception as exc:
+            errors.append(f"{v.file.filename} v{v.version_number}: {exc}")
+    await db.commit()
+    return JSONResponse({"processed": processed, "errors": errors})
+
+
+@router.post("/u/{username}/{slug}/files/release-batch")
+async def release_batch(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish (release) a list of quarantined FileVersion ids as-is.
+
+    Accepts ``{"version_ids": [uuid, ...]}``. Returns ``{"processed": N, "errors": [...]}``.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    version_ids = _parse_version_ids(await request.json())
+    versions = await _fetch_versions_for_project(db, project.id, version_ids)
+
+    processed = 0
+    errors: list[str] = []
+    for v in versions:
+        try:
+            await _release_version_inplace(db, project, v.file, v, request, user)
+            processed += 1
+        except Exception as exc:
+            errors.append(f"{v.file.filename} v{v.version_number}: {exc}")
+    await db.commit()
+    return JSONResponse({"processed": processed, "errors": errors})
+
+
+@router.post("/u/{username}/{slug}/files/discard-batch")
+async def discard_batch(
+    username: str,
+    slug: str,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a list of FileVersion ids (and their parent files when sole version).
+
+    Accepts ``{"version_ids": [uuid, ...]}``. Returns ``{"processed": N, "errors": [...]}``.
+
+    Discard-batch is careful about sequencing: versions are loaded upfront and
+    the parent-file ``versions`` list is snapshotted at load time. When multiple
+    versions of the same file are in the batch the first discard will remove the
+    file row (if it was the sole version); subsequent iterations over already-
+    deleted siblings are caught as errors, which is acceptable for this batch op.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    version_ids = _parse_version_ids(await request.json())
+    versions = await _fetch_versions_for_project(db, project.id, version_ids)
+
+    storage = get_storage()
+    processed = 0
+    errors: list[str] = []
+    for v in versions:
+        try:
+            await _discard_version_inplace(db, project, v.file, v, request, user, storage)
+            processed += 1
+        except Exception as exc:
+            errors.append(f"{v.file.filename} v{v.version_number}: {exc}")
+    await db.commit()
+    return JSONResponse({"processed": processed, "errors": errors})
+
+
+# ---- single-version endpoints ---- #
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/strip-gps")
+async def strip_gps_from_version(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Strip GPS metadata from this version's bytes in place.
+
+    Mutates the existing FileVersion row + its stored blob. No new
+    version is created — the same version_number now points at clean
+    bytes. If the version was quarantined, this also publishes it
+    (sets ``file.current_version_id``).
+
+    Idempotent: a version with ``has_gps=False`` and not quarantined
+    short-circuits to 204.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    target = next((v for v in file.versions if v.version_number == version_number), None)
+    if target is None:
+        raise HTTPException(status_code=404)
+
+    if not target.has_gps and not target.is_quarantined:
+        return Response(status_code=204)
+
+    storage = get_storage()
+    try:
+        await _strip_version_inplace(db, project, file, target, request, user, storage)
+    except (FileNotFoundError, StripFailed) as e:
+        raise HTTPException(status_code=400, detail=f"Could not strip GPS: {e}")
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/release")
+async def release_quarantined_version(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish a quarantined version as-is (keep GPS data).
+
+    Sets is_quarantined=False and updates current_version_id. Bytes unchanged.
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    target = next((v for v in file.versions if v.version_number == version_number), None)
+    if target is None:
+        raise HTTPException(status_code=404)
+    if not target.is_quarantined:
+        return Response(status_code=204)
+
+    await _release_version_inplace(db, project, file, target, request, user)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/u/{username}/{slug}/files/{file_id}/version/{version_number}/discard")
+async def discard_quarantined_version(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    version_number: int,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a (typically quarantined) version + its blob/thumbnail.
+
+    If the version is the only one on the file, also deletes the parent
+    ProjectFile row — semantics match "this upload was abandoned, clean it up".
+    """
+    project = await _require_owned_project(db, user, username, slug)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    target = next((v for v in file.versions if v.version_number == version_number), None)
+    if target is None:
+        raise HTTPException(status_code=404)
+
+    storage = get_storage()
+    await _discard_version_inplace(db, project, file, target, request, user, storage)
+    await db.commit()
+    return Response(status_code=204)
+
+
 # ---------- detail ---------- #
 
 
@@ -878,6 +1413,9 @@ async def file_detail(
         raise HTTPException(status_code=404)
     file = await _load_file_with_versions(db, project.id, file_id)
     if file is None:
+        raise HTTPException(status_code=404)
+    # A quarantined-only file (no current_version) is invisible to non-owners.
+    if not is_owner and file.current_version_id is None:
         raise HTTPException(status_code=404)
     return await _render_file_detail(
         request,
@@ -987,6 +1525,9 @@ async def download_file(
     file = await _load_file_with_versions(db, project.id, file_id)
     if file is None:
         raise HTTPException(status_code=404)
+    # Quarantined-only files are invisible to non-owners.
+    if not is_owner and file.current_version_id is None:
+        raise HTTPException(status_code=404)
 
     if v is None:
         version = file.current_version
@@ -994,6 +1535,9 @@ async def download_file(
         version = next(
             (ver for ver in file.versions if ver.version_number == v), None
         )
+        # Non-owners can only download published (non-quarantined) versions.
+        if version is not None and not is_owner and version.is_quarantined:
+            raise HTTPException(status_code=404)
     if version is None:
         raise HTTPException(status_code=404)
 
@@ -1020,6 +1564,7 @@ async def file_thumbnail(
     username: str,
     slug: str,
     file_id: uuid.UUID,
+    v: int | None = None,
     user: User | None = Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1030,15 +1575,102 @@ async def file_thumbnail(
     if not is_owner and not project.is_public:
         raise HTTPException(status_code=404)
     file = await get_file_by_id(db, project.id, file_id)
-    if file is None or file.current_version is None:
+    if file is None:
         raise HTTPException(status_code=404)
-    if not file.current_version.thumbnail_path:
-        raise HTTPException(status_code=404)
+    if v is not None:
+        # Serve the thumbnail for a specific version number (e.g. quarantined
+        # uploads that have no current_version yet — owner pending-review UI).
+        result = await db.execute(
+            select(FileVersion).where(
+                FileVersion.file_id == file_id,
+                FileVersion.version_number == v,
+            )
+        )
+        version = result.scalar_one_or_none()
+        if version is None or not version.thumbnail_path:
+            raise HTTPException(status_code=404)
+        # Non-owners must not see thumbnails of quarantined versions.
+        if not is_owner and version.is_quarantined:
+            raise HTTPException(status_code=404)
+    else:
+        if file.current_version is None or not file.current_version.thumbnail_path:
+            raise HTTPException(status_code=404)
+        version = file.current_version
     storage = get_storage()
     return FileResponse(
-        storage.full_path(file.current_version.thumbnail_path),
+        storage.full_path(version.thumbnail_path),
         media_type="image/webp",
         headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+# Mime types we'll serve inline for `<img src="…/raw">` embeds in markdown.
+# SVG is deliberately excluded — even with `nosniff`, browsers execute
+# scripts inside SVG documents, so the same-origin embed would be a stored
+# XSS vector for whatever the project owner uploaded.
+_RAW_INLINE_MIME_ALLOWLIST = frozenset({
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+})
+
+
+@router.get("/u/{username}/{slug}/files/{file_id}/raw")
+async def file_raw(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    v: int | None = None,
+    user: User | None = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Serve a file inline with its real mime type — used by `<img>` embeds.
+
+    Same auth shape as `/download` and `/thumb`: project must be visible,
+    quarantined-only versions are owner-only. Restricted to the safe image
+    allowlist so we can't be tricked into serving an SVG or HTML payload
+    same-origin where browser script execution would matter.
+    """
+    project = await get_project_by_username_and_slug(db, username, slug)
+    if project is None:
+        raise HTTPException(status_code=404)
+    is_owner = user is not None and project.user_id == user.id
+    if not is_owner and not project.is_public:
+        raise HTTPException(status_code=404)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    if not is_owner and file.current_version_id is None:
+        raise HTTPException(status_code=404)
+
+    if v is None:
+        version = file.current_version
+    else:
+        version = next(
+            (ver for ver in file.versions if ver.version_number == v), None
+        )
+        if version is not None and not is_owner and version.is_quarantined:
+            raise HTTPException(status_code=404)
+    if version is None:
+        raise HTTPException(status_code=404)
+
+    mime = (version.mime_type or "").lower()
+    if mime not in _RAW_INLINE_MIME_ALLOWLIST:
+        raise HTTPException(status_code=404)
+
+    storage = get_storage()
+    encoded = quote(file.filename)
+    return FileResponse(
+        storage.full_path(version.storage_path),
+        media_type=mime,
+        headers={
+            "Content-Disposition": (
+                f"inline; filename=\"{file.filename}\"; filename*=UTF-8''{encoded}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
@@ -1072,6 +1704,7 @@ async def upload_new_version(
         or _content_type_from_filename(upload.filename)
     )
 
+    json_mode = _wants_json(request)
     storage = get_storage()
     version_number = await next_version_number(db, file.id)
     upload.file.seek(0)
@@ -1081,11 +1714,19 @@ async def upload_new_version(
             file_id=file.id,
             version_number=version_number,
             source=upload.file,
+            original_filename=upload.filename or file.filename,
             declared_mime=declared_mime,
             max_bytes=settings.max_upload_size,
         )
     except UploadTooLarge:
         raise HTTPException(status_code=413, detail="File too large.")
+    except StripFailed as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"We couldn't process {upload.filename} — the file may be corrupt or unsupported. ({e})",
+        )
+
+    quarantined = blob.has_gps is True
 
     version = FileVersion(
         file_id=file.id,
@@ -1093,28 +1734,48 @@ async def upload_new_version(
         storage_path=blob.storage_path,
         original_name=upload.filename,
         size_bytes=blob.size_bytes,
-        mime_type=blob.detected_mime or declared_mime,
+        # For HEIC → JPEG on version uploads: keep file.filename unchanged;
+        # only mime_type reflects the rewrite (via rewritten_mime).
+        mime_type=blob.rewritten_mime or blob.detected_mime or declared_mime,
         checksum=blob.checksum,
         changelog=changelog.strip() or None,
         width=blob.width,
         height=blob.height,
         thumbnail_path=blob.thumbnail_path,
+        has_gps=blob.has_gps,
+        is_quarantined=quarantined,
     )
     db.add(version)
     await db.flush()
-    file.current_version_id = version.id
-    await record_event(
-        db,
-        actor=user,
-        project=project,
-        event_type=ActivityEventType.file_version_added,
-        payload={
-            "file_id": str(file.id),
-            "version_number": version_number,
-        },
-    )
+    if not quarantined:
+        file.current_version_id = version.id
+        await record_event(
+            db,
+            actor=user,
+            project=project,
+            event_type=ActivityEventType.file_version_added,
+            payload={
+                "file_id": str(file.id),
+                "version_number": version_number,
+            },
+        )
+    # Quarantined: no activity event; strip/release records it.
     await db.commit()
 
+    if json_mode:
+        return JSONResponse({
+            "file_id": str(file.id),
+            "version_id": str(version.id),
+            "version_number": version.version_number,
+            "filename": file.filename,
+            "has_gps": bool(blob.has_gps),
+            "is_quarantined": quarantined,
+            "thumbnail_url": (
+                f"/u/{user.username}/{project.slug}/files/{file.id}/thumb"
+                if blob.thumbnail_path else None
+            ),
+            "rewritten_from_heic": blob.rewritten_filename is not None,
+        })
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files/{file.id}",
         status_code=302,

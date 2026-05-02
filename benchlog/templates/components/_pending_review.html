@@ -1,0 +1,42 @@
+{% if pending_versions %}
+<section class="pending-review" aria-label="Uploads awaiting GPS review" data-pending-review>
+    <header class="flex items-baseline justify-between gap-3 mb-2">
+        <h3 class="text-base font-display m-0">
+            {{ pending_versions | length }}
+            upload{% if pending_versions | length != 1 %}s{% endif %}
+            need{% if pending_versions | length == 1 %}s{% endif %} GPS review
+        </h3>
+        <div class="flex gap-2">
+            <button type="button" class="btn-primary text-sm" data-pending-strip-all>Strip from all</button>
+            <button type="button" class="btn-ghost text-sm" data-pending-keep-all>Keep all</button>
+            <button type="button" class="btn-ghost text-sm text-rust-deep" data-pending-discard-all>Discard all</button>
+        </div>
+    </header>
+    <p class="meta mb-3">These contain location data and aren't visible on the project until you decide.</p>
+    <ul class="pending-review-list">
+        {% for item in pending_versions %}
+        <li data-version-id="{{ item.version.id }}"
+            data-file-id="{{ item.file.id }}"
+            data-version-number="{{ item.version.version_number }}">
+            <div class="pending-review-thumb">
+                {% if item.version.thumbnail_path %}
+                <img src="/u/{{ project.user.username }}/{{ project.slug }}/files/{{ item.file.id }}/thumb?v={{ item.version.version_number }}"
+                     alt="" loading="lazy">
+                {% else %}
+                <i data-lucide="image" class="w-6 h-6 text-ink-muted"></i>
+                {% endif %}
+            </div>
+            <div class="pending-review-meta">
+                <strong>{{ item.file.filename }}</strong>
+                <span class="meta">{{ item.version.size_bytes | human_size }}{% if item.version.width %} · {{ item.version.width }}×{{ item.version.height }}{% endif %}</span>
+            </div>
+            <div class="pending-review-actions">
+                <button type="button" class="btn-primary text-xs" data-pending-strip>Strip GPS</button>
+                <button type="button" class="btn-ghost text-xs" data-pending-keep>Keep</button>
+                <button type="button" class="btn-ghost text-xs text-rust-deep" data-pending-discard>Discard</button>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}

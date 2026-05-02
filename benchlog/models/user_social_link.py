@@ -12,9 +12,7 @@ class UserSocialLinkType(str, enum.Enum):
 
     Drives the label + Lucide icon on rendered rows. Keep an `other`
     bucket so users can record something we don't have a dedicated slot
-    for yet. (Project links used to share this enum-style design before
-    the sections rebuild — they're now free-form, this enum only types
-    user-profile social links.)
+    for yet. Project links are free-form and do not use this enum.
     """
 
     github = "github"

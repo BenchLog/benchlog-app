@@ -207,6 +207,36 @@ async def test_description_endpoint_form_post_redirects(client, db):
     assert project.description == "from form"
 
 
+async def test_description_endpoint_rejects_oversize_payload(client, db):
+    # Embedded base64 image data URLs from the toast-ui editor used to crash
+    # the request with a Postgres tsvector overflow (the `projects` search
+    # index is generated from title + description). The endpoint must reject
+    # oversize payloads with a friendly 400 instead, leaving the row alone.
+    from benchlog.routes.projects import DESCRIPTION_MAX_BYTES
+
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    project = await _seed_project(db, alice, description="old")
+
+    await login(client, "alice")
+    token = await csrf_token(client, "/u/alice/bench")
+
+    huge = "x" * (DESCRIPTION_MAX_BYTES + 1)
+    resp = await client.post(
+        "/u/alice/bench/description",
+        content=json.dumps({"description": huge}),
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-CSRF-Token": token,
+        },
+    )
+    assert resp.status_code == 400
+    assert "too large" in resp.json()["detail"].lower()
+
+    await db.refresh(project)
+    assert project.description == "old"
+
+
 async def test_description_endpoint_requires_csrf(client, db):
     alice = await make_user(db, email="alice@test.com", username="alice")
     project = await _seed_project(db, alice, description="old")

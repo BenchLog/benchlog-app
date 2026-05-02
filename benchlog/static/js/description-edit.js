@@ -80,6 +80,9 @@
       if (form.dataset.entryIndex) {
         mount.dataset.toastuiEntryIndex = form.dataset.entryIndex;
       }
+      if (form.dataset.uploadUrl) {
+        mount.dataset.toastuiUploadUrl = form.dataset.uploadUrl;
+      }
       mount.className = "h-full";
       resizer.appendChild(mount);
       window.initToastuiEditors?.(slot);

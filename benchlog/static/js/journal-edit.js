@@ -28,6 +28,7 @@
     document.querySelector('meta[name="csrf-token"]')?.content || "";
   const fileIndex = section.dataset.fileIndex || "";
   const entryIndex = section.dataset.entryIndex || "";
+  const uploadUrl = section.dataset.uploadUrl || "";
 
   function refreshIcons(root) {
     if (!window.lucide || typeof window.lucide.createIcons !== "function") {
@@ -90,6 +91,7 @@
     mount.dataset.toastuiSourceId = sourceId;
     if (fileIndex) mount.dataset.toastuiFileIndex = fileIndex;
     if (entryIndex) mount.dataset.toastuiEntryIndex = entryIndex;
+    if (uploadUrl) mount.dataset.toastuiUploadUrl = uploadUrl;
     mount.className = "h-full";
     resizer.appendChild(mount);
     window.initToastuiEditors?.(slot);

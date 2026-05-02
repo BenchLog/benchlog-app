@@ -469,16 +469,6 @@ async def test_deleting_file_version_purges_only_that_version_event(client, db):
     assert version_numbers == [3]
 
 
-# ---------- write path: links ---------- #
-#
-# Link/section activity-event coverage is rebuilt in `tests/test_links.py`
-# alongside the new section + link CRUD routes (plan Tasks 12, 21). The
-# old route shape (form `link_type` field, project_id-keyed link rows)
-# was deleted in the rebuild, so the previous tests here would be a
-# net-zero rewrite — they're dropped and the new ones are owned by the
-# links suite.
-
-
 # ---------- visibility: list_user_activity ---------- #
 
 
@@ -762,11 +752,7 @@ async def _seed_every_event_type(client, db, alice, bob):
         mime="text/plain",
         csrf_path="/u/alice/shared",
     )
-    # NOTE: Link add/remove events used to be seeded here too, but the
-    # link routes are stubbed during the sections-redesign rebuild. The
-    # cross-page render test below proves the activity surfaces handle
-    # the remaining event types; the missing link events get coverage
-    # back via tests/test_links.py once the new routes ship.
+    # Link add/remove events get coverage in tests/test_links.py.
     # Logout; bob forks
     await client.post(
         "/logout", data={"_csrf": await csrf_token(client, "/explore")}

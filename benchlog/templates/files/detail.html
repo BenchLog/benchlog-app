@@ -177,29 +177,77 @@
         {% else %}
         {% set delete_reason = "" %}
         {% endif %}
-        <li class="card flex flex-wrap items-baseline justify-between gap-2">
+        {# Quarantined versions are owner-internal: their bytes 404 for non-
+           owners (route filter), but the row itself would still leak the
+           timestamp, size, and "GPS-positive" marker. Hide the row too. #}
+        {% if is_owner or not v.is_quarantined %}
+        <li class="card !py-2.5 !px-3 flex flex-wrap items-center justify-between gap-2{% if v.is_quarantined %} version-row-quarantined{% endif %}"
+            data-version-id="{{ v.id }}">
             <div class="min-w-0">
                 <div>
                     <span class="font-medium">v{{ v.version_number }}</span>
                     <span class="meta ml-2">{{ v.uploaded_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                    <span class="meta ml-2">{{ (v.size_bytes / 1024) | round(1) }} KB</span>
+                    <span class="meta ml-1">· {{ (v.size_bytes / 1024) | round(1) }} KB</span>
                     {% if is_current %}
                     <span class="meta ml-2 text-rust">current</span>
                     {% endif %}
+                    {% if v.is_quarantined %}
+                    <span class="quarantine-badge ml-2"
+                          title="This version contains GPS data and isn't visible on the project until you review it">
+                        <i data-lucide="shield-alert" class="w-3 h-3"></i> Awaiting review
+                    </span>
+                    {% endif %}
+                    {% with version = v %}
+                    {% include "components/_gps_warning.html" %}
+                    {% endwith %}
                 </div>
                 {% if v.changelog %}
                 <p class="text-sm mt-1 text-ink-muted whitespace-pre-line">{{ v.changelog }}</p>
                 {% endif %}
-                <div class="meta mt-1 break-all"><code class="text-xs">sha256:{{ v.checksum }}</code></div>
             </div>
-            <div class="flex flex-wrap items-center gap-2 shrink-0">
-                <a href="{{ file_url }}/download?v={{ v.version_number }}" class="btn-ghost text-xs">Download v{{ v.version_number }}</a>
+            <div class="flex flex-wrap items-center gap-1 shrink-0">
+                {% if is_owner and v.is_quarantined %}
+                {# Quarantined: only the GPS-review actions make sense.
+                   Edit/Restore/Delete all assume a published version. #}
+                <a href="{{ file_url }}/download?v={{ v.version_number }}"
+                   class="btn-ghost text-xs !p-1.5"
+                   aria-label="Download v{{ v.version_number }}"
+                   title="Download v{{ v.version_number }}">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                </a>
+                <button type="button" class="btn-primary text-xs" data-quarantine-action="strip-gps">Strip GPS</button>
+                <button type="button" class="btn-ghost text-xs" data-quarantine-action="release">Keep</button>
+                <button type="button" class="btn-ghost text-xs text-rust-deep" data-quarantine-action="discard">Discard</button>
+                {% else %}
+                <a href="{{ file_url }}/download?v={{ v.version_number }}"
+                   class="btn-ghost text-xs !p-1.5"
+                   aria-label="Download v{{ v.version_number }}"
+                   title="Download v{{ v.version_number }}">
+                    <i data-lucide="download" class="w-4 h-4"></i>
+                </a>
+                {% if is_owner and v.has_gps %}
+                <form method="post"
+                      action="{{ file_url }}/version/{{ v.version_number }}/strip-gps"
+                      class="inline"
+                      data-strip-gps-form>
+                    {% include "components/_csrf.html" %}
+                    <button type="submit" class="btn-ghost text-xs !p-1.5"
+                            aria-label="Strip GPS from v{{ v.version_number }}"
+                            title="Strip GPS from v{{ v.version_number }}">
+                        <i data-lucide="map-pin-off" class="w-4 h-4"></i>
+                    </button>
+                </form>
+                {% endif %}
                 {% if is_owner %}
-                    <button type="button" class="btn-ghost text-xs"
+                    <button type="button" class="btn-ghost text-xs !p-1.5"
                             data-version-edit-trigger
                             data-version-submit-url="{{ file_url }}/version/{{ v.version_number }}/edit"
                             data-version-number="{{ v.version_number }}"
-                            data-version-changelog="{{ v.changelog or '' }}">Edit</button>
+                            data-version-changelog="{{ v.changelog or '' }}"
+                            aria-label="Edit changelog for v{{ v.version_number }}"
+                            title="Edit changelog for v{{ v.version_number }}">
+                        <i data-lucide="pencil-line" class="w-4 h-4"></i>
+                    </button>
                     {% if not is_current %}
                     <form method="post"
                           action="{{ file_url }}/version/{{ v.version_number }}/restore"
@@ -210,15 +258,22 @@
                           data-confirm-ok="Restore"
                           data-confirm-variant="primary">
                         {% include "components/_csrf.html" %}
-                        <button type="submit" class="btn-ghost text-xs">Restore</button>
+                        <button type="submit" class="btn-ghost text-xs !p-1.5"
+                                aria-label="Restore v{{ v.version_number }} as current"
+                                title="Restore v{{ v.version_number }} as current">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                        </button>
                     </form>
                     {% endif %}
                     {% if delete_blocked %}
                     <button type="button"
-                            class="btn-ghost text-xs opacity-50 cursor-not-allowed"
+                            class="btn-ghost text-xs !p-1.5 opacity-50 cursor-not-allowed"
                             aria-disabled="true"
                             disabled
-                            title="{{ delete_reason }}">Delete</button>
+                            aria-label="Delete v{{ v.version_number }}"
+                            title="{{ delete_reason }}">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
                     {% else %}
                     <form method="post"
                           action="{{ file_url }}/version/{{ v.version_number }}/delete"
@@ -228,12 +283,18 @@
                           data-confirm-body="Permanently delete v{{ v.version_number }}? This cannot be undone."
                           data-confirm-ok="Delete v{{ v.version_number }}">
                         {% include "components/_csrf.html" %}
-                        <button type="submit" class="btn-ghost text-xs text-rust-deep">Delete</button>
+                        <button type="submit" class="btn-ghost text-xs !p-1.5 text-rust-deep"
+                                aria-label="Delete v{{ v.version_number }}"
+                                title="Delete v{{ v.version_number }}">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
                     </form>
                     {% endif %}
                 {% endif %}
+                {% endif %}
             </div>
         </li>
+        {% endif %}
         {% endfor %}
     </ul>
 </section>
@@ -264,6 +325,8 @@
     </p>
 </section>
 
+{% include "components/_gps_review_modal.html" %}
+
 <dialog class="modal" data-version-edit-modal>
     <form data-version-edit-form class="space-y-4">
         <div class="flex items-baseline justify-between gap-3">
@@ -292,6 +355,7 @@
 {% include "components/_file_edit_modal.html" %}
 
 <script src="{{ url_for('static', path='js/file-upload.js') }}"></script>
+<script src="{{ url_for('static', path='js/gps-review.js') }}"></script>
 <script>
 (() => {
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -361,6 +425,54 @@
     });
   }
 
+  // ---------- Strip GPS buttons (published versions with GPS) ----------
+  document.querySelectorAll('[data-strip-gps-form]').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const resp = await fetch(form.action, {
+          method: 'POST',
+          headers: {
+            'X-CSRF-Token': csrfToken,
+            'Accept': 'application/json',
+          },
+        });
+        if (resp.status === 204 || resp.ok) {
+          location.reload();
+          return;
+        }
+        alert(`Strip GPS failed (${resp.status}).`);
+      } catch {
+        alert('Strip GPS failed — check your connection.');
+      }
+    });
+  });
+
+  // ---------- Quarantined version actions (Strip / Keep / Discard) ----------
+  // Mirrors the post-upload modal + pending-review section flows so the
+  // version-history list is fully actionable when something needs review.
+  // Computes the project's files-base from the upload URL the same way
+  // the new-version drop zone does.
+  const quarantineFilesBase =
+    {{ (file_url ~ '/version') | tojson }}.replace(/\/[^/]+\/version$/, '');
+  document.querySelectorAll('[data-quarantine-action]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const action = btn.dataset.quarantineAction;
+      const li = btn.closest('li[data-version-id]');
+      if (!li) return;
+      if (action === 'discard' &&
+          !confirm('Discard this version? This cannot be undone.')) return;
+      try {
+        await window.benchlogGpsReview.batchAct(
+          quarantineFilesBase, action, [li.dataset.versionId], csrfToken,
+        );
+        location.reload();
+      } catch (e) {
+        alert(`${action} failed: ${e.message}`);
+      }
+    });
+  });
+
   // ---------- New-version drop zone ----------
   //
   // One file per version. Multi-drop → show an error toast and abort
@@ -383,6 +495,13 @@
       statusEl.textContent = text;
     };
 
+    // Batch endpoints live at /u/{user}/{slug}/files/<action>-batch.
+    // versionUploadUrl is /u/{user}/{slug}/files/{file_id}/version, so
+    // strip the trailing `/{file_id}/version` to get the project's
+    // files-base for the GPS-review batch calls.
+    const filesBaseForReview = versionUploadUrl.replace(/\/[^/]+\/version$/, '');
+    const gpsReview = window.benchlogGpsReview;
+
     async function uploadSingle(file) {
       setStatus(`Uploading ${file.name}…`);
       const formData = new FormData();
@@ -395,6 +514,17 @@
           headers: { 'Accept': 'application/json' },
         });
         if (resp.ok || resp.redirected) {
+          // Parse the JSON to see whether the version was quarantined.
+          let body = null;
+          try { body = await resp.json(); } catch {}
+          if (body?.is_quarantined && gpsReview) {
+            setStatus('GPS detected — review the upload below.');
+            gpsReview.show([body], {
+              batchUrlBase: filesBaseForReview,
+              csrfToken,
+            });
+            return;
+          }
           setStatus('Refreshing…');
           location.reload();
           return;

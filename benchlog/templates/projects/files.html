@@ -24,6 +24,7 @@
             <a href="{{ files_base }}/{{ file.id }}"
                class="file-tree-name-label"
                title="{{ file.filename }}">{{ file.filename }}</a>
+            {% with version = file.current_version %}{% include "components/_gps_warning.html" %}{% endwith %}
             <span class="file-tree-row-actions">
                 <a href="{{ files_base }}/{{ file.id }}/download"
                    class="file-tree-action-btn"
@@ -53,6 +54,37 @@
                 </form>
                 {% endif %}
             </span>
+            <details class="file-tree-row-actions-menu" data-menu data-row-menu>
+                <summary aria-label="Actions for {{ file.filename }}">
+                    <i data-lucide="more-vertical" class="w-4 h-4"></i>
+                </summary>
+                <div role="menu" class="file-tree-row-menu-panel">
+                    <a href="{{ files_base }}/{{ file.id }}/download"
+                       role="menuitem" class="file-tree-row-menu-item">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i>Download
+                    </a>
+                    {% if is_owner %}
+                    <button type="button" role="menuitem"
+                            class="file-tree-row-menu-item"
+                            data-file-edit-trigger
+                            data-file-submit-url="{{ files_base }}/{{ file.id }}"
+                            data-file-fullpath="{{ fullpath }}"
+                            data-file-description="{{ file.description or '' }}">
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>Edit
+                    </button>
+                    <form method="post" action="{{ files_base }}/{{ file.id }}/delete"
+                          data-confirm
+                          data-confirm-title="Delete file?"
+                          data-confirm-body="{{ file.filename }} and all of its versions will be removed."
+                          data-confirm-ok="Delete file">
+                        {% include "components/_csrf.html" %}
+                        <button type="submit" role="menuitem" class="file-tree-row-menu-item">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>Delete
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </details>
         </div>
     </td>
     <td class="col-size">{% if file.current_version %}{{ file.current_version.size_bytes | human_size }}{% endif %}</td>
@@ -111,6 +143,37 @@
                 </form>
                 {% endif %}
             </span>
+            <details class="file-tree-row-actions-menu" data-menu data-row-menu>
+                <summary aria-label="Actions for folder {{ folder.path }}">
+                    <i data-lucide="more-vertical" class="w-4 h-4"></i>
+                </summary>
+                <div role="menu" class="file-tree-row-menu-panel">
+                    <a href="{{ files_base }}/download-zip?path={{ folder.path | urlencode }}"
+                       role="menuitem" class="file-tree-row-menu-item">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i>Download as zip
+                    </a>
+                    {% if is_owner %}
+                    <button type="button" role="menuitem"
+                            class="file-tree-row-menu-item"
+                            data-folder-edit-trigger
+                            data-folder-submit-url="{{ files_base }}/folder/rename"
+                            data-folder-current-path="{{ folder.path }}">
+                        <i data-lucide="pencil" class="w-3.5 h-3.5"></i>Edit folder
+                    </button>
+                    <form method="post" action="{{ files_base }}/folder/delete"
+                          data-confirm
+                          data-confirm-title="Delete folder?"
+                          data-confirm-body="{{ folder.path }} and every file inside it will be permanently deleted."
+                          data-confirm-ok="Delete folder">
+                        {% include "components/_csrf.html" %}
+                        <input type="hidden" name="path" value="{{ folder.path }}">
+                        <button type="submit" role="menuitem" class="file-tree-row-menu-item">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>Delete folder
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </details>
         </div>
     </td>
     <td class="col-size">
@@ -137,6 +200,10 @@
 {% endfor %}
 {% endmacro %}
 
+{% if is_owner %}
+{% include "components/_pending_review.html" %}
+{% include "components/_gps_review_modal.html" %}
+{% endif %}
 <div class="flex flex-wrap items-baseline justify-between gap-3 mb-1">
     <h2 class="text-xl">Files</h2>
     <div class="flex flex-wrap items-center gap-2">
@@ -272,6 +339,7 @@
 
 {% if is_owner %}
 <script src="{{ url_for('static', path='js/file-upload.js') }}"></script>
+<script src="{{ url_for('static', path='js/gps-review.js') }}"></script>
 <script>
 (() => {
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -282,11 +350,27 @@
   const fileUpload = window.benchlogFileUpload;
   const isExternalFileDrag = fileUpload.isExternalFileDrag;
 
+  // ---------- GPS review modal + pending-review section ----------
+  // Both surfaces share `benchlogGpsReview` (see static/js/gps-review.js).
+  const gpsReview = window.benchlogGpsReview;
+  gpsReview?.wirePendingSection({ batchUrlBase: uploadUrl, csrfToken });
+
+  function handleUploadBatchDone(payload) {
+    const quarantined = payload.successes.filter(s => s.is_quarantined);
+    if (!quarantined.length) {
+      location.reload();
+      return;
+    }
+    gpsReview.show(quarantined, { batchUrlBase: uploadUrl, csrfToken });
+  }
+
   async function handleExternalDrop(dataTransfer, basePath) {
     return fileUpload.handleDrop(dataTransfer, {
       uploadUrl,
       basePath,
       statusEl: uploadStatusEl,
+      reloadOnDone: false,
+      onComplete: handleUploadBatchDone,
     });
   }
 
@@ -304,6 +388,8 @@
       uploadUrl,
       basePath: '',
       statusEl: uploadStatusEl,
+      reloadOnDone: false,
+      onComplete: handleUploadBatchDone,
     });
     filePickerInput.value = '';
   });
@@ -681,4 +767,33 @@
 })();
 </script>
 {% endif %}
+
+<script>
+(() => {
+  // Kebab row-action menus on mobile. The panel is rendered with
+  // `position: fixed` so it escapes the table's `overflow: hidden`
+  // rounded-corner clip — but that means we have to position it
+  // ourselves on each open. Right-align below the summary, with an
+  // 8px viewport-edge guard.
+  document.querySelectorAll('[data-row-menu]').forEach((d) => {
+    const summary = d.querySelector('summary');
+    const panel = d.querySelector('.file-tree-row-menu-panel');
+    if (!summary || !panel) return;
+    d.addEventListener('toggle', () => {
+      if (!d.open) return;
+      const r = summary.getBoundingClientRect();
+      const right = Math.max(8, window.innerWidth - r.right);
+      panel.style.top = `${r.bottom + 4}px`;
+      panel.style.right = `${right}px`;
+    });
+    // Close after picking an item so the modal/dialog that opens
+    // (file-edit, confirm-delete) is the only thing on screen.
+    panel.addEventListener('click', (e) => {
+      if (e.target.closest('[role="menuitem"]')) {
+        setTimeout(() => { d.open = false; }, 0);
+      }
+    });
+  });
+})();
+</script>
 {% endblock %}

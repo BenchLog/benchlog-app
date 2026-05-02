@@ -1,0 +1,13 @@
+<dialog class="modal modal-wide" data-gps-review-modal>
+    <div class="space-y-3">
+        <h2 class="text-lg font-display m-0">Photos with location data</h2>
+        <p class="meta" data-gps-review-summary></p>
+        <ul class="gps-review-grid" data-gps-review-list></ul>
+        <p class="text-rust-deep text-sm m-0" data-gps-review-error hidden></p>
+        <div class="flex flex-wrap justify-end gap-2 pt-1">
+            <button type="button" class="btn-ghost text-sm text-rust-deep" data-gps-review-discard-all>Discard all</button>
+            <button type="button" class="btn-ghost text-sm" data-gps-review-keep-all>Keep all</button>
+            <button type="button" class="btn-primary text-sm" data-gps-review-strip-all>Strip from all</button>
+        </div>
+    </div>
+</dialog>

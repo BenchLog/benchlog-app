@@ -260,10 +260,18 @@ async def fork_project(
         # source's current_version. Storage layout is
         # files/<file_id>/<version_number>, so a fresh file_id gives us
         # fresh blob paths without collision.
+        #
+        # Quarantined versions are skipped: the source owner explicitly
+        # chose not to publish them, and a fork inherits only what a
+        # non-owner could see. Carrying the bytes through (even with the
+        # flag preserved) would still mean the forker, as the new owner,
+        # can download GPS-tagged photos the original owner never released.
         new_current_id: uuid.UUID | None = None
         for src_version in sorted(
             src_file.versions, key=lambda v: v.version_number
         ):
+            if src_version.is_quarantined:
+                continue
             # Copy the blob, not the path — source deletion must not break forks.
             new_storage_path = f"files/{new_file.id}/{src_version.version_number}"
             await copy_blob(storage, src_version.storage_path, new_storage_path)
@@ -287,6 +295,7 @@ async def fork_project(
                 width=src_version.width,
                 height=src_version.height,
                 thumbnail_path=new_thumb_path,
+                has_gps=src_version.has_gps,
             )
             db.add(new_version)
             await db.flush()

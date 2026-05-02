@@ -10,11 +10,11 @@
    and unstuck states (no JS scroll-detection needed). z-10 keeps the
    bar above per-tab dropdowns + lightboxes during scroll.
 
-   Scroll preservation: a deferred script reads `data-project-tabs` to
-   save the current scrollY when a tab link is clicked, then restores it
-   on the destination page. So a user reading deep into Journal who
-   clicks Files lands at the same vertical position. See
-   `static/js/project-tab-scroll.js`. #}
+   Tab-switch scroll: a deferred script reads `data-project-tabs` to
+   detect tab clicks, then on the destination page scrolls down so the
+   tab bar pins to the top of the viewport. Skips past the cover image
+   / header so the content under the chosen tab is immediately visible.
+   See `static/js/project-tab-scroll.js`. #}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
 {% set tabs = [
     ('',         'Overview'),

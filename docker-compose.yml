@@ -36,6 +36,13 @@ services:
       BENCHLOG_SECRET_KEY: dev-secret-change-me
       BENCHLOG_DATABASE_URL: postgresql+asyncpg://benchlog:benchlog@db/benchlog
       BENCHLOG_BASE_URL: http://localhost:8000
+      # Trust X-Forwarded-For from the reverse proxy for rate-limit IP attribution.
+      # Only enable when actually deployed behind a proxy.
+      BENCHLOG_TRUST_PROXY_HEADERS: "true"
+      # Which peer IPs uvicorn trusts X-Forwarded-* from. "*" is safe when this
+      # container only accepts traffic from a trusted reverse proxy on a private
+      # network. Pin to specific proxy IPs if you publish 8000 to untrusted networks.
+      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - filedata:/app/data
     depends_on:

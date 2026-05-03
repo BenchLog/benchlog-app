@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Pluggable backend; only "local" is wired up right now. The s3_* fields
     # are placeholders for a future S3/MinIO backend.
     storage_backend: str = "local"
-    storage_local_path: str = "./data/files"
+    storage_local_path: str = "./data"
     storage_s3_bucket: str = ""
     storage_s3_endpoint: str = ""
     storage_s3_access_key: str = ""

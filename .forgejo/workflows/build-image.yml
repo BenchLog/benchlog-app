@@ -1,0 +1,61 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ "v*" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: Public-Mirrors/actions_checkout@v6
+
+      - name: Install Docker CLI
+        run: |
+          ARCH=$(uname -m)
+          VERSION=$(wget -qO- "https://download.docker.com/linux/static/stable/${ARCH}/" \
+            | grep -o 'docker-[0-9]*\.[0-9]*\.[0-9]*\.tgz' \
+            | sort -V | tail -1 | sed 's/docker-//;s/\.tgz//')
+          echo "Installing Docker CLI ${VERSION}"
+          wget -qO- "https://download.docker.com/linux/static/stable/${ARCH}/docker-${VERSION}.tgz" \
+            | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          IMAGE="${{ vars.GITX_IMAGE_NAME }}"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAGS="${IMAGE}:${VERSION},${IMAGE}:latest"
+          elif [[ "$GITHUB_REF" == refs/heads/* ]]; then
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            TAGS="${IMAGE}:${BRANCH}"
+          fi
+
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: Public-Mirrors/docker_setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: Public-Mirrors/docker_setup-buildx-action@v4
+
+      - name: Login to Forgejo Registry
+        uses: Public-Mirrors/docker_login-action@v4
+        with:
+          registry: ${{ vars.GITX_REGISTRY }}
+          username: ${{ secrets.GITX_REGISTRY_USERNAME }}
+          password: ${{ secrets.GITX_REGISTRY_PASSWORD }}
+
+      - name: Build and push
+        uses: Public-Mirrors/docker_build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=registry,ref=${{ vars.GITX_IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ vars.GITX_IMAGE_NAME }}:buildcache,mode=max,compression=zstd,force-compression=true

@@ -10,6 +10,7 @@ leading/trailing slashes, with no `..` segments allowed.
 
 import hashlib
 import io
+import json
 import uuid
 from dataclasses import dataclass
 from typing import BinaryIO
@@ -35,7 +36,7 @@ from benchlog.gps_metadata import (
     StripFailed,
 )
 from benchlog.models import FileVersion, Project, ProjectFile
-from benchlog.storage import LocalStorage
+from benchlog.storage import LocalStorage, get_storage
 
 # Cap decoded image pixels so a small crafted PNG can't balloon into
 # gigabytes of RAM when PIL decompresses it (classic "zip bomb" for
@@ -64,6 +65,36 @@ class UploadTooLarge(Exception):
     The Content-Length pre-check in the route is advisory (client-supplied);
     this exception is the authoritative enforcement.
     """
+
+
+class InvalidExcalidrawScene(Exception):
+    """Raised when a `.excalidraw` upload doesn't parse as a scene.
+
+    Validated up front so we never persist a non-scene under the canonical
+    Excalidraw mime — the embed renderer + editor would otherwise blow up
+    on whatever JSON-or-not blob landed there.
+    """
+
+
+# Canonical mime for `.excalidraw` files. Custom vendor type so we can
+# extend the `/raw` allowlist for it without opening the door to arbitrary
+# JSON. Detected by extension at upload time and stamped onto the version.
+EXCALIDRAW_MIME = "application/vnd.benchlog.excalidraw+json"
+
+
+def _is_valid_excalidraw_scene(body: bytes) -> bool:
+    """Return True if `body` parses as an Excalidraw scene.
+
+    Excalidraw's schema evolves across minor versions and we don't pin to
+    one. Two cheap invariants reject pasted-text or drag-and-drop accidents:
+    the body parses as JSON, and the top-level object carries
+    `type: "excalidraw"` (a marker the format has carried since v1).
+    """
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get("type") == "excalidraw"
 
 # Cap inline text previews so we don't stream a 50MB log into the page.
 _TEXT_PREVIEW_LIMIT = 256 * 1024
@@ -125,6 +156,8 @@ def file_icon(filename: str | None, mime_type: str | None = None) -> str:
         return "music"
     if mime == "application/pdf":
         return "file-text"
+    if mime == EXCALIDRAW_MIME:
+        return "pen-tool"
     if not filename:
         return "file"
     lower = filename.lower()
@@ -137,6 +170,8 @@ def file_icon(filename: str | None, mime_type: str | None = None) -> str:
     # pick up the right icon.
     if ext == ".pdf":
         return "file-text"
+    if ext == ".excalidraw":
+        return "pen-tool"
     return _EXT_ICON_MAP.get(ext, "file")
 
 
@@ -177,6 +212,8 @@ def preview_kind(mime_type: str | None, filename: str) -> str:
         return "audio"
     if mime == "application/pdf" or filename.lower().endswith(".pdf"):
         return "pdf"
+    if mime == EXCALIDRAW_MIME or filename.lower().endswith(".excalidraw"):
+        return "excalidraw"
     is_textual = mime.startswith("text/") or mime in {
         "application/json",
         "application/xml",
@@ -529,6 +566,21 @@ async def store_upload(
     rewritten_mime: str | None = None
 
     declared_lower = (declared_mime or "").lower()
+
+    # Excalidraw scenes — detect by extension since the browser sends
+    # "application/json" or empty for them. Validate the body up front so
+    # we never persist a non-scene under the canonical mime, then proceed
+    # with the JSON bytes (no thumbnail/GPS path applies).
+    if original_filename.lower().endswith(".excalidraw"):
+        head = source.read(max_bytes + 1)
+        if len(head) > max_bytes:
+            raise UploadTooLarge()
+        if not _is_valid_excalidraw_scene(head):
+            raise InvalidExcalidrawScene()
+        source = io.BytesIO(head)
+        declared_mime = EXCALIDRAW_MIME
+        rewritten_mime = EXCALIDRAW_MIME
+
     if declared_lower in {"image/heic", "image/heif"}:
         # Apply the tighter HEIC-specific cap on top of the global limit:
         # `transcode_heic_to_jpeg` materialises the entire input in memory.
@@ -595,6 +647,44 @@ async def store_upload(
         rewritten_filename=rewritten_filename,
         rewritten_mime=rewritten_mime,
     )
+
+
+async def store_excalidraw_scene(
+    db: AsyncSession,
+    *,
+    file: ProjectFile,
+    body: bytes,
+) -> FileVersion:
+    """Persist `body` as a new FileVersion on `file`. Validates the scene.
+
+    Used by both the modal editor's save endpoint and the create-blank
+    endpoint that seeds a fresh `.excalidraw` file. Returns the newly
+    created FileVersion (already added + flushed). Caller is responsible
+    for committing and pointing `file.current_version_id` at the new row.
+    """
+    if not _is_valid_excalidraw_scene(body):
+        raise InvalidExcalidrawScene()
+
+    storage = get_storage()
+    next_number = (
+        file.current_version.version_number if file.current_version is not None else 0
+    ) + 1
+    storage_path = f"files/{file.id}/{next_number}"
+    await storage.save(storage_path, io.BytesIO(body))
+
+    checksum = hashlib.sha256(body).hexdigest()
+    version = FileVersion(
+        file_id=file.id,
+        version_number=next_number,
+        storage_path=storage_path,
+        original_name=file.filename,
+        size_bytes=len(body),
+        mime_type=EXCALIDRAW_MIME,
+        checksum=checksum,
+    )
+    db.add(version)
+    await db.flush()
+    return version
 
 
 async def _save_with_checksum(

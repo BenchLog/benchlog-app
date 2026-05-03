@@ -200,6 +200,10 @@
               article.replaceWith(fresh);
               wireEntry(fresh);
               refreshIcons(fresh);
+              // Render any newly-inserted excalidraw embed placeholders.
+              if (window.BenchlogExcalidrawEmbed?.refresh) {
+                window.BenchlogExcalidrawEmbed.refresh();
+              }
               return;
             }
           }
@@ -286,6 +290,9 @@
             article.replaceWith(fresh);
             wireEntry(fresh);
             refreshIcons();
+            if (window.BenchlogExcalidrawEmbed?.refresh) {
+              window.BenchlogExcalidrawEmbed.refresh();
+            }
           }
         }
       } finally {
@@ -436,6 +443,9 @@
         if (fresh) {
           wireEntry(fresh);
           refreshIcons(fresh);
+          if (window.BenchlogExcalidrawEmbed?.refresh) {
+            window.BenchlogExcalidrawEmbed.refresh();
+          }
         }
       }
       closeNewEntryModal();

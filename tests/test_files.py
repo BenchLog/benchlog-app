@@ -2,6 +2,7 @@
 
 import functools
 import io
+import json
 import uuid
 import shutil
 import zipfile
@@ -14,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from benchlog.config import settings
 from benchlog.files import (
+    EXCALIDRAW_MIME,
     code_language,
     highlight_code,
     normalize_virtual_path,
@@ -638,6 +640,40 @@ async def test_raw_endpoint_404s_for_non_allowlisted_mime(client, db):
     file = (await db.execute(select(ProjectFile))).scalar_one()
     resp = await client.get(f"/u/alice/bench/files/{file.id}/raw")
     assert resp.status_code == 404
+
+
+async def test_raw_endpoint_anon_can_fetch_on_public_project(client, db):
+    # Image embeds in markdown rendered for guests on public projects
+    # rely on `/raw` being reachable without auth. The middleware's
+    # public-views allowlist must include `raw` alongside `download` and
+    # `thumb`; without it, anon GETs get redirected to /login (302) and
+    # `<img src=".../raw">` shows broken in the browser.
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+    await _upload(
+        client,
+        "/u/alice/bench/files",
+        filename="photo.png",
+        content=_png_bytes(),
+        mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+    file = (await db.execute(select(ProjectFile))).scalar_one()
+
+    # Log out — public client.
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+    resp = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/png")
 
 
 async def test_raw_endpoint_respects_project_visibility(client, db):
@@ -5609,3 +5645,588 @@ async def test_quarantined_file_detail_accessible_to_owner(client, db):
 
     resp = await client.get(f"/u/alice/bench/files/{file.id}")
     assert resp.status_code == 200
+
+
+# ---------- excalidraw ---------- #
+
+
+_BLANK_EXCALIDRAW = {
+    "type": "excalidraw",
+    "version": 2,
+    "source": "https://excalidraw.com",
+    "elements": [],
+    "appState": {"viewBackgroundColor": "#ffffff"},
+    "files": {},
+}
+
+
+async def _upload_excalidraw(
+    client,
+    *,
+    username: str = "alice",
+    slug: str = "bench",
+    filename: str = "diagram.excalidraw",
+    body: bytes | None = None,
+):
+    if body is None:
+        body = json.dumps(_BLANK_EXCALIDRAW).encode()
+    return await _upload(
+        client,
+        f"/u/{username}/{slug}/files",
+        filename=filename,
+        content=body,
+        mime="application/json",
+        csrf_path=f"/u/{username}/{slug}",
+    )
+
+
+async def test_excalidraw_upload_accepted_and_classified(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await _upload_excalidraw(client, filename="notes.excalidraw")
+    assert resp.status_code == 302
+
+    file = (
+        await db.execute(
+            select(ProjectFile)
+            .where(ProjectFile.filename == "notes.excalidraw")
+            .options(selectinload(ProjectFile.current_version))
+        )
+    ).scalar_one()
+    assert file.current_version.mime_type == EXCALIDRAW_MIME
+
+
+async def test_excalidraw_upload_rejected_when_not_json(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await _upload_excalidraw(client, filename="bogus.excalidraw", body=b"not json")
+    # Reject — server should reject bad-JSON payloads up front.
+    assert resp.status_code in (400, 422)
+    # No file row was created.
+    rows = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "bogus.excalidraw"))
+    ).scalars().all()
+    assert rows == []
+
+
+async def test_excalidraw_upload_rejected_when_wrong_type_field(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    body = json.dumps({"type": "something-else", "elements": []}).encode()
+    resp = await _upload_excalidraw(client, filename="evil.excalidraw", body=body)
+    assert resp.status_code in (400, 422)
+    rows = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "evil.excalidraw"))
+    ).scalars().all()
+    assert rows == []
+
+
+def test_excalidraw_preview_kind_and_icon():
+    from benchlog.files import file_icon
+
+    assert preview_kind(EXCALIDRAW_MIME, "d.excalidraw") == "excalidraw"
+    assert preview_kind(None, "d.excalidraw") == "excalidraw"
+    assert file_icon("d.excalidraw", EXCALIDRAW_MIME) == "pen-tool"
+    assert file_icon("d.excalidraw", None) == "pen-tool"
+
+
+async def test_excalidraw_raw_serves_json_inline(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    resp = await _upload_excalidraw(client, filename="d.excalidraw")
+    assert resp.status_code == 302
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    raw = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert raw.status_code == 200
+    assert raw.headers["content-type"].startswith(EXCALIDRAW_MIME)
+    assert raw.headers["x-content-type-options"] == "nosniff"
+    assert json.loads(raw.content)["type"] == "excalidraw"
+
+
+async def test_excalidraw_raw_anon_on_public_project_succeeds(client, db):
+    """Modal editor fetches scene JSON via /raw — must work for guests
+    on public projects so non-owners can view drawings on shared pages."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+    raw = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert raw.status_code == 200
+    assert raw.headers["content-type"].startswith(EXCALIDRAW_MIME)
+
+
+async def test_excalidraw_save_then_raw_returns_latest_version(client, db):
+    """Ensures save + re-fetch via /raw round-trips the latest content,
+    not a stale earlier version. Catches a class of bug where the save
+    persists but /raw still serves the prior version (current_version_id
+    not bumped, eager-load stale, etc)."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    edited = dict(_BLANK_EXCALIDRAW)
+    edited["elements"] = [{"type": "rectangle", "id": "after-edit", "x": 5, "y": 7}]
+    token = await csrf_token(client, "/u/alice/bench")
+    save = await client.put(
+        f"/u/alice/bench/files/{file.id}/excalidraw",
+        content=json.dumps(edited),
+        headers={"X-CSRF-Token": token, "Content-Type": EXCALIDRAW_MIME},
+    )
+    assert save.status_code == 200, save.text
+
+    raw = await client.get(f"/u/alice/bench/files/{file.id}/raw")
+    assert raw.status_code == 200
+    served = json.loads(raw.content)
+    assert served["elements"] == [{"type": "rectangle", "id": "after-edit", "x": 5, "y": 7}]
+
+
+async def test_excalidraw_save_creates_new_version(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(
+            select(ProjectFile)
+            .where(ProjectFile.filename == "d.excalidraw")
+            .options(selectinload(ProjectFile.current_version))
+        )
+    ).scalar_one()
+    assert file.current_version.version_number == 1
+
+    new_scene = dict(_BLANK_EXCALIDRAW)
+    new_scene["elements"] = [{"type": "rectangle", "id": "r1", "x": 0, "y": 0}]
+    token = await csrf_token(client, "/u/alice/bench")
+    save = await client.put(
+        f"/u/alice/bench/files/{file.id}/excalidraw",
+        content=json.dumps(new_scene),
+        headers={"X-CSRF-Token": token, "Content-Type": EXCALIDRAW_MIME},
+    )
+    assert save.status_code == 200, save.text
+    assert save.json()["version"] == 2
+
+    versions = (
+        await db.execute(
+            select(FileVersion)
+            .where(FileVersion.file_id == file.id)
+            .order_by(FileVersion.version_number)
+        )
+    ).scalars().all()
+    assert [v.version_number for v in versions] == [1, 2]
+
+    storage = get_storage()
+    saved_bytes = (storage.full_path(versions[1].storage_path)).read_bytes()
+    assert json.loads(saved_bytes)["elements"][0]["id"] == "r1"
+
+
+async def test_excalidraw_save_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(
+        Project(
+            user_id=alice.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+
+    await login(client, "alice")
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    await login(client, "bob")
+    bob_token = await csrf_token(client, "/explore")
+    resp = await client.put(
+        f"/u/alice/bench/files/{file.id}/excalidraw",
+        content=json.dumps(_BLANK_EXCALIDRAW),
+        headers={"X-CSRF-Token": bob_token, "Content-Type": EXCALIDRAW_MIME},
+    )
+    assert resp.status_code in (403, 404)
+
+
+async def test_excalidraw_save_rejects_invalid_scene(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+    token = await csrf_token(client, "/u/alice/bench")
+
+    bad = await client.put(
+        f"/u/alice/bench/files/{file.id}/excalidraw",
+        content=b"not json",
+        headers={"X-CSRF-Token": token, "Content-Type": EXCALIDRAW_MIME},
+    )
+    assert bad.status_code == 400
+
+
+async def test_excalidraw_create_blank(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/excalidraw/new",
+        data={"_csrf": token, "name": "diagram.excalidraw"},
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["filename"] == "diagram.excalidraw"
+    assert "id" in payload
+
+    file = (
+        await db.execute(
+            select(ProjectFile)
+            .where(ProjectFile.id == uuid.UUID(payload["id"]))
+            .options(selectinload(ProjectFile.current_version))
+        )
+    ).scalar_one()
+    assert file.current_version.mime_type == EXCALIDRAW_MIME
+    storage = get_storage()
+    raw = (storage.full_path(file.current_version.storage_path)).read_bytes()
+    assert json.loads(raw)["type"] == "excalidraw"
+
+
+async def test_excalidraw_create_blank_owner_only(client, db):
+    alice = await make_user(db, email="alice@test.com", username="alice")
+    await make_user(db, email="bob@test.com", username="bob")
+    db.add(
+        Project(
+            user_id=alice.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+
+    await login(client, "bob")
+    token = await csrf_token(client, "/explore")
+    resp = await client.post(
+        "/u/alice/bench/excalidraw/new",
+        data={"_csrf": token, "name": "evil.excalidraw"},
+    )
+    assert resp.status_code in (403, 404)
+
+
+async def test_excalidraw_create_blank_rejects_non_excalidraw_extension(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        "/u/alice/bench/excalidraw/new",
+        data={"_csrf": token, "name": "drawing.png"},
+    )
+    assert resp.status_code == 400
+
+
+async def test_excalidraw_create_blank_collision_409(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    token = await csrf_token(client, "/u/alice/bench")
+    first = await client.post(
+        "/u/alice/bench/excalidraw/new",
+        data={"_csrf": token, "name": "diagram.excalidraw"},
+    )
+    assert first.status_code == 200
+    second = await client.post(
+        "/u/alice/bench/excalidraw/new",
+        data={"_csrf": token, "name": "diagram.excalidraw"},
+    )
+    assert second.status_code == 409
+
+
+async def test_excalidraw_files_tab_shows_new_drawing_button_for_owner(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    page = await client.get("/u/alice/bench/files")
+    assert page.status_code == 200
+    assert "data-excalidraw-new-trigger" in page.text
+    assert "/u/alice/bench/excalidraw/new" in page.text
+
+
+async def test_excalidraw_files_tab_no_new_button_for_non_owner(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+
+    page = await client.get("/u/alice/bench/files")
+    assert page.status_code == 200
+    assert "data-excalidraw-new-trigger" not in page.text
+
+
+async def test_excalidraw_files_tab_row_has_modal_trigger(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    page = await client.get("/u/alice/bench/files")
+    assert page.status_code == 200
+    assert "data-excalidraw-row-trigger" in page.text
+    assert f'data-file-id="{file.id}"' in page.text
+    assert f'data-scene-url="/u/alice/bench/files/{file.id}/raw"' in page.text
+    # Modal needs the file's path + description so the rename round-trip
+    # via /files/{id} doesn't accidentally null them out.
+    assert 'data-file-path=""' in page.text
+    assert 'data-file-description=""' in page.text
+
+
+async def test_excalidraw_files_tab_row_links_to_file_details(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    page = await client.get("/u/alice/bench/files")
+    assert page.status_code == 200
+    # The row's hover action strip has an info-button "File details"
+    # link to /files/{id} (the standard detail page) so the artifact-
+    # style click-to-edit default doesn't lock users out of version
+    # history / metadata. The same entry also appears in the mobile
+    # ⋮ menu (which CSS-hides on desktop).
+    assert 'title="File details"' in page.text
+    assert f'href="/u/alice/bench/files/{file.id}"' in page.text
+
+
+async def test_excalidraw_file_detail_page_has_open_editor_button(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    page = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert page.status_code == 200
+    assert "Open editor" in page.text
+    # Triggers the same modal flow as the Files-tab row click.
+    assert "data-excalidraw-row-trigger" in page.text
+    assert f'data-file-id="{file.id}"' in page.text
+
+
+async def test_excalidraw_file_detail_page_anon_sees_open_viewer(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id, title="Bench", slug="bench",
+            status=ProjectStatus.idea, is_public=True,
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+    await _upload_excalidraw(client, filename="d.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "d.excalidraw"))
+    ).scalar_one()
+
+    await client.post(
+        "/logout", data={"_csrf": await csrf_token(client, "/explore")}
+    )
+    page = await client.get(f"/u/alice/bench/files/{file.id}")
+    assert page.status_code == 200
+    assert "Open viewer" in page.text
+    assert 'data-is-owner="0"' in page.text
+
+
+async def test_excalidraw_file_appears_in_toastui_file_index(client, db):
+    """The Toast UI editor's file-link autocomplete index is also what
+    the 'Insert drawing' picker reads to populate its existing-drawings
+    list. Verify `.excalidraw` files actually show up there.
+    """
+    from benchlog.files import get_project_file_index
+
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+
+    entries = await get_project_file_index(db, project.id)
+    excal = [e for e in entries if e["filename"] == "d.excalidraw"]
+    assert len(excal) == 1
+    assert excal[0]["is_image"] is False
+    assert excal[0]["path"] == ""
+
+
+async def test_excalidraw_embed_renders_in_project_description(client, db):
+    """End-to-end: a description with `![[name.excalidraw]]` renders an
+    embed placeholder div on the project detail page when the file
+    exists, and the page includes the embed JS.
+    """
+    user = await make_user(db, email="alice@test.com", username="alice")
+    project = Project(
+        user_id=user.id,
+        title="Bench",
+        slug="bench",
+        status=ProjectStatus.idea,
+        description="See ![[d.excalidraw]] for the layout.",
+    )
+    db.add(project)
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="d.excalidraw")
+
+    page = await client.get("/u/alice/bench")
+    assert page.status_code == 200
+    assert "data-excalidraw-embed" in page.text
+    assert "excalidraw-embed.js" in page.text
+    assert "excalidraw-modal.js" in page.text
+    # Owner viewing → embed marked editable.
+    assert 'data-is-owner="1"' in page.text
+
+
+async def test_excalidraw_embed_renders_unresolved_literal_when_missing(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(
+        Project(
+            user_id=user.id,
+            title="Bench",
+            slug="bench",
+            status=ProjectStatus.idea,
+            description="See ![[ghost.excalidraw]] which doesn't exist.",
+        )
+    )
+    await db.commit()
+    await login(client, "alice")
+
+    page = await client.get("/u/alice/bench")
+    assert page.status_code == 200
+    # Literal preserved so the author notices the broken ref.
+    assert "ghost.excalidraw" in page.text
+    assert "data-excalidraw-embed" not in page.text
+
+
+async def test_excalidraw_modal_can_rename_via_existing_edit_route(client, db):
+    """The modal posts form-encoded to POST /files/{id} with Accept:JSON to
+    rename. We don't add a new endpoint — verify the existing one returns
+    204 for a JSON-mode rename of an .excalidraw file."""
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload_excalidraw(client, filename="old.excalidraw")
+    file = (
+        await db.execute(select(ProjectFile).where(ProjectFile.filename == "old.excalidraw"))
+    ).scalar_one()
+
+    token = await csrf_token(client, "/u/alice/bench")
+    resp = await client.post(
+        f"/u/alice/bench/files/{file.id}",
+        data={
+            "_csrf": token,
+            "path": "",
+            "filename": "new.excalidraw",
+            "description": "",
+            "update_refs": "1",
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert resp.status_code == 204, resp.text
+
+    # Don't reload `file` (the test session has it cached pre-rename);
+    # query the underlying column directly to confirm the rename landed.
+    new_name = (
+        await db.execute(
+            select(ProjectFile.filename).where(ProjectFile.id == file.id)
+        )
+    ).scalar_one()
+    assert new_name == "new.excalidraw"
+
+
+async def test_excalidraw_files_tab_non_excalidraw_row_has_no_trigger(client, db):
+    user = await make_user(db, email="alice@test.com", username="alice")
+    db.add(Project(user_id=user.id, title="Bench", slug="bench", status=ProjectStatus.idea))
+    await db.commit()
+    await login(client, "alice")
+
+    await _upload(
+        client, "/u/alice/bench/files", filename="photo.png",
+        content=_png_bytes(), mime="image/png",
+        csrf_path="/u/alice/bench",
+    )
+
+    page = await client.get("/u/alice/bench/files")
+    assert page.status_code == 200
+    # The page may still have the New-drawing button, but no row trigger
+    # exists for an image file.
+    assert "data-excalidraw-row-trigger" not in page.text

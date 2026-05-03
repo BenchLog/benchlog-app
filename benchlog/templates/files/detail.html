@@ -97,6 +97,25 @@
     </p>
     {% endif %}
 </div>
+{% elif preview_kind == 'excalidraw' %}
+<div class="card mb-4 text-center">
+    <p class="meta mb-3">Excalidraw drawing — preview renders in the editor.</p>
+    <button type="button"
+            class="btn-primary inline-flex items-center gap-2"
+            data-excalidraw-row-trigger
+            data-project-url="{{ project_url }}"
+            data-file-id="{{ file.id }}"
+            data-filename="{{ file.filename }}"
+            data-file-path="{{ file.path or '' }}"
+            data-file-description="{{ file.description or '' }}"
+            data-scene-url="{{ file_url }}/raw"
+            data-is-owner="{{ '1' if is_owner else '0' }}">
+        <i data-lucide="pen-tool" class="w-4 h-4"></i>
+        {% if is_owner %}Open editor{% else %}Open viewer{% endif %}
+    </button>
+</div>
+<script src="{{ url_for('static', path='js/excalidraw-modal.js') }}" defer></script>
+<script src="{{ url_for('static', path='js/excalidraw-files-tab.js') }}" defer></script>
 {% endif %}
 
 {% if file.description %}

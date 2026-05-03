@@ -54,3 +54,81 @@ def test_inline_code_is_not_highlighted():
     html = render("Use `foo` for that.")
     assert "<code>foo</code>" in html
     assert "highlight" not in html
+
+
+# ---------- excalidraw embed ---------- #
+
+
+def test_excalidraw_embed_renders_placeholder():
+    from benchlog.markdown import render_for_project
+
+    lookup = lambda path, filename: (
+        "abc-123" if (path, filename) == ("", "diagram.excalidraw") else None
+    )
+    html = render_for_project("![[diagram.excalidraw]]", "alice", "p", lookup)
+    assert "data-excalidraw-embed" in html
+    assert 'data-file-id="abc-123"' in html
+    assert "/u/alice/p/files/abc-123/raw" in html
+    assert 'data-filename="diagram.excalidraw"' in html
+
+
+def test_excalidraw_embed_default_is_not_editable():
+    from benchlog.markdown import render_for_project
+
+    lookup = lambda p, f: "x" if f == "d.excalidraw" else None
+    html = render_for_project("![[d.excalidraw]]", "alice", "p", lookup)
+    assert 'data-is-owner="0"' in html
+
+
+def test_excalidraw_embed_editable_for_owner():
+    from benchlog.markdown import render_for_project
+
+    lookup = lambda p, f: "x" if f == "d.excalidraw" else None
+    html = render_for_project(
+        "![[d.excalidraw]]", "alice", "p", lookup, is_owner=True
+    )
+    assert 'data-is-owner="1"' in html
+
+
+def test_excalidraw_embed_inline_with_text():
+    from benchlog.markdown import render_for_project
+
+    lookup = lambda p, f: "abc" if f == "d.excalidraw" else None
+    html = render_for_project(
+        "Here it is: ![[d.excalidraw]] (cool)", "alice", "p", lookup
+    )
+    assert "data-excalidraw-embed" in html
+
+
+def test_excalidraw_embed_unknown_file_preserves_literal():
+    from benchlog.markdown import render_for_project
+
+    html = render_for_project(
+        "![[ghost.excalidraw]]", "alice", "p", lambda p, f: None
+    )
+    # No silent disappearance — author should see the unresolved ref.
+    assert "ghost.excalidraw" in html
+    assert "data-excalidraw-embed" not in html
+
+
+def test_excalidraw_embed_subdirectory():
+    from benchlog.markdown import render_for_project
+
+    lookup = lambda path, filename: (
+        "x" if (path, filename) == ("designs", "v2.excalidraw") else None
+    )
+    html = render_for_project("![[designs/v2.excalidraw]]", "alice", "p", lookup)
+    assert "data-excalidraw-embed" in html
+    assert 'data-file-id="x"' in html
+
+
+def test_excalidraw_embed_only_matches_excalidraw_extension():
+    from benchlog.markdown import render_for_project
+
+    # `![[foo.png]]` is NOT an Excalidraw embed — leave it alone. We
+    # don't want every Obsidian-style wikilink to compete with the
+    # existing `![alt](files/...)` image syntax.
+    html = render_for_project(
+        "![[photo.png]]", "alice", "p", lambda p, f: "x"
+    )
+    assert "data-excalidraw-embed" not in html

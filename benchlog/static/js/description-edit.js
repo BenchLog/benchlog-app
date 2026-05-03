@@ -128,6 +128,11 @@
         if (window.lucide && typeof window.lucide.createIcons === "function") {
           window.lucide.createIcons();
         }
+        // Render any newly-inserted excalidraw embed placeholders. Safe
+        // no-op if the embed module isn't loaded on this page.
+        if (window.BenchlogExcalidrawEmbed?.refresh) {
+          window.BenchlogExcalidrawEmbed.refresh();
+        }
         closeEditor();
       } else {
         let detail = "Couldn't save description.";

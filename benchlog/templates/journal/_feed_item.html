@@ -129,7 +129,7 @@
         {% endif %}
     </header>
     <div class="markdown-body text-ink" data-entry-rendered>
-        {{ entry.content|project_markdown(project) }}
+        {{ entry.content|project_markdown(project, is_owner) }}
     </div>
 
     {% if is_owner %}

@@ -13,7 +13,16 @@
     <script src="{{ url_for('static', path='js/gps-review.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/description-edit.js') }}" defer></script>
+    {# Picker dialog for the Toast UI "Insert drawing" toolbar button. #}
+    <script src="{{ url_for('static', path='js/excalidraw-picker.js') }}" defer></script>
     {% endif %}
+    {# Excalidraw embeds — bundle + click-to-modal handler are loaded
+       for owners and guests since `![[…]]` embeds render on public
+       projects too. The embed renderer self-guards if no placeholders
+       are on the page (the heavy bundle is only fetched on demand). #}
+    <script src="{{ url_for('static', path='js/excalidraw-modal.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-files-tab.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-embed.js') }}" defer></script>
 {% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
@@ -35,7 +44,7 @@
 
     {# Rendered view — visible by default. #}
     <div class="markdown-body" data-description-rendered>
-        {% if project.description %}{{ project.description|project_markdown(project) }}{% else %}
+        {% if project.description %}{{ project.description|project_markdown(project, is_owner) }}{% else %}
         <p class="text-ink-muted italic m-0">No description yet.</p>
         {% endif %}
     </div>

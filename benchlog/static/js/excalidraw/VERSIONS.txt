@@ -1,0 +1,32 @@
+react: 18.2.0
+react-dom: 18.2.0
+@excalidraw/excalidraw: 0.17.6
+
+Why 0.17.6 and not 0.18.x: 0.18 dropped the standalone UMD bundle in
+favor of an ES-module split across many files. Until BenchLog grows a
+JS build pipeline, the UMD wrapper from 0.17.6 is the path of least
+resistance. The Excalidraw editor + scene format have been stable
+across this transition; saved files round-trip between versions.
+
+The `excalidraw-assets/` directory holds runtime-loaded fonts and
+locale bundles. Excalidraw fetches them from
+`window.EXCALIDRAW_ASSET_PATH` at editor-mount time; we point that at
+this directory so nothing leaks to a third-party CDN.
+
+Layout note: with `window.EXCALIDRAW_ASSET_PATH` set BEFORE the bundle
+parses (we do this via an inline <script> in the trigger page), the
+bundle constructs asset URLs as `${EXCALIDRAW_ASSET_PATH}excalidraw-assets/foo`.
+So assets must live directly at `excalidraw-assets/` — NOT under a
+`dist/` subfolder. (You'll see `/dist/` in Excalidraw's online docs;
+that's the URL pattern when EXCALIDRAW_ASSET_PATH is unset, a different
+code path.)
+
+To upgrade:
+  cd /tmp
+  curl -fsSL https://registry.npmjs.org/@excalidraw/excalidraw/-/excalidraw-X.Y.Z.tgz -o excal.tgz
+  tar xzf excal.tgz
+  cp package/dist/excalidraw.production.min.js benchlog/static/js/excalidraw/
+  rm -rf benchlog/static/js/excalidraw/excalidraw-assets
+  cp -r package/dist/excalidraw-assets benchlog/static/js/excalidraw/
+  # Then verify the editor mounts (open any project, create a drawing
+  # via the Files tab "New drawing" button).

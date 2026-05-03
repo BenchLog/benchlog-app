@@ -123,6 +123,17 @@ _JOURNAL_LINK_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Obsidian-style embed for Excalidraw drawings: `![[name.excalidraw]]` or
+# `![[subdir/name.excalidraw]]`. Markdown-it leaves the literal text alone
+# (`html: false`, no autolink hit), so the brackets pass through to the
+# rendered HTML and we rewrite them post-render. Restricted to the
+# `.excalidraw` extension so other wikilink-shaped embeds aren't
+# accidentally captured.
+_EXCALIDRAW_EMBED_RE = re.compile(
+    r"!\[\[([^\]\n]+\.excalidraw)\]\]",
+    re.IGNORECASE,
+)
+
 
 def rewrite_project_file_links(
     html: str,
@@ -218,16 +229,71 @@ def rewrite_project_journal_links(
     return _JOURNAL_LINK_RE.sub(_replace, html)
 
 
+def rewrite_excalidraw_embeds(
+    html: str,
+    username: str,
+    slug: str,
+    file_lookup: FileLookup | None = None,
+    is_owner: bool = False,
+) -> str:
+    """Rewrite `![[name.excalidraw]]` to embed placeholder divs.
+
+    Resolved via `file_lookup` like the other embed rewriters. On a miss
+    the literal text is preserved so the author sees the broken reference.
+    Emits the same data-attrs the Files-tab row trigger uses, so the
+    existing modal-open click handler picks it up — except `data-file-path`
+    and `data-file-description` are deliberately omitted, plus we set
+    `data-allow-rename="0"`, so renaming from an embed-opened modal is
+    disabled (rename is a file-management action that belongs on the Files
+    tab / detail page, not inline in a doc).
+    """
+    base = f"/u/{username}/{slug}/files"
+    project_url = f"/u/{username}/{slug}"
+    is_owner_attr = "1" if is_owner else "0"
+
+    def _replace(match: re.Match[str]) -> str:
+        rel = match.group(1)
+        if "/" in rel:
+            path, filename = rel.rsplit("/", 1)
+        else:
+            path, filename = "", rel
+        file_id = file_lookup(path, filename) if file_lookup else None
+        if not file_id:
+            # Preserve the literal so the author sees the unresolved ref.
+            return match.group(0)
+        scene_url = f"{base}/{file_id}/raw"
+        edit_url = f"{base}/{file_id}"
+        # Single-line so the regex doesn't accidentally re-match itself if
+        # this rewriter ever runs over its own output.
+        return (
+            f'<div class="excalidraw-embed" '
+            f'data-excalidraw-embed '
+            f'data-excalidraw-row-trigger '
+            f'data-project-url="{project_url}" '
+            f'data-file-id="{file_id}" '
+            f'data-filename="{filename}" '
+            f'data-scene-url="{scene_url}" '
+            f'data-is-owner="{is_owner_attr}" '
+            f'data-allow-rename="0">'
+            f'<a href="{edit_url}" class="excalidraw-embed-fallback">'
+            f"Open drawing: {filename}</a></div>"
+        )
+
+    return _EXCALIDRAW_EMBED_RE.sub(_replace, html)
+
+
 def render_for_project(
     text: str,
     username: str,
     slug: str,
     file_lookup: FileLookup | None = None,
+    is_owner: bool = False,
 ) -> str:
     html = render(text)
     html = rewrite_project_file_links(html, username, slug, file_lookup)
     html = rewrite_project_file_images(html, username, slug, file_lookup)
     html = rewrite_project_journal_links(html, username, slug)
+    html = rewrite_excalidraw_embeds(html, username, slug, file_lookup, is_owner)
     return html
 
 

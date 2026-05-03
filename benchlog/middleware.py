@@ -65,11 +65,14 @@ def _is_public_project_view(method: str, path: str) -> bool:
     # /u/{username}/{slug}/files/{id}
     if len(parts) == 4 and parts[2] == "files":
         return True
-    # /u/{username}/{slug}/files/{id}/{download|thumb}
+    # /u/{username}/{slug}/files/{id}/{download|thumb|raw}
+    # `raw` serves inline content (image embeds) and must be reachable
+    # for guests so `<img src=".../raw">` in markdown renders on public
+    # projects without redirecting to login.
     if (
         len(parts) == 5
         and parts[2] == "files"
-        and parts[4] in {"download", "thumb"}
+        and parts[4] in {"download", "thumb", "raw"}
     ):
         return True
     return False

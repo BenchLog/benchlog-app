@@ -1947,7 +1947,8 @@ dialog.modal[open] {
      The built-in sprite uses background-image at `background-size:18px`;
      we mirror that with an 18px mask-size for identical weight. */
   .toastui-editor-defaultUI .benchlog-toolbar-file-link,
-  .toastui-editor-defaultUI .benchlog-toolbar-journal-link {
+  .toastui-editor-defaultUI .benchlog-toolbar-journal-link,
+  .toastui-editor-defaultUI .benchlog-toolbar-excalidraw {
     background-image: none !important;
     background-color: currentColor !important;
     -webkit-mask-position: center center;
@@ -1964,6 +1965,11 @@ dialog.modal[open] {
   .toastui-editor-defaultUI .benchlog-toolbar-journal-link {
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 7v14'/><path d='M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3Z'/></svg>");
     mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 7v14'/><path d='M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3Z'/></svg>");
+  }
+  /* Lucide pen-tool — matches the icon used elsewhere for excalidraw. */
+  .toastui-editor-defaultUI .benchlog-toolbar-excalidraw {
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m12 19 7-7 3 3-7 7-3-3z'/><path d='m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z'/><path d='m2 2 7.586 7.586'/><circle cx='11' cy='11' r='2'/></svg>");
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m12 19 7-7 3 3-7 7-3-3z'/><path d='m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z'/><path d='m2 2 7.586 7.586'/><circle cx='11' cy='11' r='2'/></svg>");
   }
 
   /* Writer surfaces: markdown textarea + wysiwyg contenteditable. */
@@ -2387,4 +2393,65 @@ dialog.modal[open] {
   .link-modal-preview-thumb { width: 88px; height: 66px; border-radius: 6px; background: var(--color-edge); flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
   .link-modal-preview-thumb img { width: 100%; height: 100%; object-fit: cover; }
   .link-modal-preview-body { flex: 1; min-width: 0; }
+
+  /* Excalidraw picker — small <dialog> popped by the Toast UI
+     "Insert drawing" toolbar button. Lists existing `.excalidraw`
+     files in this project plus a "Create new" CTA. */
+  dialog.excalidraw-picker { width: min(420px, 92vw); padding: 0; border: 0; border-radius: var(--radius-card); background: transparent; }
+  dialog.excalidraw-picker::backdrop { background: rgba(0, 0, 0, 0.4); }
+  .excalidraw-picker-frame { background: var(--color-paper); border: 1px solid var(--color-edge); border-radius: var(--radius-card); padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .excalidraw-picker-divider { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-ink-muted); }
+  .excalidraw-picker-divider::before,
+  .excalidraw-picker-divider::after { content: ""; flex: 1; height: 1px; background: var(--color-edge); }
+  .excalidraw-picker-list { display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+  .excalidraw-picker-empty { text-align: center; padding: 8px; }
+  .excalidraw-picker-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 0; background: transparent; border-radius: 6px; text-align: left; cursor: pointer; color: var(--color-ink); font: inherit; }
+  .excalidraw-picker-item:hover { background: var(--color-paper-surface); }
+  .excalidraw-picker-item-name { font-family: var(--font-mono); font-size: 13px; }
+
+  /* Excalidraw embed — placeholder div emitted by the markdown
+     rewriter; populated client-side with an SVG render of the scene by
+     excalidraw-embed.js. The fallback anchor inside is shown when JS
+     fails or hasn't loaded the bundle yet. */
+  .excalidraw-embed { position: relative; display: block; border: 1px solid var(--color-edge); border-radius: var(--radius-card); background: var(--color-paper-surface); padding: 8px; margin: 16px 0; cursor: pointer; }
+  .excalidraw-embed:hover { border-color: var(--color-rust); }
+  .excalidraw-embed.is-rendered { padding: 0; overflow: hidden; }
+  .excalidraw-embed > svg { display: block; max-width: 100%; height: auto; }
+  /* Dark-mode adaptation for the rendered embed — applies the same
+     invert+hue-rotate Excalidraw uses internally on its own canvas
+     when `theme: dark`. Pure CSS so a theme toggle re-skins existing
+     embeds with no JS re-render. */
+  [data-theme="dark"] .excalidraw-embed > svg {
+    filter: invert(93%) hue-rotate(180deg);
+  }
+  .excalidraw-embed-fallback { display: inline-block; padding: 8px 12px; color: var(--color-ink-muted); }
+  .excalidraw-embed-fallback:hover { color: var(--color-rust); }
+  .excalidraw-embed-edit-pill { position: absolute; top: 8px; right: 8px; padding: 2px 8px; font-size: 12px; font-weight: 500; border-radius: 4px; background: var(--color-rust); color: var(--color-paper); pointer-events: none; opacity: 0; transition: opacity .15s; }
+  .excalidraw-embed:hover .excalidraw-embed-edit-pill,
+  .excalidraw-embed:focus-within .excalidraw-embed-edit-pill { opacity: 1; }
+
+  /* Excalidraw modal — full-viewport overlay (NOT <dialog>) so
+     Excalidraw's own popovers (color picker, library) render in the
+     same stacking context. Built dynamically by excalidraw-modal.js. */
+  .excalidraw-modal { position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.5); display: flex; align-items: stretch; justify-content: stretch; }
+  .excalidraw-modal[hidden] { display: none; }
+  .excalidraw-modal-frame { display: flex; flex-direction: column; flex: 1; margin: 24px; background: var(--color-paper); border-radius: var(--radius-card); overflow: hidden; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
+  .excalidraw-modal-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--color-edge); background: var(--color-paper-surface); }
+  .excalidraw-modal-title { font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+  .excalidraw-modal-title.is-editable { cursor: text; }
+  .excalidraw-modal-title.is-editable:hover { background: var(--color-edge); }
+  .excalidraw-modal-title-input { font: inherit; font-weight: 600; padding: 2px 6px; border: 1px solid var(--color-edge); border-radius: 4px; background: var(--color-paper); color: var(--color-ink); width: 280px; max-width: 50vw; }
+  .excalidraw-modal-title-input:focus { outline: 2px solid var(--color-rust); outline-offset: -1px; border-color: transparent; }
+  .excalidraw-modal-title-error { font-size: 12px; color: var(--color-rust-deep); }
+  .excalidraw-modal-status { font-size: 12px; color: var(--color-ink-muted); }
+  .excalidraw-modal-status[data-kind="ok"] { color: #047857; }
+  .excalidraw-modal-status[data-kind="err"] { color: var(--color-rust-deep); }
+  .excalidraw-modal-spacer { flex: 1; }
+  .excalidraw-modal-mount { flex: 1; min-height: 0; }
+
+  /* Mobile / small screens — drop the inset margin so the editor uses
+     every pixel. */
+  @media (max-width: 640px) {
+    .excalidraw-modal-frame { margin: 0; border-radius: 0; }
+  }
 }

@@ -61,18 +61,24 @@
         <div class="absolute inset-x-0 bottom-0 px-4 sm:px-6 py-4 z-10
                     flex flex-wrap items-end justify-between gap-3">
             <div class="flex-1 min-w-0">
-                <h1 class="text-4xl leading-tight text-paper m-0 drop-shadow {% if is_owner %}project-title-editable{% endif %}"
+                {# `text-white` (and `border-white/…`) here, NOT `text-paper`,
+                   because the banner gradient is dark in both themes — the
+                   `--color-paper` variable flips to a dark color in dark
+                   mode, which makes `text-paper` invisible against the
+                   overlay. White contrasts cleanly with the gradient
+                   regardless of the host theme. #}
+                <h1 class="text-4xl leading-tight text-white m-0 drop-shadow {% if is_owner %}project-title-editable{% endif %}"
                     data-project-title-read
                     {% if is_owner %}title="Click to edit"{% endif %}>{{ project.title }}</h1>
                 {% if is_owner %}
                 <input type="text"
                        name="title"
                        maxlength="256"
-                       class="hidden text-4xl leading-tight w-full rounded border border-paper/40 bg-black/85 text-paper px-2 py-1"
+                       class="hidden text-4xl leading-tight w-full rounded border border-white/40 bg-black/85 text-white px-2 py-1"
                        data-project-title-edit
                        data-original-title="{{ project.title }}"
                        value="{{ project.title }}">
-                <p class="hidden text-sm text-paper bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-title-error role="alert"></p>
+                <p class="hidden text-sm text-white bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-title-error role="alert"></p>
                 {% endif %}
                 {# Short description on banner — light italic styling on the
                    dark gradient. Owner can click to edit; the textarea uses
@@ -82,33 +88,33 @@
                    we don't render it twice. #}
                 {% if is_owner %}
                 <div class="mt-1" data-project-short-desc>
-                    <p class="text-base text-paper italic project-title-editable m-0
+                    <p class="text-base text-white italic project-title-editable m-0
                               {% if not project.short_description %}opacity-70{% endif %}"
                        data-project-short-desc-read
                        title="Click to edit card summary">{% if project.short_description %}{{ project.short_description }}{% else %}Add a one-line summary for cards…{% endif %}</p>
                     <textarea name="short_description"
                               rows="2"
                               maxlength="200"
-                              class="hidden text-base w-full rounded border border-paper/40 bg-black/85 text-paper px-2 py-1 italic"
+                              class="hidden text-base w-full rounded border border-white/40 bg-black/85 text-white px-2 py-1 italic"
                               placeholder="One-line summary shown on project cards (200 chars max)."
                               data-project-short-desc-edit
                               data-original-short-desc="{{ project.short_description or '' }}">{{ project.short_description or '' }}</textarea>
-                    <p class="hidden text-sm text-paper bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-short-desc-error role="alert"></p>
+                    <p class="hidden text-sm text-white bg-rust-deep/85 rounded px-2 py-1 mt-1" data-project-short-desc-error role="alert"></p>
                 </div>
                 {% elif project.short_description %}
-                <p class="mt-1 text-base text-paper italic m-0">{{ project.short_description }}</p>
+                <p class="mt-1 text-base text-white italic m-0">{{ project.short_description }}</p>
                 {% endif %}
             </div>
             <div class="flex gap-2 shrink-0">
-                {# Fork button — paper-on-translucent-dark variant of btn-ghost
-                   so it reads on the gradient. #}
+                {# Fork button — white-on-translucent-dark variant of btn-ghost
+                   so it reads on the gradient regardless of theme. #}
                 {% if user is not none and user.id != project.user_id and project.is_public %}
                 <form method="post"
                       action="{{ project_url }}/fork"
                       class="inline">
                     {% include "components/_csrf.html" %}
                     <button type="submit"
-                            class="btn-ghost text-sm bg-black/40 text-paper border border-paper/30 hover:bg-black/60"
+                            class="btn-ghost text-sm bg-black/40 text-white border border-white/30 hover:bg-black/60"
                             title="Create a private copy of this project in your workspace">
                         <i data-lucide="git-branch" class="inline w-3.5 h-3.5 mr-1"></i>
                         Fork
@@ -116,7 +122,7 @@
                 </form>
                 {% endif %}
                 <details class="relative" data-menu data-more-actions-menu>
-                    <summary class="btn-ghost text-sm list-none cursor-pointer bg-black/40 text-paper border border-paper/30 hover:bg-black/60"
+                    <summary class="btn-ghost text-sm list-none cursor-pointer bg-black/40 text-white border border-white/30 hover:bg-black/60"
                              title="More actions">
                         <i data-lucide="more-horizontal" class="w-3.5 h-3.5"></i>
                         <span class="sr-only">More actions</span>

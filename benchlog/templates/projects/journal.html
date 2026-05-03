@@ -13,6 +13,15 @@
     {% endif %}
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/journal-edit.js') }}" defer></script>
+    {# Excalidraw embed renderer + modal — needed for `![[…]]` embeds in
+       journal entries. Lazy-loads the heavy bundle only if a placeholder
+       is on the page. #}
+    <script src="{{ url_for('static', path='js/excalidraw-modal.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-files-tab.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-embed.js') }}" defer></script>
+    {% if is_owner %}
+    <script src="{{ url_for('static', path='js/excalidraw-picker.js') }}" defer></script>
+    {% endif %}
 {% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}

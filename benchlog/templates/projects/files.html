@@ -6,6 +6,7 @@
 
 {% macro render_file_row(file, depth, parent_path) %}
 {% set fullpath = (file.path ~ '/' ~ file.filename) if file.path else file.filename %}
+{% set is_excal = file.current_version and file.current_version.mime_type == 'application/vnd.benchlog.excalidraw+json' %}
 <tr class="file-tree-row-file"
     data-parent-path="{{ parent_path }}"
     data-file-id="{{ file.id }}"
@@ -23,9 +24,30 @@
             </span>
             <a href="{{ files_base }}/{{ file.id }}"
                class="file-tree-name-label"
+               {% if is_excal %}
+               data-excalidraw-row-trigger
+               data-project-url="{{ project_url }}"
+               data-file-id="{{ file.id }}"
+               data-filename="{{ file.filename }}"
+               data-file-path="{{ file.path or '' }}"
+               data-file-description="{{ file.description or '' }}"
+               data-scene-url="{{ files_base }}/{{ file.id }}/raw"
+               data-is-owner="{{ '1' if is_owner else '0' }}"
+               {% endif %}
                title="{{ file.filename }}">{{ file.filename }}</a>
             {% with version = file.current_version %}{% include "components/_gps_warning.html" %}{% endwith %}
             <span class="file-tree-row-actions">
+                {% if is_excal %}
+                {# Click-on-row opens the editor for `.excalidraw` files,
+                   so surface a separate path to the standard detail page
+                   (description, version history, etc.) here in the
+                   hover-revealed action strip. #}
+                <a href="{{ files_base }}/{{ file.id }}"
+                   class="file-tree-action-btn"
+                   title="File details" aria-label="File details for {{ file.filename }}">
+                    <i data-lucide="info" class="w-3 h-3"></i>
+                </a>
+                {% endif %}
                 <a href="{{ files_base }}/{{ file.id }}/download"
                    class="file-tree-action-btn"
                    title="Download" aria-label="Download {{ file.filename }}">
@@ -59,6 +81,16 @@
                     <i data-lucide="more-vertical" class="w-4 h-4"></i>
                 </summary>
                 <div role="menu" class="file-tree-row-menu-panel">
+                    {% if is_excal %}
+                    {# `.excalidraw` rows open the editor on click; the
+                       file's metadata page (description, version history)
+                       still lives at /files/{id} — surface it here so
+                       it's reachable, just not the primary action. #}
+                    <a href="{{ files_base }}/{{ file.id }}"
+                       role="menuitem" class="file-tree-row-menu-item">
+                        <i data-lucide="info" class="w-3.5 h-3.5"></i>File details
+                    </a>
+                    {% endif %}
                     <a href="{{ files_base }}/{{ file.id }}/download"
                        role="menuitem" class="file-tree-row-menu-item">
                         <i data-lucide="download" class="w-3.5 h-3.5"></i>Download
@@ -227,6 +259,14 @@
         </a>
         {% endif %}
         {% if is_owner %}
+        <button type="button" class="btn-ghost text-sm"
+                data-excalidraw-new-trigger
+                data-create-url="{{ project_url }}/excalidraw/new"
+                data-project-url="{{ project_url }}"
+                title="Create a new Excalidraw drawing in the project root">
+            <i data-lucide="pen-tool" class="inline w-3.5 h-3.5 mr-1"></i>
+            New drawing
+        </button>
         <button type="button" class="btn-primary text-sm" data-file-picker-trigger>
             Upload file
         </button>
@@ -336,6 +376,13 @@
     </form>
 </dialog>
 {% endif %}
+
+{# Excalidraw modal (read + edit) — loaded for owners and guests since
+   `.excalidraw` rows are clickable on public projects too. The modal
+   itself lazy-loads the heavy bundles only on first open, so the cost
+   for a tab that never clicks one is just two small <script> tags. #}
+<script src="{{ url_for('static', path='js/excalidraw-modal.js') }}" defer></script>
+<script src="{{ url_for('static', path='js/excalidraw-files-tab.js') }}" defer></script>
 
 {% if is_owner %}
 <script src="{{ url_for('static', path='js/file-upload.js') }}"></script>

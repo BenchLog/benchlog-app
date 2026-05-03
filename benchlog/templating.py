@@ -22,13 +22,16 @@ def _markdown_filter(text: str | None) -> Markup:
     return Markup(render_markdown(text or ""))
 
 
-def _project_markdown_filter(text: str | None, project) -> Markup:
+def _project_markdown_filter(text: str | None, project, is_owner: bool = False) -> Markup:
     """Render markdown for content tied to a project. Rewrites bare
     `files/<path>/<name>` links to canonical `/u/{user}/{slug}/files/{id}`
-    detail-page URLs, and rewrites bare `journal/<entry_slug>` links to
-    the canonical `/u/{user}/{slug}/journal/{entry_slug}` so they resolve
-    the same on every page that renders the content (description, journal
-    list, journal detail, AJAX swaps).
+    detail-page URLs, rewrites bare `journal/<entry_slug>` links to
+    `/u/{user}/{slug}/journal/{entry_slug}`, and turns
+    `![[name.excalidraw]]` into editable embed placeholders.
+
+    `is_owner` controls whether Excalidraw embeds get the editable
+    affordance. Pass it from the calling template's `is_owner` local.
+    Defaults False so pages that don't pass it stay safe (read-only).
 
     Requires ``project.files`` to be eager-loaded — the shared
     ``get_project_by_username_and_slug`` helper does this. Falls back to
@@ -44,7 +47,9 @@ def _project_markdown_filter(text: str | None, project) -> Markup:
         return Markup(render_markdown(text))
     lookup = build_file_lookup_from_files(files)
     return Markup(
-        render_for_project(text, project.user.username, project.slug, lookup)
+        render_for_project(
+            text, project.user.username, project.slug, lookup, is_owner=is_owner
+        )
     )
 
 

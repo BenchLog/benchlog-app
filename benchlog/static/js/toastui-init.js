@@ -28,7 +28,7 @@
     ["code", "codeblock"],
   ];
 
-  function buildToolbar(hasFileIndex, hasEntryIndex) {
+  function buildToolbar(hasFileIndex, hasEntryIndex, hasExcalidraw) {
     const extras = [];
     if (hasFileIndex) {
       // Using `className` + `command` (rather than a custom `el`) keeps
@@ -49,6 +49,17 @@
         tooltip: "Insert journal entry link",
         className: "benchlog-toolbar-journal-link",
         command: "benchlogInsertJournalLink",
+      });
+    }
+    if (hasExcalidraw) {
+      extras.push({
+        name: "excalidraw",
+        // Kept short — Toast UI's overflow toolbar strip clips long
+        // tooltips when the editor is hosted inside a modal whose CSS
+        // applies overflow: hidden.
+        tooltip: "Insert drawing",
+        className: "benchlog-toolbar-excalidraw",
+        command: "benchlogInsertExcalidraw",
       });
     }
     if (!extras.length) return DEFAULT_TOOLBAR;
@@ -157,6 +168,14 @@
     const hasFileIndex = Boolean(mount.dataset.toastuiFileIndex);
     const hasEntryIndex = Boolean(mount.dataset.toastuiEntryIndex);
     const uploadUrl = mount.dataset.toastuiUploadUrl || "";
+    // Project URL = upload URL minus the trailing `/files`. The
+    // Excalidraw "Insert drawing" toolbar command POSTs to
+    // `${projectUrl}/excalidraw/new`; mounts without an upload URL
+    // (bio editor, etc.) get no Excalidraw button.
+    const projectUrl = uploadUrl.endsWith("/files")
+      ? uploadUrl.slice(0, -"/files".length)
+      : "";
+    const hasExcalidraw = Boolean(projectUrl);
 
     const editor = new window.toastui.Editor({
       el: mount,
@@ -178,7 +197,7 @@
       // Keep the markdown / WYSIWYG tabs visible at the bottom-left so
       // users who prefer WYSIWYG can still flip — default is markdown.
       hideModeSwitch: false,
-      toolbarItems: buildToolbar(hasFileIndex, hasEntryIndex),
+      toolbarItems: buildToolbar(hasFileIndex, hasEntryIndex, hasExcalidraw),
       hooks: {
         addImageBlobHook: uploadUrl
           ? makeImageUploadHook(uploadUrl)
@@ -213,6 +232,22 @@
         editor.focus();
         return true;
       });
+    }
+    if (hasExcalidraw) {
+      // Defer to BenchlogExcalidrawPicker (loaded by the same template).
+      // The picker reads the per-mount __fileLinkIndex (parsed below) to
+      // populate the existing-drawings list, and uses projectUrl to POST
+      // to `/excalidraw/new` for the "Create new" branch.
+      const openPicker = () => {
+        if (!window.BenchlogExcalidrawPicker) {
+          window.alert("Drawing picker failed to load.");
+          return false;
+        }
+        window.BenchlogExcalidrawPicker.open({ editor, mount, projectUrl });
+        return true;
+      };
+      editor.addCommand("markdown", "benchlogInsertExcalidraw", openPicker);
+      editor.addCommand("wysiwyg", "benchlogInsertExcalidraw", openPicker);
     }
 
     // Project-scoped editors carry a JSON file index so the `files/…`

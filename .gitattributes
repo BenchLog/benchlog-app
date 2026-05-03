@@ -1,0 +1,4 @@
+benchlog/static/js/excalidraw/*.min.js binary
+benchlog/static/js/excalidraw/excalidraw-assets/*.js binary
+benchlog/static/js/excalidraw/excalidraw-assets/locales/*.js binary
+benchlog/static/js/excalidraw/excalidraw-assets/*.woff2 binary

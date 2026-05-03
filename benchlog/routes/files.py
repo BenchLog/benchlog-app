@@ -11,6 +11,7 @@ otherwise FastAPI matches the literal as a UUID param and 422s.
 
 import hashlib
 import io
+import json
 import mimetypes
 import os
 import tempfile
@@ -38,6 +39,8 @@ from benchlog.dependencies import current_user, require_user
 from benchlog import audit
 from benchlog.gps_metadata import StripFailed, strip_gps
 from benchlog.files import (
+    EXCALIDRAW_MIME,
+    InvalidExcalidrawScene,
     StoredBlob,
     UploadTooLarge,
     apply_file_rename_to_project_markdown,
@@ -56,6 +59,7 @@ from benchlog.files import (
     regenerate_thumbnail_from_storage,
     rename_folder,
     safe_filename,
+    store_excalidraw_scene,
     store_upload,
 )
 from benchlog.models import ActivityEventType, FileVersion, Project, ProjectFile, User
@@ -502,6 +506,14 @@ async def upload_file(
         await db.commit()
         return fail(
             f"We couldn't process {filename} — the file may be corrupt or unsupported. ({e})",
+            status=400,
+        )
+    except InvalidExcalidrawScene:
+        if is_new_file:
+            await db.delete(target_file)
+        await db.commit()
+        return fail(
+            f"{filename} isn't a valid Excalidraw drawing.",
             status=400,
         )
 
@@ -1604,16 +1616,20 @@ async def file_thumbnail(
     )
 
 
-# Mime types we'll serve inline for `<img src="…/raw">` embeds in markdown.
+# Mime types we'll serve inline for `<img src="…/raw">` embeds in markdown
+# and for `fetch('…/raw')` JSON loads from the Excalidraw modal editor.
 # SVG is deliberately excluded — even with `nosniff`, browsers execute
 # scripts inside SVG documents, so the same-origin embed would be a stored
-# XSS vector for whatever the project owner uploaded.
+# XSS vector for whatever the project owner uploaded. Excalidraw scenes
+# are JSON, validated up front at upload, served with `nosniff` — no
+# script-execution semantics in browsers regardless.
 _RAW_INLINE_MIME_ALLOWLIST = frozenset({
     "image/png",
     "image/jpeg",
     "image/gif",
     "image/webp",
     "image/avif",
+    EXCALIDRAW_MIME,
 })
 
 
@@ -1724,6 +1740,11 @@ async def upload_new_version(
         raise HTTPException(
             status_code=400,
             detail=f"We couldn't process {upload.filename} — the file may be corrupt or unsupported. ({e})",
+        )
+    except InvalidExcalidrawScene:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{upload.filename} isn't a valid Excalidraw drawing.",
         )
 
     quarantined = blob.has_gps is True
@@ -2404,4 +2425,113 @@ async def delete_file(
     return RedirectResponse(
         f"/u/{user.username}/{project.slug}/files",
         status_code=302,
+    )
+
+
+# ---------- excalidraw scene save + create-blank ---------- #
+
+
+@router.put("/u/{username}/{slug}/files/{file_id}/excalidraw")
+async def save_excalidraw_scene(
+    username: str,
+    slug: str,
+    file_id: uuid.UUID,
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save a new version of an .excalidraw file from a JSON body.
+
+    Body is the raw scene JSON (not multipart). Last-write-wins — no
+    optimistic concurrency check on this endpoint. CSRF is enforced by
+    middleware via the X-CSRF-Token header.
+    """
+    project = await get_project_by_username_and_slug(db, username, slug)
+    if project is None or project.user_id != user.id:
+        raise HTTPException(status_code=404)
+    file = await _load_file_with_versions(db, project.id, file_id)
+    if file is None:
+        raise HTTPException(status_code=404)
+    current = file.current_version
+    if current is None or current.mime_type != EXCALIDRAW_MIME:
+        raise HTTPException(status_code=400, detail="Not an Excalidraw file.")
+
+    body = await request.body()
+    try:
+        version = await store_excalidraw_scene(db, file=file, body=body)
+    except InvalidExcalidrawScene:
+        raise HTTPException(
+            status_code=400, detail="Body is not a valid Excalidraw scene."
+        )
+    file.current_version_id = version.id
+    await db.commit()
+    return {"version": version.version_number}
+
+
+@router.post("/u/{username}/{slug}/excalidraw/new")
+async def create_blank_excalidraw(
+    username: str,
+    slug: str,
+    request: Request,
+    name: str = Form(...),
+    path: str = Form(""),
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a blank .excalidraw file in the project. Returns id + filename.
+
+    Used by the Files-tab "New drawing" button. Filename must end in
+    .excalidraw and pass the same `safe_filename` /
+    `normalize_virtual_path` rules as a regular upload. Form-encoded so
+    CSRF middleware enforces token via the `_csrf` field.
+    """
+    project = await get_project_by_username_and_slug(db, username, slug)
+    if project is None or project.user_id != user.id:
+        raise HTTPException(status_code=404)
+
+    try:
+        safe_name = safe_filename(name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not safe_name.lower().endswith(".excalidraw"):
+        raise HTTPException(
+            status_code=400, detail="Filename must end in .excalidraw"
+        )
+    safe_path = normalize_virtual_path(path)
+
+    existing = await get_existing_file(db, project.id, safe_path, safe_name)
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail=f"A file named {safe_name} already exists here."
+        )
+
+    blank = json.dumps(
+        {
+            "type": "excalidraw",
+            "version": 2,
+            "source": "benchlog",
+            "elements": [],
+            "appState": {"viewBackgroundColor": "#ffffff"},
+            "files": {},
+        }
+    ).encode()
+
+    new_file = ProjectFile(
+        project_id=project.id,
+        path=safe_path,
+        filename=safe_name,
+    )
+    db.add(new_file)
+    await db.flush()
+
+    version = await store_excalidraw_scene(db, file=new_file, body=blank)
+    new_file.current_version_id = version.id
+    await db.commit()
+
+    return JSONResponse(
+        {
+            "id": str(new_file.id),
+            "filename": new_file.filename,
+            "path": new_file.path,
+        }
     )

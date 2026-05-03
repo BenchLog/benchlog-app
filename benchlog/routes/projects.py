@@ -1168,8 +1168,10 @@ async def update_description(
             # `files/…` that would resolve differently depending on where
             # the user is viewing from.
             lookup = await get_project_file_lookup(db, project.id)
+            # Owner-only endpoint — pass is_owner=True so excalidraw embeds
+            # in the swapped HTML get the editable affordance immediately.
             rendered = render_for_project(
-                description, user.username, project.slug, lookup
+                description, user.username, project.slug, lookup, is_owner=True
             )
         else:
             rendered = ""

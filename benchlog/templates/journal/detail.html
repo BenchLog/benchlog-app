@@ -9,6 +9,14 @@
     {% endif %}
     <script src="{{ url_for('static', path='js/file-link-autocomplete.js') }}" defer></script>
     <script src="{{ url_for('static', path='js/journal-edit.js') }}" defer></script>
+    {# Excalidraw embed renderer + modal — needed for `![[…]]` embeds in
+       this entry. Lazy-loads heavy bundle only if a placeholder is here. #}
+    <script src="{{ url_for('static', path='js/excalidraw-modal.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-files-tab.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/excalidraw-embed.js') }}" defer></script>
+    {% if is_owner %}
+    <script src="{{ url_for('static', path='js/excalidraw-picker.js') }}" defer></script>
+    {% endif %}
 {% endblock %}
 {% block project_content %}
 {% set project_url = '/u/' ~ project.user.username ~ '/' ~ project.slug %}
@@ -113,7 +121,7 @@
     </header>
 
     <div class="markdown-body text-ink" data-entry-rendered>
-        {{ entry.content|project_markdown(project) }}
+        {{ entry.content|project_markdown(project, is_owner) }}
     </div>
 
     {% if is_owner %}

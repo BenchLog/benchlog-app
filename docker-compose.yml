@@ -10,6 +10,22 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U benchlog -d benchlog"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      BENCHLOG_SECRET_KEY: dev-secret-change-me
+      BENCHLOG_DATABASE_URL: postgresql+asyncpg://benchlog:benchlog@db/benchlog
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   app:
     build: .
@@ -23,7 +39,10 @@ services:
     volumes:
       - filedata:/app/data
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
